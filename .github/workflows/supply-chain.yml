@@ -20,8 +20,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.docs.outputs.docs_only }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only change
+        id: docs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docs_only=false
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mapfile -t files < <(git diff --name-only "$range")
+          if [ "${#files[@]}" -gt 0 ]; then
+            docs_only=true
+            for file in "${files[@]}"; do
+              case "$file" in
+                *.md|*.MD|*.markdown|*.MARKDOWN) ;;
+                *) docs_only=false; break ;;
+              esac
+            done
+          fi
+
+          printf 'docs_only=%s\n' "$docs_only" >> "$GITHUB_OUTPUT"
+          printf 'docs_only=%s\n' "$docs_only"
+
   go:
     name: Go (build / vet / test / vuln / deps)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -60,6 +103,8 @@ jobs:
 
   rust:
     name: Rust (build / test / clippy / fmt / deny)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     # macos-latest is the real ship target (Tauri uses WKWebView on macOS) and
     # avoids the Linux GTK/WebKit2GTK system-lib install.
     runs-on: macos-latest
@@ -98,7 +143,9 @@ jobs:
         run: cargo deny check
 
   secrets:
-    name: Secrets (gitleaks full-history scan)
+    name: Secrets (gitleaks + TruffleHog OSS)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history)

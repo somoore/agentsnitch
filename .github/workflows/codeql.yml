@@ -18,9 +18,53 @@ permissions:
   security-events: write
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.docs.outputs.docs_only }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only change
+        id: docs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docs_only=false
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mapfile -t files < <(git diff --name-only "$range")
+          if [ "${#files[@]}" -gt 0 ]; then
+            docs_only=true
+            for file in "${files[@]}"; do
+              case "$file" in
+                *.md|*.MD|*.markdown|*.MARKDOWN) ;;
+                *) docs_only=false; break ;;
+              esac
+            done
+          fi
+
+          printf 'docs_only=%s\n' "$docs_only" >> "$GITHUB_OUTPUT"
+          printf 'docs_only=%s\n' "$docs_only"
+
   analyze:
     name: CodeQL (${{ matrix.language }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     concurrency:
       group: codeql-${{ github.workflow }}-${{ matrix.language }}-${{ github.ref }}
       cancel-in-progress: true
@@ -37,6 +81,9 @@ jobs:
           - language: rust
             os: ubuntu-latest
             build-mode: none
+          - language: swift
+            os: macos-latest
+            build-mode: manual
 
     steps:
       - name: Checkout
@@ -52,6 +99,10 @@ jobs:
       - name: Autobuild
         if: matrix.build-mode == 'autobuild'
         uses: github/codeql-action/autobuild@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+
+      - name: Build Swift for CodeQL
+        if: matrix.language == 'swift'
+        run: make ne-typecheck
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
