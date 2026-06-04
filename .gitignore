@@ -110,3 +110,6 @@ notarytool*.json
 *.bak
 *.tmp
 Session.vim
+
+# Release doc kept local-only (untracked)
+docs/release.md
