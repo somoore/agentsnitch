@@ -4,8 +4,25 @@ package main
 
 import (
 	"net"
+	"os"
+	"strconv"
 	"syscall"
 )
+
+// resolvePeerExePath returns the kernel-reported executable path for pid.
+// On Linux, /proc/<pid>/exe is a symlink to the actual executable image (argv
+// cannot forge it). `ps -o comm=` is unsuitable here: it returns only the
+// truncated command name, not an absolute path.
+func resolvePeerExePath(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	path, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if err != nil || path == "" {
+		return "", false
+	}
+	return path, true
+}
 
 func peerPIDForConn(conn net.Conn) (int, bool) {
 	unixConn, ok := conn.(*net.UnixConn)

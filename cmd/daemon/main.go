@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -301,25 +300,16 @@ func handleSocketNetwork(nf event.NetworkFlowEvent, peerPID int, hasPeerPID bool
 }
 
 // peerExePath resolves a PID's actual executable path (kernel-reported, NOT the
-// argv/command line). It is a package var so tests can inject a fake resolver.
+// argv/command line). It is a package var so tests can inject a fake resolver;
+// the default delegates to a per-platform resolver (peercred_{darwin,linux}.go).
 //
 // SECURITY: trust must be based on the executable image, not the command string.
-// `ps -o command=` (the old basis) includes argv, so a same-user process can put
-// an AgentSnitch-looking path in its arguments and spoof the substring checks.
-// `ps -o comm=` reports the kernel's executable path, which argv cannot forge.
+// The old check matched substrings of `ps -o command=` (argv included), so a
+// same-user process could put an AgentSnitch-looking path in its arguments and
+// pass trust. The per-platform resolvers report the kernel's executable path,
+// which argv cannot forge.
 var peerExePath = func(pid int) (string, bool) {
-	if pid <= 0 {
-		return "", false
-	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
-	if err != nil {
-		return "", false
-	}
-	path := strings.TrimSpace(string(out))
-	if path == "" {
-		return "", false
-	}
-	return path, true
+	return resolvePeerExePath(pid)
 }
 
 // trustedSemanticSocketPeer reports whether the socket peer is the installed
@@ -342,19 +332,21 @@ func trustedNetworkSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
 	return isTrustedNetworkSenderExe(exe)
 }
 
-// agentSnitchSupportBin returns the canonical installed support-binary directory,
-// honoring the same env overrides as scripts/create.sh.
-func agentSnitchSupportBin() string {
-	dir := strings.TrimSpace(os.Getenv("AGENTSNITCH_SUPPORT_DIR"))
-	if dir == "" {
-		if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
-			dir = filepath.Join(home, "Library", "Application Support", "AgentSnitch")
-		}
+// agentSnitchSupportBins returns the canonical installed support-binary
+// directories. AgentSnitch installs two ways: scripts/create.sh and the .pkg
+// install both stage the emitter under an "Application Support/AgentSnitch/bin"
+// dir — per-user ($HOME/Library/...) for create.sh and system-wide
+// (/Library/...) for the signed pkg. AGENTSNITCH_SUPPORT_DIR overrides both.
+func agentSnitchSupportBins() []string {
+	if dir := strings.TrimSpace(os.Getenv("AGENTSNITCH_SUPPORT_DIR")); dir != "" {
+		return []string{filepath.Join(dir, "bin")}
 	}
-	if dir == "" {
-		return ""
+	var bins []string
+	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+		bins = append(bins, filepath.Join(home, "Library", "Application Support", "AgentSnitch", "bin"))
 	}
-	return filepath.Join(dir, "bin")
+	bins = append(bins, "/Library/Application Support/AgentSnitch/bin")
+	return bins
 }
 
 // agentSnitchAppPath returns the canonical installed app bundle path, honoring the
@@ -366,33 +358,51 @@ func agentSnitchAppPath() string {
 	return "/Applications/AgentSnitch.app"
 }
 
+// networkExtensionBundleID is the AgentSnitch Network Extension bundle identifier.
+// Activated macOS system extensions run from the system extension store
+// (/Library/SystemExtensions/<uuid>/<bundle-id>/...), NOT from the .app bundle,
+// so the trust check must also accept that path shape.
+const networkExtensionBundleID = "com.somoore.agentsnitch.network-extension.systemextension"
+
 // isTrustedEmitterExe is a pure validator: the resolved executable path must be
-// exactly the installed emitter binary (env-override aware).
+// exactly the installed emitter binary in one of the canonical support dirs.
 func isTrustedEmitterExe(exe string) bool {
 	exe = filepath.Clean(strings.TrimSpace(exe))
 	if exe == "" {
 		return false
 	}
-	bin := agentSnitchSupportBin()
-	if bin == "" {
-		return false
+	for _, bin := range agentSnitchSupportBins() {
+		if exe == filepath.Join(bin, "emitter") {
+			return true
+		}
 	}
-	return exe == filepath.Join(bin, "emitter")
+	return false
 }
 
 // isTrustedNetworkSenderExe is a pure validator: the resolved executable path must
-// live inside the installed AgentSnitch app bundle (the UI or the embedded Network
-// Extension), env-override aware.
+// be the installed AgentSnitch UI / Network Extension. Trusted shapes:
+//   - inside the installed .app bundle (UI, or NE embedded in the bundle), and
+//   - inside the macOS system extension store path for the AgentSnitch NE
+//     (/Library/SystemExtensions/.../<bundle-id>/...), where activated system
+//     extensions actually execute.
 func isTrustedNetworkSenderExe(exe string) bool {
 	exe = filepath.Clean(strings.TrimSpace(exe))
 	if exe == "" {
 		return false
 	}
 	app := filepath.Clean(agentSnitchAppPath())
-	if app == "" {
-		return false
+	if app != "" && (exe == app || strings.HasPrefix(exe, app+string(filepath.Separator))) {
+		return true
 	}
-	return exe == app || strings.HasPrefix(exe, app+string(filepath.Separator))
+	// Activated Network Extension in the system extension store. The store path
+	// is /Library/SystemExtensions/<uuid>/<bundle-id>/...; require BOTH the store
+	// root prefix and the AgentSnitch NE bundle id to appear as a path segment.
+	const storeRoot = "/Library/SystemExtensions/"
+	if strings.HasPrefix(exe, storeRoot) &&
+		strings.Contains(exe, string(filepath.Separator)+networkExtensionBundleID+string(filepath.Separator)) {
+		return true
+	}
+	return false
 }
 
 func handleNetwork(nf event.NetworkFlowEvent, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) {

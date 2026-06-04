@@ -4,8 +4,29 @@ package main
 
 import (
 	"net"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
+
+// resolvePeerExePath returns the kernel-reported executable path for pid.
+// On darwin `ps -o comm=` yields the absolute executable path (not argv), which
+// argv cannot forge.
+func resolvePeerExePath(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	if err != nil {
+		return "", false
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" || !strings.HasPrefix(path, "/") {
+		return "", false
+	}
+	return path, true
+}
 
 const (
 	solLocal     = 0

@@ -1393,7 +1393,7 @@ func TestIsTrustedEmitterExe(t *testing.T) {
 		exe  string
 		want bool
 	}{
-		{"installed emitter", emitter, true},
+		{"installed emitter (env support dir)", emitter, true},
 		{"evil emitter elsewhere", "/tmp/evil/emitter", false},
 		{"emitter basename only (no path)", "emitter", false},
 		{"sibling binary in support bin", "/Users/dev/Library/Application Support/AgentSnitch/bin/doctor", false},
@@ -1409,6 +1409,23 @@ func TestIsTrustedEmitterExe(t *testing.T) {
 	}
 }
 
+// Without AGENTSNITCH_SUPPORT_DIR, both the per-user (create.sh) and system-wide
+// (signed .pkg) install dirs must be trusted.
+func TestIsTrustedEmitterExeDefaultInstallDirs(t *testing.T) {
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "")
+	t.Setenv("HOME", "/Users/dev")
+	cases := map[string]bool{
+		"/Users/dev/Library/Application Support/AgentSnitch/bin/emitter": true, // create.sh per-user
+		"/Library/Application Support/AgentSnitch/bin/emitter":           true, // signed pkg system-wide
+		"/tmp/evil/emitter": false,
+	}
+	for exe, want := range cases {
+		if got := isTrustedEmitterExe(exe); got != want {
+			t.Errorf("isTrustedEmitterExe(%q) = %v, want %v", exe, got, want)
+		}
+	}
+}
+
 func TestIsTrustedNetworkSenderExe(t *testing.T) {
 	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
 	cases := []struct {
@@ -1419,6 +1436,9 @@ func TestIsTrustedNetworkSenderExe(t *testing.T) {
 		{"UI binary in bundle", "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui", true},
 		{"network extension in bundle", "/Applications/AgentSnitch.app/Contents/Library/SystemExtensions/com.somoore.agentsnitch.network-extension.systemextension/Contents/MacOS/AgentSnitchNetworkExtension", true},
 		{"the app dir itself", "/Applications/AgentSnitch.app", true},
+		// Activated Network Extension runs from the macOS system extension store.
+		{"NE in system extension store", "/Library/SystemExtensions/AB12CD34-0000/com.somoore.agentsnitch.network-extension.systemextension/Contents/MacOS/AgentSnitchNetworkExtension", true},
+		{"unrelated binary in system extension store", "/Library/SystemExtensions/AB12CD34-0000/com.evil.other/Contents/MacOS/x", false},
 		{"evil binary outside bundle", "/tmp/evil/agentsnitch-ui", false},
 		// SPOOF: prefix-confusion — a sibling dir that merely starts with the bundle name.
 		{"spoof: bundle-name prefix sibling", "/Applications/AgentSnitch.app.evil/x", false},
