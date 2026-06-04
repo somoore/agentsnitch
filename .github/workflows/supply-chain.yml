@@ -109,4 +109,7 @@ jobs:
       - name: gitleaks
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
+          # gitleaks-action requires GITHUB_TOKEN to scan pull_request events
+          # (used only to read the PR's commit range; no secret findings here).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
