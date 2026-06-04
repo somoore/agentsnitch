@@ -136,7 +136,7 @@ For Network Extension smoke testing, explicitly enable the Network Sensor in Set
 - Never commit real tokens, credentials, signing identities, provisioning profiles, certificate material, notary credentials, `.env` files, keychains, or local transcripts.
 - Test fixtures must use obvious placeholders such as `<example-token>` rather than realistic token formats that trip scanners or normalize unsafe examples.
 - Before pushing, run a tracked-tree secret scan and inspect full-history scanner findings. Current docs include a repeatable workflow in [docs/getting-started.md](./docs/getting-started.md#secret-audit).
-- Release signing and notarization are documented in [docs/release.md](./docs/release.md). GitHub Actions consumes signing assets from encrypted repository secrets and publishes tagged prerelease packages.
+- Release signing and notarization use GitHub Actions, which consumes signing assets from encrypted repository secrets and publishes tagged prerelease packages.
 
 AgentSnitch should use precise language: **linked**, **correlated**, **after sensitive access**, **same process tree**, and **outbound activity**. It should avoid claims such as "exfiltrated", "leaked", or "stolen" unless future evidence supports those stronger conclusions.
 
@@ -145,7 +145,6 @@ AgentSnitch should use precise language: **linked**, **correlated**, **after sen
 - [PRD.md](./PRD.md) - product requirements and scope
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - system design and data models
 - [docs/getting-started.md](./docs/getting-started.md) - local build, signing, packaging, and verification
-- [docs/release.md](./docs/release.md) - GitHub Actions release signing, notarization, and required secrets
 - [docs/subagent-detection-phase1.md](./docs/subagent-detection-phase1.md) - Claude Code sub-agent detection, including OS-process, hook-inferred `Agent` tool, and sidechain transcript coverage
 - [extension/INTEGRATION.md](./extension/INTEGRATION.md) - macOS System Extension integration notes
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - contribution priorities
