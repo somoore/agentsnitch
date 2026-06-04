@@ -74,12 +74,13 @@
 .cr-zzz span:nth-child(3) { font-size: 21px; left: 28px; top: -10px; animation-delay: .8s; }
 @keyframes crrise { 0% { transform: translateY(6px); opacity: 0; } 30% { opacity: .9; } 100% { transform: translateY(-10px); opacity: 0; } }
 
-.cr-bubble { position: absolute; left: 158px; bottom: 92px; width: 168px; padding: 10px 12px; border-radius: 12px 12px 12px 3px;
+.cr-bubble { position: absolute; left: 132px; bottom: 92px; width: 160px; max-width: calc(100% - 140px); padding: 10px 12px; border-radius: 12px 12px 12px 3px;
   background: #1A2531; border: 1px solid #314250; z-index: 6; opacity: 0; transform: translateY(8px) scale(.96);
   transform-origin: 0 100%; transition: opacity .3s, transform .3s cubic-bezier(.3,1.4,.5,1); pointer-events: none; }
 .cr-bubble.show { opacity: 1; transform: translateY(0) scale(1); }
-.cr-bubble-text { font-size: 11px; line-height: 15px; color: var(--text); font-weight: 600; }
-.cr-bubble-meta { font-family: 'Roboto Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 4px; }
+.cr-bubble-text { font-size: 11px; line-height: 15px; color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+/* long destinations (e.g. *.bc.googleusercontent.com) must wrap, not overflow the clipped pen */
+.cr-bubble-meta { font-family: 'Roboto Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; word-break: break-all; }
 
 /* ===== easter-egg overlay (in-app full-screen) ===== */
 #creature-egg-overlay {

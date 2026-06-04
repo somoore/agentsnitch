@@ -173,6 +173,9 @@ class CreatureView {
     subs.textContent = n ? `${n} hatchling${n > 1 ? 's' : ''}` : '';
     subs.style.display = n ? '' : 'none';
   }
+
+  // Tear down the underlying engine (timers/listeners/ALL_ENGINES entry).
+  destroy() { if (this._engine && this._engine.destroy) this._engine.destroy(); }
 }
 
 // ===========================================================================
@@ -200,10 +203,21 @@ class CreaturePen {
       v.setSubcount((subsByParent[a.id] || []).length);
     });
 
-    // despawn creatures whose agent vanished
+    // despawn creatures whose agent vanished (tear down engine + element)
     for (const [id, v] of this.views) {
-      if (!seen.has(id)) { v.el.classList.add('cr-despawn'); setTimeout(() => v.el.remove(), 400); this.views.delete(id); }
+      if (!seen.has(id)) {
+        v.el.classList.add('cr-despawn');
+        v.destroy();
+        setTimeout(() => v.el.remove(), 400);
+        this.views.delete(id);
+      }
     }
+  }
+
+  // Tear down every creature (engines, timers, listeners) and empty the stage.
+  destroy() {
+    for (const v of this.views.values()) { v.destroy(); v.el.remove(); }
+    this.views.clear();
   }
 }
 
@@ -212,7 +226,7 @@ class CreaturePen {
 // (No auto-boot: the creature view only runs while the overlay is open.)
 // ===========================================================================
 const CreatureEgg = (() => {
-  let pen = null, unlisten = null, timer = null, started = false;
+  let pen = null, unlisten = null, timer = null, started = false, gen = 0;
 
   async function refresh() {
     if (!pen) return;
@@ -222,19 +236,25 @@ const CreatureEgg = (() => {
 
   async function start() {
     if (started) return; started = true;
+    const myGen = ++gen;               // generation token: abort if stop() runs during awaits
     const container = document.getElementById('creature-stage');
     if (container) container.innerHTML = '';
     pen = new CreaturePen(container);
-    try { unlisten = await listen('status-changed', () => refresh()); } catch (_) {}
+    let un = null;
+    try { un = await listen('status-changed', () => refresh()); } catch (_) {}
+    if (myGen !== gen) { if (typeof un === 'function') { try { un(); } catch (_) {} } return; } // closed mid-start
+    unlisten = un;
     await refresh();
+    if (myGen !== gen) return;         // closed during first refresh; stop() already cleaned up
     timer = setInterval(refresh, 1500); // fallback poll
   }
 
   function stop() {
     started = false;
+    gen++;                             // invalidate any in-flight start()
     if (timer) { clearInterval(timer); timer = null; }
     if (typeof unlisten === 'function') { try { unlisten(); } catch (_) {} unlisten = null; }
-    pen = null;
+    if (pen) { pen.destroy(); pen = null; }
   }
 
   return { start, stop };

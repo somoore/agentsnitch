@@ -67,6 +67,7 @@ class CSSCreatureEngine {
     this.bubble = penEl.querySelector('.cr-bubble');
     this._arena = penEl.querySelector('.cr-arena') || this.critter.parentElement;
     this.mood = 'idle';
+    this._alive = true;
     ALL_ENGINES.push(this);
     this._wireInteractions();
     this._blinkLoop(); this._saccadeLoop();
@@ -281,8 +282,21 @@ class CSSCreatureEngine {
     crt.addEventListener('pointercancel', (e) => this.endDrag(e));
   }
 
-  _blinkLoop() { const t = () => { this.blink(); setTimeout(t, 2500 + Math.random() * 3500); }; setTimeout(t, 1000 + Math.random() * 2000); }
-  _saccadeLoop() { const t = () => { if (!this._cursorDriven && !this.dragging && this.mood !== 'asleep') this.look((Math.random() * 2 - 1) * 0.5, (Math.random() * 2 - 1) * 0.4); setTimeout(t, 1300 + Math.random() * 1600); }; setTimeout(t, 800); }
+  _blinkLoop() { const t = () => { if (!this._alive) return; this.blink(); this._blinkT = setTimeout(t, 2500 + Math.random() * 3500); }; this._blinkT = setTimeout(t, 1000 + Math.random() * 2000); }
+  _saccadeLoop() { const t = () => { if (!this._alive) return; if (!this._cursorDriven && !this.dragging && this.mood !== 'asleep') this.look((Math.random() * 2 - 1) * 0.5, (Math.random() * 2 - 1) * 0.4); this._saccadeT = setTimeout(t, 1300 + Math.random() * 1600); }; this._saccadeT = setTimeout(t, 800); }
+
+  // Tear down so reopening the overlay doesn't accumulate engines/timers/listeners.
+  destroy() {
+    this._alive = false;
+    clearTimeout(this._blinkT);
+    clearTimeout(this._saccadeT);
+    clearTimeout(this._quipT);
+    if (this._raf) cancelAnimationFrame(this._raf);
+    // if mid-drag, return the critter to its arena so the drag layer doesn't keep it
+    if (this.dragging) { this.dragging = false; try { this._arena.appendChild(this.critter); } catch (_) {} this.critter.classList.remove('dragging'); }
+    const i = ALL_ENGINES.indexOf(this);
+    if (i >= 0) ALL_ENGINES.splice(i, 1);
+  }
 }
 
 // global cursor tracking — every creature watches the pointer
