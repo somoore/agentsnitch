@@ -85,7 +85,7 @@ checks use your installed toolchain.
 
 ### Required local toolchain
 
-- **Go 1.26.3** (matches `go.mod`). AgentSnitch is intentionally **standard-library
+- **Go 1.26.4** (matches `go.mod`). AgentSnitch is intentionally **standard-library
   only**: `go.mod` has no `require` block and there is no `go.sum`. The dependency
   tripwire (`scripts/check-deps.sh`) fails the build if that changes.
 - **Rust** (stable) with `clippy` and `rustfmt` for the Tauri UI in `ui/src-tauri`.

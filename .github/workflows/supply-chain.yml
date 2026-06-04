@@ -98,7 +98,7 @@ jobs:
         run: cargo deny check
 
   secrets:
-    name: Secrets (gitleaks + TruffleHog OSS)
+    name: Secrets (gitleaks full-history scan)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history)
