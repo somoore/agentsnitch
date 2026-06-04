@@ -1381,23 +1381,88 @@ func TestWithinClaudeProjectsRootContainsHookSuppliedPaths(t *testing.T) {
 	}
 }
 
-func TestTrustedSocketPeersRequireAgentSnitchProcesses(t *testing.T) {
-	processes := parseProcessTableOutput(`
-100 1 Mon Jun  1 10:00:00 2026 /Library/Application Support/AgentSnitch/bin/emitter pretooluse
-101 1 Mon Jun  1 10:00:00 2026 /tmp/evil/emitter pretooluse
-102 1 Mon Jun  1 10:00:00 2026 /Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui
-103 1 Mon Jun  1 10:00:00 2026 /tmp/evil/agentsnitch-ui
-`)
-	if !trustedSemanticSocketPeer(100, processes) {
-		t.Fatal("packaged emitter should be trusted for semantic socket events")
+// isTrustedEmitterExe / isTrustedNetworkSenderExe are the pure path validators.
+// These are the security-critical core: trust must key off the kernel-reported
+// executable path, never the argv/command string.
+func TestIsTrustedEmitterExe(t *testing.T) {
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "/Users/dev/Library/Application Support/AgentSnitch")
+	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
+	const emitter = "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter"
+	cases := []struct {
+		name string
+		exe  string
+		want bool
+	}{
+		{"installed emitter", emitter, true},
+		{"evil emitter elsewhere", "/tmp/evil/emitter", false},
+		{"emitter basename only (no path)", "emitter", false},
+		{"sibling binary in support bin", "/Users/dev/Library/Application Support/AgentSnitch/bin/doctor", false},
+		// SPOOF: a real binary whose ARGS mention the emitter path. The exe path is
+		// /usr/bin/perl, so trust must be denied. (Old substring code accepted this.)
+		{"spoof: real exe, fake path in args", "/usr/bin/perl", false},
+		{"empty", "", false},
 	}
-	if trustedSemanticSocketPeer(101, processes) {
-		t.Fatal("non-AgentSnitch emitter path should not be trusted")
+	for _, tc := range cases {
+		if got := isTrustedEmitterExe(tc.exe); got != tc.want {
+			t.Errorf("%s: isTrustedEmitterExe(%q) = %v, want %v", tc.name, tc.exe, got, tc.want)
+		}
 	}
-	if !trustedNetworkSocketPeer(102, processes) {
-		t.Fatal("AgentSnitch UI should be trusted for network socket forwarding")
+}
+
+func TestIsTrustedNetworkSenderExe(t *testing.T) {
+	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
+	cases := []struct {
+		name string
+		exe  string
+		want bool
+	}{
+		{"UI binary in bundle", "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui", true},
+		{"network extension in bundle", "/Applications/AgentSnitch.app/Contents/Library/SystemExtensions/com.somoore.agentsnitch.network-extension.systemextension/Contents/MacOS/AgentSnitchNetworkExtension", true},
+		{"the app dir itself", "/Applications/AgentSnitch.app", true},
+		{"evil binary outside bundle", "/tmp/evil/agentsnitch-ui", false},
+		// SPOOF: prefix-confusion — a sibling dir that merely starts with the bundle name.
+		{"spoof: bundle-name prefix sibling", "/Applications/AgentSnitch.app.evil/x", false},
+		{"empty", "", false},
 	}
-	if trustedNetworkSocketPeer(103, processes) {
-		t.Fatal("non-AgentSnitch UI path should not be trusted")
+	for _, tc := range cases {
+		if got := isTrustedNetworkSenderExe(tc.exe); got != tc.want {
+			t.Errorf("%s: isTrustedNetworkSenderExe(%q) = %v, want %v", tc.name, tc.exe, got, tc.want)
+		}
+	}
+}
+
+// The trusted*SocketPeer wrappers resolve the peer's executable path (injected
+// here) and apply the validators. Confirms the resolver→validator wiring.
+func TestTrustedSocketPeersUseExecutablePath(t *testing.T) {
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "/Users/dev/Library/Application Support/AgentSnitch")
+	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
+
+	exeByPID := map[int]string{
+		100: "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter", // real emitter
+		101: "/usr/bin/perl",                                                  // spoof: AgentSnitch path only in args
+		102: "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui",    // real UI
+		103: "/tmp/evil/agentsnitch-ui",                                       // impostor
+	}
+	orig := peerExePath
+	t.Cleanup(func() { peerExePath = orig })
+	peerExePath = func(pid int) (string, bool) {
+		p, ok := exeByPID[pid]
+		return p, ok
+	}
+
+	if !trustedSemanticSocketPeer(100, nil) {
+		t.Fatal("installed emitter should be trusted for semantic events")
+	}
+	if trustedSemanticSocketPeer(101, nil) {
+		t.Fatal("spoofed argv (real exe /usr/bin/perl) must NOT be trusted")
+	}
+	if !trustedNetworkSocketPeer(102, nil) {
+		t.Fatal("installed UI should be trusted for network forwarding")
+	}
+	if trustedNetworkSocketPeer(103, nil) {
+		t.Fatal("impostor outside the app bundle must NOT be trusted")
+	}
+	if trustedSemanticSocketPeer(999, nil) {
+		t.Fatal("unresolvable peer PID must NOT be trusted")
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -228,11 +230,11 @@ func handleSemantic(se event.SemanticEvent, peerPID int, hasPeerPID bool, sessio
 	processes := snapshotProcessTable()
 	// peerPID is the kernel-attested PID of the socket peer (LOCAL_PEERPID /
 	// SO_PEERCRED). There is an inherent TOCTOU race: the peer can exit between
-	// the connection's accept and this process-table lookup, and the kernel can
-	// reuse its PID for an unrelated process. We accept that race here because
-	// the threat model is local-only and the path-marker trust check below still
-	// requires the (possibly reused) PID to resolve to a process living under an
-	// AgentSnitch install path, which makes practical spoofing hard.
+	// the connection's accept and the trust check, and the kernel can reuse its
+	// PID for an unrelated process. We accept that race here because the threat
+	// model is local-only and the trust check below resolves the peer's actual
+	// executable path (kernel-reported, not argv) and requires it to be the
+	// installed AgentSnitch emitter, which makes practical spoofing hard.
 	if hasPeerPID && peerPID > 0 && se.PID != peerPID {
 		log.Printf("SEMANTIC_INVALID: claimed pid %d does not match socket peer pid %d", se.PID, peerPID)
 		return
@@ -298,40 +300,99 @@ func handleSocketNetwork(nf event.NetworkFlowEvent, peerPID int, hasPeerPID bool
 	handleNetworkWithProcesses(nf, processes, sessions, status, transcripts)
 }
 
-func trustedSemanticSocketPeer(pid int, processes map[int]correlator.ProcessInfo) bool {
-	info, ok := processes[pid]
+// peerExePath resolves a PID's actual executable path (kernel-reported, NOT the
+// argv/command line). It is a package var so tests can inject a fake resolver.
+//
+// SECURITY: trust must be based on the executable image, not the command string.
+// `ps -o command=` (the old basis) includes argv, so a same-user process can put
+// an AgentSnitch-looking path in its arguments and spoof the substring checks.
+// `ps -o comm=` reports the kernel's executable path, which argv cannot forge.
+var peerExePath = func(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	if err != nil {
+		return "", false
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", false
+	}
+	return path, true
+}
+
+// trustedSemanticSocketPeer reports whether the socket peer is the installed
+// AgentSnitch emitter, validated by its actual executable path.
+func trustedSemanticSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
+	exe, ok := peerExePath(pid)
 	if !ok {
 		return false
 	}
-	return commandLooksLikeEmitter(info.Name) && hasAgentSnitchPathMarker(info.Name)
+	return isTrustedEmitterExe(exe)
 }
 
-func trustedNetworkSocketPeer(pid int, processes map[int]correlator.ProcessInfo) bool {
-	info, ok := processes[pid]
+// trustedNetworkSocketPeer reports whether the socket peer is the installed
+// AgentSnitch UI / Network Extension, validated by its actual executable path.
+func trustedNetworkSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
+	exe, ok := peerExePath(pid)
 	if !ok {
 		return false
 	}
-	lower := strings.ToLower(info.Name)
-	return hasAgentSnitchPathMarker(info.Name) &&
-		(strings.Contains(lower, "network-extension") ||
-			strings.Contains(lower, "agentsnitch-ui") ||
-			strings.Contains(lower, "agentsnitch.app"))
+	return isTrustedNetworkSenderExe(exe)
 }
 
-func hasAgentSnitchPathMarker(command string) bool {
-	lower := strings.ToLower(command)
-	return strings.Contains(lower, "/application support/agentsnitch/") ||
-		strings.Contains(lower, "/agentsnitch.app/") ||
-		strings.Contains(lower, "/agentsnitch/") ||
-		strings.Contains(lower, "com.somoore.agentsnitch.network-extension.systemextension")
-}
-
-func commandLooksLikeEmitter(command string) bool {
-	command = strings.TrimSpace(command)
-	if command == "emitter" || strings.HasPrefix(command, "emitter ") {
-		return true
+// agentSnitchSupportBin returns the canonical installed support-binary directory,
+// honoring the same env overrides as scripts/create.sh.
+func agentSnitchSupportBin() string {
+	dir := strings.TrimSpace(os.Getenv("AGENTSNITCH_SUPPORT_DIR"))
+	if dir == "" {
+		if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+			dir = filepath.Join(home, "Library", "Application Support", "AgentSnitch")
+		}
 	}
-	return strings.Contains(command, "/emitter ") || strings.HasSuffix(command, "/emitter")
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "bin")
+}
+
+// agentSnitchAppPath returns the canonical installed app bundle path, honoring the
+// same env override as scripts/create.sh.
+func agentSnitchAppPath() string {
+	if p := strings.TrimSpace(os.Getenv("AGENTSNITCH_APP_PATH")); p != "" {
+		return p
+	}
+	return "/Applications/AgentSnitch.app"
+}
+
+// isTrustedEmitterExe is a pure validator: the resolved executable path must be
+// exactly the installed emitter binary (env-override aware).
+func isTrustedEmitterExe(exe string) bool {
+	exe = filepath.Clean(strings.TrimSpace(exe))
+	if exe == "" {
+		return false
+	}
+	bin := agentSnitchSupportBin()
+	if bin == "" {
+		return false
+	}
+	return exe == filepath.Join(bin, "emitter")
+}
+
+// isTrustedNetworkSenderExe is a pure validator: the resolved executable path must
+// live inside the installed AgentSnitch app bundle (the UI or the embedded Network
+// Extension), env-override aware.
+func isTrustedNetworkSenderExe(exe string) bool {
+	exe = filepath.Clean(strings.TrimSpace(exe))
+	if exe == "" {
+		return false
+	}
+	app := filepath.Clean(agentSnitchAppPath())
+	if app == "" {
+		return false
+	}
+	return exe == app || strings.HasPrefix(exe, app+string(filepath.Separator))
 }
 
 func handleNetwork(nf event.NetworkFlowEvent, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) {
