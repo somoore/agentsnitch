@@ -1998,10 +1998,10 @@ fn append_ui_log(line: &str) {
         .create(true)
         .append(true)
         .open(&path);
-    let _ = open_result.and_then(|mut f| {
+    if let Ok(mut f) = open_result {
         use std::io::Write;
-        writeln!(f, "{}", line)
-    });
+        let _ = writeln!(f, "{line}");
+    }
     #[cfg(unix)]
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
 }
@@ -5123,5 +5123,7 @@ pub fn run() {
             if let RunEvent::Reopen { .. } = event {
                 show_panel(app);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
         });
 }

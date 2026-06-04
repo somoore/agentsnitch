@@ -68,8 +68,11 @@ func (w *TranscriptWriter) Append(sessionID, kind string, ev interface{}) error 
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	if _, err := f.Write(append(raw, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)
