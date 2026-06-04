@@ -1,5 +1,5 @@
 // AgentSnitch Tauri UI (tray + primary evidence window + live event display)
-// Implements the MVP described in ARCHITECTURE.md §3.4 and PRD "oh shit" flows.
+// Implements the MVP described in architecture.md §3.4 and prd.md "oh shit" flows.
 // - Proper tray with menu + icon state change (active vs quiet)
 // - Normal movable macOS window with tray affordances
 // - Receives validated daemon-forwarded events via ~/.agentsnitch/ui.sock

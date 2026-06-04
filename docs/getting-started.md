@@ -1,10 +1,16 @@
 # Getting Started
 
-AgentSnitch is a local MVP. The current local loop proves the core product path:
+AgentSnitch is a local-first macOS pre-alpha. The current release path is built around one product loop:
 
 1. hook events provide semantic truth;
 2. network events provide OS/process truth;
 3. the daemon correlates those streams into explainable local evidence.
+
+## Install The Latest Pre-Alpha
+
+Download [AgentSnitch v0.1.0-pre-alpha.4](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.4) and install the macOS `.pkg`.
+
+The installer includes `AgentSnitch.app`, the local daemon, support tools, LaunchAgent registration, and Claude Code hook registration for the console user. The Network Sensor is installed as an optional bundled system extension but stays disabled until explicitly enabled from app Settings.
 
 ## Build
 
@@ -86,38 +92,69 @@ For normal development and shipped installs, leave the default NetworkStatistics
 
 ## Network Observation
 
-The default local MVP path is semantic hooks plus unprivileged userland process/network correlation:
+The default product path is semantic hooks plus unprivileged userland process/network correlation:
 
 ```mermaid
 flowchart LR
-    Hooks["Claude Code hooks"]
-    NetStats["NetworkStatistics/nettop"]
-    Lsof["lsof fallback"]
-    PS["ps process snapshots"]
-    Socket["Daemon Unix socket"]
+    classDef agent fill:#eef6ff,stroke:#4c8eda,color:#102033
+    classDef sensor fill:#fff7e8,stroke:#d4942f,color:#2a1b00
+    classDef daemon fill:#eefaf1,stroke:#3f9d5c,color:#0b2815
+    classDef ui fill:#f6f0ff,stroke:#8c63d8,color:#21133d
+
+    subgraph Agent["Claude Code session"]
+        Hooks["PreToolUse / PostToolUse hooks"]
+        Procs["Agent process tree"]
+    end
+
+    subgraph Sensors["Default local sensors"]
+        NetStats["NetworkStatistics / nettop"]
+        Lsof["lsof fallback"]
+        PS["ps process snapshots"]
+        Socket["Daemon Unix socket"]
+    end
+
     Correlator["Daemon / Correlator"]
-    UI["Tauri UI"]
+    UI["Tauri evidence UI"]
 
     Hooks -->|"semantic events"| Socket
+    Procs -->|"external flow rows"| NetStats
+    Procs -->|"process ancestry"| PS
     NetStats -->|"agent-like external flows"| Correlator
     Lsof -.->|"fallback external flows"| Correlator
     PS -->|"PPID/process enrichment"| Correlator
     Socket --> Correlator
     Correlator -->|"raw network rows + linked evidence"| UI
+
+    class Hooks,Procs agent
+    class NetStats,Lsof,PS,Socket sensor
+    class Correlator daemon
+    class UI ui
 ```
 
 The optional Network Sensor path is:
 
 ```mermaid
 flowchart LR
+    classDef app fill:#eef6ff,stroke:#4c8eda,color:#102033
+    classDef sensor fill:#fff7e8,stroke:#d4942f,color:#2a1b00
+    classDef daemon fill:#eefaf1,stroke:#3f9d5c,color:#0b2815
+    classDef ui fill:#f6f0ff,stroke:#8c63d8,color:#21133d
+
+    Settings["AgentSnitch Settings"]
     NE["Opt-in macOS Network Extension"]
     Socket["Daemon Unix socket"]
     Correlator["Daemon / Correlator"]
-    UI["Tauri UI"]
+    UI["Tauri evidence UI"]
 
+    Settings -->|"user enables sensor"| NE
     NE -->|"metadata-only network_extension FlowEvent"| Socket
     Socket --> Correlator
     Correlator -->|"linked evidence"| UI
+
+    class Settings app
+    class NE,Socket sensor
+    class Correlator daemon
+    class UI ui
 ```
 
 When explicitly enabled, the Tauri app dynamically loads the Swift host bridge dylib, starts the host-side XPC listener for activation/fallback, submits system-extension activation, and saves an enabled `NEFilterManager` socket-filter configuration bound to `com.somoore.agentsnitch.network-extension`. That configuration passes the daemon socket path to the provider, so real flow records can be forwarded directly from the extension to the daemon.

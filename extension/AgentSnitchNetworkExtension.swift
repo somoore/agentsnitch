@@ -15,7 +15,7 @@
  *   host app's Contents/Library/SystemExtensions/.
  * - Host app must request activation via OSSystemExtensionRequest.
  *
- * See extension/INTEGRATION.md for full setup, entitlements, build, XPC, Tauri integration,
+ * See extension/integration.md for full setup, entitlements, build, XPC, Tauri integration,
  * recommended provider choice, and attribution details.
  */
 
@@ -26,7 +26,7 @@ import os.log
 import Security
 
 // MARK: - FlowEvent (serializable shape for XPC / daemon)
-// Keep this in sync with the "Network Flow Event" in ARCHITECTURE.md and the Go daemon's
+// Keep this in sync with the "Network Flow Event" in architecture.md and the Go daemon's
 // NetworkFlowEvent / JSON unmarshaling. Use the schema for versioning.
 
 struct FlowEvent: Codable {

@@ -51,7 +51,7 @@ type ProcessInfo struct {
 
 // SessionState holds the in-memory view of the current agent session for
 // correlation and basic process tracking. It is the core of the daemon's
-// "current session" as described in ARCHITECTURE.md §3.3 and §4.
+// "current session" as described in architecture.md §3.3 and §4.
 type SessionState struct {
 	mu sync.Mutex
 

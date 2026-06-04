@@ -1,8 +1,8 @@
 # AgentSnitch — Product Requirements Document (PRD)
 
-**Version:** 0.2 (Local MVP)
+**Version:** 0.2 (pre-alpha)
 **Date:** 2026-06
-**Status:** Local MVP implemented; distribution polish remains
+**Status:** Pre-alpha implemented; distribution polish remains
 **Owner:** Scott Moore (somoore)
 
 ---
@@ -67,12 +67,13 @@ Within 5–15 minutes of a developer using an AI coding agent with AgentSnitch i
 - Cross-platform support (Linux/Windows come after macOS is solid).
 - Full tamper-evidence or forensic ledger (a lightweight session transcript is fine).
 
-### Current Local MVP Status
+### Current Pre-Alpha Status
 
-The local MVP now proves the core product path on macOS:
+The current pre-alpha proves the core product path on macOS:
 
 - Claude Code hook events provide semantic truth.
-- The macOS Network Extension provides real OS/process network truth.
+- NetworkStatistics/`nettop` plus process snapshots provide the default OS/process network truth, with `lsof` as fallback.
+- The bundled macOS Network Extension is optional and provides stronger event-driven attribution when the user explicitly enables the Network Sensor.
 - The daemon links those streams using time-window and process-tree evidence.
 - The UI defaults to attention-needed evidence, keeps raw hook/network events separated to avoid flooding the user, and lets users expand linked cards for raw reasons, timing, byte counts, destination, and process-tree context.
 - Linked cards separate correlation confidence from risk and decision state. The current decision state is `Observed`; future policy work can move the same field to `Allowed`, `Blocked`, or `Would Block`.
@@ -248,9 +249,9 @@ Runtime product evidence must come from real sensors only. Test fixtures may con
 - Basic process detection.
 - Skeleton Tauri tray app that can wake on receiving an event.
 
-**Phase 1 — MVP (local visibility core complete)**
+**Phase 1 — Pre-alpha (local visibility core complete)**
 - Full sensor registration + install story for Claude Code (others documented).
-- Working macOS Network Extension with attribution.
+- Default unprivileged NetworkStatistics/`nettop` network observer, `lsof` fallback, and opt-in macOS Network Extension attribution.
 - Correlation heuristics + interestingness.
 - Functional minimal popup UI showing linked events.
 - Session export.
@@ -289,7 +290,7 @@ Runtime product evidence must come from real sensors only. Test fixtures may con
 - A developer can follow a short README, install on a clean macOS machine, start Claude Code, cause a sensitive read + external network action (deliberately or naturally), and see a clear correlated entry in the popup within seconds.
 - The same developer describes the experience as "eye-opening" or "I finally understand the risk" rather than "this is annoying."
 - The code and docs are clear enough that another contributor could extend the emitter to a second agent without heroic effort.
-- `doctor` can prove hooks, daemon, UI, Network Extension observer, and linked evidence status without relying on fabricated runtime events.
+- `doctor` can prove hooks, daemon, UI, active network observer, optional Network Extension status, and linked evidence status without relying on fabricated runtime events.
 
 ---
 

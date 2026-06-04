@@ -1,24 +1,41 @@
-# Sub-Agent Detection Phase 1 Notes
+# Sub-Agent Detection
 
 Date: 2026-06-03
 
-Scope: Claude Code CLI sub-agent feasibility. These notes use temporary daemon logging added under the `[SUBAGENT?]` and `[SUBAGENT-DELEGATION]` prefixes.
+Scope: Claude Code CLI sub-agent detection across process-backed fanout, hook-inferred `Agent` tool launches, and Claude sidechain transcript activity. The original feasibility scenarios used temporary daemon logging under the `[SUBAGENT?]`, `[SUBAGENT-DELEGATION]`, and `[SUBAGENT-BURST?]` prefixes; the implementation now emits structured agent lifecycle records for the UI.
 
 Current implementation note: AgentSnitch now has three sub-agent paths. OS-process detection still covers new Claude CLI processes discovered through tmux ancestry, Claude ancestry, hook lineage, session cwd, and bursts. Claude Code's built-in parallel `Agent` tool path may not spawn another `claude` process; for that case the daemon emits hook-inferred sub-agent lifecycle records keyed by the `Agent` tool's `tool_use_id`, named from `input_summary.description`, tagged with the hook PID, and shown under `Claude Code (subagents)` in the UI. The daemon also indexes Claude Code sidechain transcripts under `.claude/projects/<session>/subagents/*.jsonl`; those records carry Claude's `agentId` and later tool-use IDs, so AgentSnitch can recover subagent identity, surface sidechain tool-use rows as subagent activity, and attribute subsequent hook events after daemon restarts.
 
 ```mermaid
 flowchart LR
+    classDef parent fill:#eef6ff,stroke:#4c8eda,color:#102033
+    classDef signal fill:#fff7e8,stroke:#d4942f,color:#2a1b00
+    classDef core fill:#eefaf1,stroke:#3f9d5c,color:#0b2815
+    classDef ui fill:#f6f0ff,stroke:#8c63d8,color:#21133d
+
     Parent["Main Claude Code agent"]
-    OSFanout["OS-process fanout<br/>tmux / child claude / burst"]
-    HookAgent["Built-in Agent tool hook<br/>tool_use_id + description"]
-    Sidechain["Claude sidechain JSONL<br/>agentId + tool_use rows"]
+
+    subgraph Signals["Subagent signals"]
+        OSFanout["OS-process fanout<br/>tmux / child claude / burst"]
+        HookAgent["Built-in Agent tool hook<br/>tool_use_id + description"]
+        Sidechain["Claude sidechain JSONL<br/>agentId + tool_use rows"]
+    end
+
     Daemon["Daemon subagent index"]
     UI["UI hierarchy + agent event filter"]
 
-    Parent --> OSFanout --> Daemon
-    Parent --> HookAgent --> Daemon
-    Parent --> Sidechain --> Daemon
+    Parent --> OSFanout
+    OSFanout --> Daemon
+    Parent --> HookAgent
+    HookAgent --> Daemon
+    Parent --> Sidechain
+    Sidechain --> Daemon
     Daemon -->|"new_subagent + SubagentToolUse"| UI
+
+    class Parent parent
+    class OSFanout,HookAgent,Sidechain signal
+    class Daemon core
+    class UI ui
 ```
 
 ## Instrumentation

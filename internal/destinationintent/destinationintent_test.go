@@ -30,7 +30,7 @@ func TestExtractInfersWebSearchProviderIntent(t *testing.T) {
 }
 
 func TestExtractRejectsLocalFilePathsAndPlainBranches(t *testing.T) {
-	got := Extract("Bash", "/Users/me/project/README.md", "git checkout main", nil)
+	got := Extract("Bash", "/Users/me/project/readme.md", "git checkout main", nil)
 	if len(got) != 0 {
 		t.Fatalf("Extract() = %v, want no destination intent", got)
 	}

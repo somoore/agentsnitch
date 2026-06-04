@@ -6,7 +6,7 @@
 
 This document captures the current optional Network Extension implementation plus the build/signing research needed to distribute it inside a Tauri 2 macOS application bundle.
 
-**References (from ARCHITECTURE.md and PRD.md):**
+**References (from architecture.md and prd.md):**
 - §3.2 Network Extension (Ground Truth)
 - §5 IPC (XPC)
 - §6 Installation & Packaging
@@ -14,9 +14,9 @@ This document captures the current optional Network Extension implementation plu
 - Data model: Network Flow Event (see below)
 - "The System Extension lives inside (or is bundled with) the Tauri application bundle."
 - "Communication from extension to the daemon is direct Unix socket forwarding, with XPC retained for activation/configuration and fallback forwarding"
-- Provider choice validated for the MVP: `NEFilterDataProvider`
+- Provider choice validated for the pre-alpha: `NEFilterDataProvider`
 
-**Status:** Local MVP implementation. The default shipped path is semantic hooks plus unprivileged daemon-side NetworkStatistics/`nettop` process-network correlation, with `lsof` as fallback. The optional Network Sensor defines the `FlowEvent` contract, emits metadata-only records from `NEFilterDataProvider` when explicitly enabled, preserves `remoteHostname` as a best-effort destination display hint when macOS exposes it, and forwards real flow records directly from the extension to the daemon Unix socket configured through `NEFilterManager.providerConfiguration`. The Tauri app dynamically loads the Swift host bridge dylib for System Extension activation/configuration and keeps XPC available as a fallback flow forwarding path. The `make create` path builds, installs, signs, notarizes when credentials are available, registers hooks, starts the LaunchAgent daemon, launches the app, and runs `doctor`. Broader distribution still requires valid Apple Developer ID signing, host and extension provisioning profiles, notarization, and user/system approval on each machine.
+**Status:** Pre-alpha implementation. The default shipped path is semantic hooks plus unprivileged daemon-side NetworkStatistics/`nettop` process-network correlation, with `lsof` as fallback. The optional Network Sensor defines the `FlowEvent` contract, emits metadata-only records from `NEFilterDataProvider` when explicitly enabled, preserves `remoteHostname` as a best-effort destination display hint when macOS exposes it, and forwards real flow records directly from the extension to the daemon Unix socket configured through `NEFilterManager.providerConfiguration`. The Tauri app dynamically loads the Swift host bridge dylib for System Extension activation/configuration and keeps XPC available as a fallback flow forwarding path. The `make create` path builds, installs, signs, notarizes when credentials are available, registers hooks, starts the LaunchAgent daemon, launches the app, and runs `doctor`. Broader distribution still requires valid Apple Developer ID signing, host and extension provisioning profiles, notarization, and user/system approval on each machine.
 
 Signing and notarization work must never commit private keys, `.p12` exports, provisioning profiles, certificate material, keychains, Apple credentials, notarytool JSON, local logs, or generated `.app`/`.systemextension` bundles. Keep those artifacts outside the repo and rely on environment variables or local keychain state for packaging.
 
@@ -275,7 +275,7 @@ For complex embedding of a whole signed bundle, a script is almost always requir
 
 ### 1.5 Communication: Direct Socket + XPC
 
-The MVP data path sends flow records directly from the Network Extension to the daemon Unix socket. The host app writes that socket path into `NEFilterManager.providerConfiguration["daemon_socket"]` before saving the filter configuration. This keeps network telemetry flowing even when the UI process is only acting as activation/configuration host.
+The pre-alpha data path sends flow records directly from the Network Extension to the daemon Unix socket. The host app writes that socket path into `NEFilterManager.providerConfiguration["daemon_socket"]` before saving the filter configuration. This keeps network telemetry flowing even when the UI process is only acting as activation/configuration host.
 
 XPC remains useful and implemented for Apple-native host/extension communication:
 
@@ -325,9 +325,9 @@ Fallback XPC flow:
 - Bidirectional XPC possible if extension needs config updates from daemon (e.g. "quiet this host").
 
 **XPC message shape recommendation:**
-Use XPC dictionaries (or archived data). For simplicity in MVP, send a plist-compatible dict or JSON data blob.
+Use XPC dictionaries (or archived data). For simplicity in the pre-alpha, send a plist-compatible dict or JSON data blob.
 
-Define a stable `FlowEvent` (matches ARCHITECTURE Network Flow Event + extras for correlation).
+Define a stable `FlowEvent` (matches the network flow event in architecture.md plus extras for correlation).
 
 See skeleton code below for the struct.
 
@@ -405,7 +405,7 @@ See skeleton for NEFilterDataProvider example (easier logging).
  * Minimal skeleton for NEFilterDataProvider.
  * Logs flows with PID attribution, signing, endpoints. Sends FlowEvent via XPC stub.
  *
- * Build as part of a System Extension target (see INTEGRATION notes).
+ * Build as part of a System Extension target (see integration.md notes).
  * This file would live in an Xcode project or be compiled via xcodebuild from the extension/ dir.
  */
 
@@ -641,7 +641,7 @@ class AgentSnitchNetworkExtension: NEFilterDataProvider {
 ```
 agentsnitch/
   extension/
-    INTEGRATION.md                 # this file
+    integration.md                 # this file
     entitlements.plist             # for extension target (or .entitlements)
     AgentSnitchNetworkExtension.swift
     Info.plist                     # the extension's
@@ -649,7 +649,7 @@ agentsnitch/
     # Future:
     # AgentSnitchNetworkExtension.xcodeproj/   (or use xcodegen.yml)
     # build.sh                         # xcodebuild wrapper that produces the .systemextension
-    # README.md for the Xcode project
+    # readme.md for the Xcode project
 ```
 
 ### 3.2 How to Build the Extension
@@ -776,7 +776,7 @@ For codesign testing without full cert: use ad-hoc and developer mode.
 
 ## 4. How to Proceed (for main agent / future coding subagents)
 
-1. **Create the extension/ dir and files** from this INTEGRATION.md (the skeletons + entitlements + Info.plist).
+1. **Create the extension/ dir and files** from this integration.md (the skeletons + entitlements + Info.plist).
 2. **Update ui/src-tauri/tauri.conf.json** (see "Updates to ui files" below; add the NSSystemExtensionUsageDescription, hardenedRuntime, etc. Commented placeholders for files/beforeBundleCommand).
 3. **Add entitlements.plist** to ui/src-tauri/ (the main app one; the extension one lives in extension/).
 4. **Add build.rs** to ui/src-tauri/ (standard tauri + future bridge).
@@ -800,7 +800,7 @@ For codesign testing without full cert: use ad-hoc and developer mode.
 **Contract for other agents:**
 - FlowEvent JSON shape above (or the exact one the daemon defines; keep schema "agentsnitch.network.v0").
 - XPC service name: `com.somoore.agentsnitch.xpc` (or document the chosen one).
-- The NE only *emits*; never blocks in MVP.
+- The NE only *emits*; never blocks in the pre-alpha.
 
 ## 5. Open Questions / Gotchas from Research
 
