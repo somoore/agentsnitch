@@ -8,7 +8,7 @@
 fn main() {
     tauri_build::build();
 
-    // === Future: macOS NE / XPC bridge notes (see extension/INTEGRATION.md) ===
+    // === Future: macOS NE / XPC bridge notes (see extension/integration.md) ===
     // - If using swift-rs: add println!("cargo:rerun-if-changed=..."); and link the generated bridge.
     // - If bundling a small Swift dylib for XPC listener: ensure it's copied as a framework/resource
     //   and rpath / install_name_tool handled here or in a post-build script.

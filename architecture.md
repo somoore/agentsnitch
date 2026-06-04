@@ -1,7 +1,7 @@
 # AgentSnitch Architecture
 
-**Version:** 0.2 (Local MVP)
-**Status:** Implemented local MVP; distribution polish remains
+**Version:** 0.2 (pre-alpha)
+**Status:** Implemented pre-alpha; distribution polish remains
 
 ---
 
@@ -42,6 +42,12 @@ Product data must be sensor-derived. The app should not ship demo events, simula
 
 ```mermaid
 flowchart TB
+    classDef agent fill:#eef6ff,stroke:#4c8eda,color:#102033
+    classDef sensor fill:#fff7e8,stroke:#d4942f,color:#2a1b00
+    classDef core fill:#eefaf1,stroke:#3f9d5c,color:#0b2815
+    classDef ipc fill:#f7f7f7,stroke:#9aa0a6,color:#202124
+    classDef ui fill:#f6f0ff,stroke:#8c63d8,color:#21133d
+
     subgraph "Developer Machine"
         subgraph "Claude Code / AI Coding Agent"
             Agent[Main agent process]
@@ -53,7 +59,9 @@ flowchart TB
 
         subgraph "AgentSnitch"
             Emitter[Hook Emitter<br/>thin Go binary]
-            NE[macOS Network Extension]
+            UserlandNet[NetworkStatistics / nettop<br/>default userland observer]
+            Lsof[lsof fallback]
+            NE[Opt-in macOS Network Extension]
             Daemon[Daemon / Correlator<br/>process graph + sidechain index]
             UI[Tauri Tray + Popup<br/>Attention, Linked, Agents, Hooks, Network, All]
         end
@@ -74,9 +82,15 @@ flowchart TB
         Socket --> Daemon
         Sidechain -->|subagent lifecycle + SubagentToolUse| Daemon
 
-        Agent -->|network syscalls| Kernel
-        Children -->|network syscalls| Kernel
-        Kernel -->|flows + metadata| NE
+        Agent -->|network activity| UserlandNet
+        Children -->|network activity| UserlandNet
+        UserlandNet -.->|fallback if unavailable| Lsof
+        UserlandNet -->|external flow rows| Daemon
+        Lsof -.->|polling flow rows| Daemon
+
+        Agent -.->|advanced opt-in| Kernel
+        Children -.->|advanced opt-in| Kernel
+        Kernel -.->|flows + metadata| NE
         NE -->|flow records| DirectSocket
         DirectSocket --> Daemon
         NE -.->|fallback flow records| XPC
@@ -85,9 +99,15 @@ flowchart TB
         Daemon -->|events + state| UI
         UI -.->|actions| Daemon
     end
+
+    class Agent,Hooks,AgentTool,Sidechain,Children agent
+    class Emitter,UserlandNet,Lsof,NE sensor
+    class Daemon core
+    class Socket,DirectSocket,XPC ipc
+    class UI ui
 ```
 
-The observation paths (semantic hooks, Claude sidechain transcripts, and ground-truth network flows) converge only in the daemon. The current Network Extension path forwards flow records directly to the daemon Unix socket configured by the host app; the XPC bridge remains for activation, configuration, and fallback forwarding.
+The observation paths (semantic hooks, Claude sidechain transcripts, default userland network rows, and optional Network Extension flows) converge only in the daemon. The Network Extension path forwards flow records directly to the daemon Unix socket configured by the host app when the user explicitly enables the Network Sensor; the XPC bridge remains for activation, configuration, and fallback forwarding.
 
 ### 2.1 Event & Correlation Flow (Sequence)
 
@@ -98,7 +118,8 @@ sequenceDiagram
     participant Transcript as Claude sidechain JSONL
     participant Socket as Unix Socket
     participant Daemon as Daemon / Correlator
-    participant NE as Network Extension
+    participant Net as NetworkStatistics / nettop
+    participant NE as Opt-in Network Extension
     participant UI as Tauri UI
 
     Agent->>Emitter: PreToolUse(Read ~/.env)
@@ -112,7 +133,10 @@ sequenceDiagram
     Transcript->>Daemon: index sidechain records
     Daemon->>UI: new_subagent + SubagentToolUse
 
-    NE->>Daemon: NetworkFlow<br/>{pid:1234, remote, sni, bytes_out, ts}<br/>over daemon socket
+    Net->>Daemon: NetworkFlow<br/>{pid:1234, remote, bytes_out, ts}
+    opt Network Sensor enabled
+        NE->>Daemon: NetworkFlow<br/>{pid:1234, remote, sni, bytes_out, ts}<br/>over daemon socket
+    end
 
     Daemon->>Daemon: Correlate<br/>(time window + PID match + tags)
     Daemon->>UI: CorrelatedRecord<br/>(with reasons + summary)
@@ -166,7 +190,7 @@ This sequence illustrates the core "visibility proves the risk" loop. The emitte
 
 **Technology:** macOS System Extension using Network Extension framework.
 
-**Current status:** The local MVP ships with the Network Sensor disabled by default. The default network path is daemon-side NetworkStatistics/`nettop` observation filtered to external flows from known or likely AI agent process trees, enriched by periodic `ps` snapshots. If that observer is unavailable, the daemon falls back to `lsof`/process snapshot observation. When a user explicitly enables the Network Sensor, the bundled event-driven `NEFilterDataProvider` emits metadata-only `network_extension` flow events into the daemon.
+**Current status:** The pre-alpha ships with the Network Sensor disabled by default. The default network path is daemon-side NetworkStatistics/`nettop` observation filtered to external flows from known or likely AI agent process trees, enriched by periodic `ps` snapshots. If that observer is unavailable, the daemon falls back to `lsof`/process snapshot observation. When a user explicitly enables the Network Sensor, the bundled event-driven `NEFilterDataProvider` emits metadata-only `network_extension` flow events into the daemon.
 
 **Provider choice:**
 - `NEFilterDataProvider` only. AgentSnitch must not use transparent proxy, packet tunnel, DNS proxy, or app proxy providers in the shipped product.
@@ -577,9 +601,9 @@ These are accepted for Phase 1. Many of them become more tractable once we have 
 
 ```
 agentsnitch/
-├── README.md
-├── PRD.md
-├── ARCHITECTURE.md
+├── readme.md
+├── prd.md
+├── architecture.md
 ├── LICENSE
 ├── .gitignore
 ├── Makefile                 # build, install, test, package targets

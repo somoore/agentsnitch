@@ -1,9 +1,10 @@
 # Snitch Creature — Rive Editor Build Guide
 
 > A step-by-step spec for authoring the first AgentSnitch creature in the **Rive
-> editor** (rive.app). The goal is a single `.riv` whose inputs/properties exactly
-> match the app's data bridge (see `creature-animation-rive-plan.md`), so wiring it
-> into the Tauri app later is plug-and-play.
+> editor** (rive.app). This is a future UI asset contract, not part of the current
+> pre-alpha runtime. The goal is a single `.riv` whose inputs/properties exactly
+> match the planned app data bridge (see `creature-animation-rive-plan.md`), so
+> wiring it into the Tauri app later is straightforward.
 >
 > Names in `code font` are **contract names** — they MUST match exactly, because the
 > app sets them by string. Do not rename without updating the bridge.

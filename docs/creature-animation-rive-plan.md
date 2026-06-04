@@ -1,9 +1,10 @@
-# AgentSnitch Creature Animation — Rive Plan & First Rig
+# AgentSnitch Creature Animation Plan
 
-> Status: exploration / not yet built. Goal: replace the static "critter" mockups
-> (see Paper concepts "The Pen" + "The World") with live, data-driven animated
-> creatures. Each Claude main agent + subagent is a little creature whose
-> appearance = identity and whose motion/face = what it's doing on the machine.
+> Status: future UI design note, not part of the current pre-alpha runtime. The
+> goal is to replace static agent mockups with live, data-driven animated
+> creatures. Each Claude main agent and subagent would get a small character whose
+> appearance represents identity and whose motion/face represents current
+> activity.
 
 ## 0. Why Rive (vs. CSS / Lottie)
 
@@ -29,7 +30,7 @@ labels, rail) as normal HTML/CSS in the webview; only the creature is a `.riv`.
   `.riv` and `.wasm` as app assets so nothing is fetched from the network — this
   matters: AgentSnitch is **local-only, no phone-home**, so the animation assets
   must ship in the app bundle, not load from a CDN.
-- API shape we rely on (confirmed against current docs):
+- Runtime API shape to verify before implementation:
   - `new rive.Rive({ src, canvas, autoplay, stateMachines, onLoad })`
   - `const inputs = r.stateMachineInputs('<MachineName>')` → array of
     `StateMachineInput { name, value, fire() }`
@@ -95,16 +96,29 @@ State machine "Brain":
 
 The creature is dumb; the app translates events to inputs.
 
-```
-daemon events (unix socket / existing UI forwarder)
-        │
-        ▼
-per-agent CreatureController (1 per main + 1 per hatchling)
-        │  debounce + derive
-        ▼
-rive inputs:  mood, asleep, look_x/y, net_intensity   (continuous)
-rive triggers: react, spawn, blink                    (momentary)
-view model:   hue, species, scale, glow_color         (set once on spawn)
+```mermaid
+flowchart TB
+    classDef data fill:#eef6ff,stroke:#4c8eda,color:#102033
+    classDef controller fill:#eefaf1,stroke:#3f9d5c,color:#0b2815
+    classDef rive fill:#fff7e8,stroke:#d4942f,color:#2a1b00
+
+    Events["Daemon events<br/>existing UI forwarder"]
+    Controller["Per-agent CreatureController<br/>debounce + derive state"]
+
+    subgraph Rive["Rive creature runtime"]
+        Inputs["Continuous inputs<br/>mood, asleep, lookX, lookY, netIntensity"]
+        Triggers["Momentary triggers<br/>react, spawn, blink"]
+        Skin["View model<br/>hue, species, scale, glowColor"]
+    end
+
+    Events --> Controller
+    Controller --> Inputs
+    Controller --> Triggers
+    Controller --> Skin
+
+    class Events data
+    class Controller controller
+    class Inputs,Triggers,Skin rive
 ```
 
 Derivation rules (initial):

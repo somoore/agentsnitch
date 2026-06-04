@@ -4,7 +4,7 @@ AgentSnitch is focused on one concrete product promise:
 
 > Give developers local, explainable evidence when AI coding agents cross from sensitive local context into outbound network activity.
 
-The project is visibility-first. Hooks are semantic sensors, the macOS Network Extension is OS/network truth, and the daemon produces linked evidence. Runtime product data must come from those real sensors and correlation paths only.
+The project is visibility-first. Hooks are semantic sensors, NetworkStatistics/`nettop` plus process snapshots are the default OS/network signal, the macOS Network Extension is the optional stronger attribution path, and the daemon produces linked evidence. Runtime product data must come from those real sensors and correlation paths only.
 
 ## Current Priorities
 
@@ -44,7 +44,7 @@ The project is visibility-first. Hooks are semantic sensors, the macOS Network E
 
 - Treat hooks as **sensors**, not enforcement points.
 - The daemon and UI should not accept demo/prepared runtime data as product evidence.
-- Test fixtures are fine for automated tests, but runtime app data must come from real hooks, real Network Extension events, and daemon-side correlation.
+- Test fixtures are fine for automated tests, but runtime app data must come from real hooks, real OS network observations, optional Network Extension events, and daemon-side correlation.
 - macOS System Extension packaging is strict. When changing extension code, bump the extension bundle version so macOS activates the new build.
 - Keep generated build products, provisioning profiles, certificates, notary credentials, and local logs out of git.
 - Do not print candidate secret values in issue comments, PR comments, logs, or test output.
@@ -135,7 +135,7 @@ policy. Run the whole gate manually with `pre-commit run --all-files` and
 - Enable Dependabot alerts + security updates and the dependency graph.
 - Default `GITHUB_TOKEN` to read-only; grant write scopes per-workflow as needed.
 
-For packaging/signing details, see [docs/getting-started.md](./docs/getting-started.md) and [extension/INTEGRATION.md](./extension/INTEGRATION.md).
+For packaging/signing details, see [docs/getting-started.md](./docs/getting-started.md) and [extension/integration.md](./extension/integration.md).
 
 For secret hygiene, see [docs/getting-started.md#secret-audit](./docs/getting-started.md#secret-audit).
 
