@@ -74,7 +74,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           components: clippy, rustfmt
-          cache-workspaces: ui/src-tauri
+          cache: false
 
       - name: cargo build --locked
         run: cargo build --locked
@@ -118,5 +118,5 @@ jobs:
         uses: trufflesecurity/trufflehog@d411fff7b8879a62509f3fa98c07f247ac089a51 # v3.95.5
         with:
           path: ./
-          version: v3.95.5
+          version: 3.95.5
           extra_args: --only-verified

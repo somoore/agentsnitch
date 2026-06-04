@@ -30,12 +30,13 @@ jobs:
         include:
           - language: actions
             os: ubuntu-latest
+            build-mode: none
           - language: go
             os: ubuntu-latest
+            build-mode: autobuild
           - language: rust
             os: ubuntu-latest
-          - language: swift
-            os: macos-latest
+            build-mode: none
 
     steps:
       - name: Checkout
@@ -45,8 +46,12 @@ jobs:
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
           queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
