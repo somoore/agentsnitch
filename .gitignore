@@ -1,0 +1,112 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/agentsnitch
+/emitter
+/daemon
+/bin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Rust / Tauri
+target/
+**/*.rs.bk
+# Cargo.lock is committed for the app (reproducible, hash-pinned builds).
+# Do NOT ignore it — keep the supply-chain lockfile under version control.
+!ui/src-tauri/Cargo.lock
+# Tauri specific
+src-tauri/target/
+dist/
+!ui/dist/
+!ui/dist/**
+node_modules/
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+*.icloud
+
+# IDE / Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build / Artifacts
+build/
+dist/
+!ui/dist/
+!ui/dist/**
+out/
+*.app
+*.pkg
+*.zip
+*.tar.gz
+*.dmg
+*.xcarchive
+*.xcresult
+DerivedData/
+
+# Logs
+*.log
+logs/
+
+# Env / Secrets (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.der
+*.crt
+*.asc
+*.gpg
+*.keystore
+*.jks
+*.keychain
+*.keychain-db
+
+# System Extension / Signing (dev artifacts)
+*.provisionprofile
+*.mobileprovision
+*.cer
+*.csr
+*.p12
+*.entitlements.local
+notarytool*.json
+
+# Local AgentSnitch runtime data
+.agentsnitch/
+
+# Misc
+*.bak
+*.tmp
+Session.vim

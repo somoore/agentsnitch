@@ -1,0 +1,30 @@
+[package]
+name = "agentsnitch-ui"
+version = "0.1.0"
+description = "AgentSnitch Tauri UI (tray + popup)"
+authors = ["Scott Moore"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
+
+# Future (when implementing the XPC / activation bridge for the Network Extension):
+# [target.'cfg(target_os = "macos")'.dependencies]
+# objc2 = { version = "0.6", features = ["foundation", "system-extensions"] }
+# swift-rs = { version = "1.0", optional = true }   # call Swift helpers from Rust for OSSystemExtensionRequest + XPC
+# (objc2 is already pulled transitively on macOS via tauri; enabling more features here may be sufficient)
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+# This feature is used for production builds or when a dev server is not specified.
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+
+# macos-ne = ["dep:swift-rs", "dep:objc2"]  # or similar when the bridge lands

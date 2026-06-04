@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Extension target entitlements for AgentSnitch Network Extension.
+         Use the -systemextension variant for Developer ID + notarized distribution.
+         Match the value used in the main app's com.apple.developer.networking.networkextension array.
+    -->
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>content-filter-provider-systemextension</string>
+    </array>
+
+    <!-- The extension process typically runs with fewer restrictions; avoid broad sandbox unless needed.
+         If sandboxed, add network.client etc. as appropriate.
+    -->
+    <!-- <key>com.apple.security.app-sandbox</key> <false/> -->
+</dict>
+</plist>

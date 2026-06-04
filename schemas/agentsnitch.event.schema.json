@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsnitch.local/schemas/agentsnitch.event.schema.json",
+  "title": "AgentSnitch Event Contracts",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SemanticEvent"
+    },
+    {
+      "$ref": "#/$defs/NetworkFlowEvent"
+    },
+    {
+      "$ref": "#/$defs/CorrelatedEvent"
+    },
+    {
+      "$ref": "#/$defs/AgentLifecycleEvent"
+    }
+  ],
+  "$defs": {
+    "AgentInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "parent_agent_id": {
+          "type": "string"
+        },
+        "spawn_method": {
+          "type": "string"
+        },
+        "first_seen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "SessionInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "SemanticEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "agentsnitch.semantic.v0"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentInfo"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionInfo"
+        },
+        "event": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ppid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destination_intents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "input_summary": {
+          "type": "object"
+        },
+        "output_summary": {
+          "type": "object"
+        },
+        "raw_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "ts",
+        "agent",
+        "session",
+        "event",
+        "tool",
+        "cwd",
+        "pid",
+        "ppid",
+        "tags",
+        "tool_use_id",
+        "input_summary"
+      ]
+    },
+    "NetworkFlowEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "agentsnitch.network.v0"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentInfo"
+        },
+        "flow_id": {
+          "type": "string"
+        },
+        "observer": {
+          "type": "string",
+          "enum": [
+            "network_extension",
+            "network_statistics",
+            "lsof"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ppid": {
+          "type": "integer"
+        },
+        "process_path": {
+          "type": "string"
+        },
+        "process_bundle_id": {
+          "type": "string"
+        },
+        "process_team_id": {
+          "type": "string"
+        },
+        "signing_info": {
+          "type": "object"
+        },
+        "local": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "sni": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "tcp",
+            "udp",
+            "quic"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "out",
+            "in"
+          ]
+        },
+        "bytes_out": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_in": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "new",
+            "established",
+            "closed",
+            "data"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "ts",
+        "pid",
+        "remote",
+        "protocol",
+        "direction",
+        "bytes_out",
+        "bytes_in",
+        "state"
+      ]
+    },
+    "CorrelatedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "agentsnitch.correlated.v0"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentInfo"
+        },
+        "semantic_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "flow_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "score": {
+          "type": "number"
+        },
+        "confidence": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "semantics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SemanticEvent"
+          }
+        },
+        "flows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkFlowEvent"
+          }
+        },
+        "process_tree": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProcessNode"
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "ts",
+        "score"
+      ]
+    },
+    "AgentLifecycleEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "agentsnitch.agent.v0"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event": {
+          "type": "string"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentInfo"
+        }
+      },
+      "required": [
+        "schema",
+        "ts",
+        "event",
+        "agent"
+      ]
+    },
+    "ProcessNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pid": {
+          "type": "integer"
+        },
+        "ppid": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pid"
+      ]
+    }
+  }
+}

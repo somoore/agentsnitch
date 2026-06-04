@@ -1,0 +1,11 @@
+{
+  "hookEventName": "PreToolUse",
+  "session_id": "example-session-123",
+  "transcript_path": "/Users/example/.claude/transcript.jsonl",
+  "cwd": "/Users/example/my-project",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/example/.env"
+  },
+  "tool_use_id": "toolu_01AbCdEfGh"
+}

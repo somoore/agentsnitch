@@ -1,0 +1,117 @@
+# AgentSnitch pre-commit configuration.
+#
+# Two stages, mirrored by CI (.github/workflows/supply-chain.yml):
+#   - commit stage  : fast checks (format, vet, secret scan, dependency drift)
+#   - pre-push stage : slow but thorough (tests, build --locked, clippy, deny)
+#
+# Setup (run once per clone):
+#   pre-commit install
+#   pre-commit install --hook-type pre-push
+#
+# Pinned tool/hook versions are verified live; pre-commit fetches the hook
+# repos at these revs so every contributor and CI run the same code.
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # --- Generic hygiene (commit stage) ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-yaml
+      - id: check-json
+
+  # --- Secret scanning on staged changes (commit stage) ---
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # --- Local fast checks (commit stage): use the repo's own toolchain ---
+  - repo: local
+    hooks:
+      # ShellCheck on install/sign scripts. Runs the NATIVE binary (no Docker
+      # dependency, unlike the koalaman/shellcheck-precommit hook). Skips with a
+      # notice if shellcheck is not installed locally; CI installs it and runs it
+      # unconditionally, so coverage is never silently lost there.
+      - id: shellcheck
+        name: shellcheck (scripts)
+        entry: bash -c 'command -v shellcheck >/dev/null || { echo "shellcheck not installed; skipping (CI enforces it)"; exit 0; }; shellcheck --severity=warning --shell=bash "$@"' --
+        language: system
+        files: ^(scripts/.*\.sh|extension/.*\.sh)$
+
+      # gofmt -l exits 0 even when it lists files, so fail explicitly on output.
+      - id: gofmt
+        name: gofmt (check formatting)
+        entry: bash -c 'out=$(gofmt -l .); if [ -n "$out" ]; then echo "Unformatted Go files (run gofmt -w .)"; echo "$out"; exit 1; fi'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-vet
+        name: go vet ./...
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      # Phantom-package tripwire: drift + verify + stdlib-only assertion.
+      - id: go-deps-tripwire
+        name: go dependency tripwire (stdlib-only)
+        entry: scripts/check-deps.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --manifest-path ui/src-tauri/Cargo.toml --check --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  # --- Local heavy checks (pre-push stage): need Go + Rust toolchains + cargo-deny ---
+  - repo: local
+    hooks:
+      - id: go-test
+        name: go test ./... (full Go suite)
+        entry: go test ./...
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: cargo-test-lib
+        name: cargo test --locked --lib (UI Tauri lib suite)
+        entry: cargo test --locked --manifest-path ui/src-tauri/Cargo.toml --lib
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: cargo-build-locked
+        name: cargo build --locked (UI Tauri)
+        entry: cargo build --locked --manifest-path ui/src-tauri/Cargo.toml
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: cargo-clippy
+        name: cargo clippy -D warnings (UI Tauri)
+        entry: cargo clippy --locked --manifest-path ui/src-tauri/Cargo.toml -- -D warnings
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: cargo-deny
+        name: cargo deny check (UI Tauri)
+        entry: cargo deny --manifest-path ui/src-tauri/Cargo.toml check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

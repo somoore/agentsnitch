@@ -1,0 +1,68 @@
+# cargo-deny configuration for AgentSnitch's Rust (Tauri) dependency tree.
+# Run: cargo deny --manifest-path ui/src-tauri/Cargo.toml check
+#
+# Enforced in pre-push and CI. The goal is supply-chain integrity:
+# - every crate resolves from an allowlisted source (crates.io only),
+# - known-vulnerable / unmaintained crates are surfaced,
+# - licenses stay within an allowlist,
+# - the locked dependency graph cannot silently grow new sources.
+
+[graph]
+# Check the platforms we actually ship/build for. macOS is the product target;
+# the Linux/Windows targets pull in the GTK/Win stacks that are gated out at
+# runtime, so we still want their advisories visible.
+all-features = false
+
+[advisories]
+version = 2
+# Use the upstream RustSec advisory DB. Unmaintained and unsound crates are
+# real vulnerabilities should be triaged explicitly via the ignore list with a
+# documented reason.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Vulnerabilities and unsound advisories FAIL the gate (the v2 default).
+# "unmaintained" is scoped to "workspace": only flag unmaintained crates that are
+# DIRECT workspace dependencies. The entire Tauri/GTK/unic transitive stack
+# (gtk-rs GTK3 bindings, the open-i18n unic-* crates, proc-macro-error, ...) is
+# unmaintained-but-not-vulnerable with no safe upgrade, and AgentSnitch cannot
+# fix crates it pulls in only through Tauri. A real CVE in any of them still
+# fails (vulnerability/unsound are unaffected by this setting).
+unmaintained = "workspace"
+
+[bans]
+# Surface duplicate versions of the same crate (a common way bloat and
+# ambiguity sneak in) as a warning, and deny wildcard version requirements so
+# every dependency is pinned to a real range that the lockfile can resolve.
+multiple-versions = "warn"
+wildcards = "deny"
+# Disallow build dependencies pulling in unexpected heavy crates could be added
+# here as explicit [[bans.deny]] entries as the policy matures.
+
+[sources]
+# Supply-chain core: only allow crates from crates.io. Any git or alternative
+# registry source must be added here explicitly and reviewed, so a dependency
+# cannot silently start resolving from an unaudited source.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[licenses]
+version = 2
+# Permissive licenses compatible with shipping a closed or open binary. Anything
+# outside this set fails the check and must be reviewed before being added.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "MPL-2.0",
+  "CC0-1.0",
+  "BSL-1.0",
+  "OpenSSL",
+]
+confidence-threshold = 0.9

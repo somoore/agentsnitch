@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Merged into the generated Info.plist by tauri-build.
+         This is the safe, documented way to add keys like usage descriptions.
+    -->
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>AgentSnitch uses a Network Extension (System Extension) to observe network flows originating from AI coding agents. This provides ground-truth process attribution (PID, code signing, paths) and SNI for correlating tool activity (e.g. secret reads) with actual bytes leaving the machine. The extension only observes; it does not block or modify traffic in the current version.</string>
+</dict>
+</plist>

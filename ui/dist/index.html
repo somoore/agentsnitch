@@ -1,0 +1,3291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentSnitch</title>
+  <link rel="stylesheet" href="creatures.css">
+  <style>
+    :root {
+      --bg: #1c1c1e;
+      --bg-elev: #2c2c2e;
+      --text: #f2f2f7;
+      --text-dim: #8e8e93;
+      --accent: #0a84ff;
+      --red: #ff453a;
+      --orange: #ff9f0a;
+      --green: #30d158;
+      --border: #38383a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.3;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+      height: 100%;
+    }
+    .wrap {
+      display: flex; flex-direction: column;
+      height: 100vh;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .header {
+      background: var(--bg-elev);
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+    }
+    .header .title {
+      font-weight: 600;
+      font-size: 13px;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: white;
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+    .badge.quiet { background: var(--text-dim); }
+    .header .meta {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    .sensor-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #242426;
+      border-color: var(--border);
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .sensor-button.enabled {
+      color: var(--green);
+      border-color: rgba(48, 209, 88, 0.55);
+      background: rgba(48, 209, 88, 0.12);
+    }
+    .sensor-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+    .sensor-button.enabled .sensor-dot {
+      background: var(--green);
+    }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 4px;
+      padding: 6px;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--border);
+    }
+    .session-summary {
+      display: none;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+      padding: 6px;
+      background: #242426;
+      border-bottom: 1px solid var(--border);
+    }
+    .summary-pill {
+      min-width: 0;
+      padding: 4px 6px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text-dim);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .summary-pill strong {
+      color: var(--text);
+      font-weight: 650;
+    }
+    .agent-team {
+      display: none;
+      padding: 6px 8px;
+      background: #202022;
+      border-bottom: 1px solid var(--border);
+      gap: 6px;
+    }
+    .agent-team-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 650;
+      margin-bottom: 2px;
+    }
+    .agent-team-subtitle {
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-team-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+      gap: 5px;
+    }
+    .agent-team-grid.dense {
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    }
+    .agent-main-list {
+      display: grid;
+      gap: 5px;
+    }
+    .agent-context-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.35fr);
+      gap: 7px;
+      align-items: start;
+      margin-bottom: 8px;
+    }
+    .agent-context-grid.single {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .agent-context-card {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
+      padding: 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #19191b;
+    }
+    .agent-context-card .agent-team-title {
+      margin: 0;
+    }
+    .agent-context-card .agent-main-summary {
+      padding: 5px 6px;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+    }
+    .agent-context-card .agent-main-meta {
+      font-size: 9px;
+    }
+    @media (max-width: 760px) {
+      .agent-context-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .agent-main-group {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+    .agent-main-summary {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+      align-items: center;
+      padding: 6px;
+      border: 1px solid rgba(100, 210, 255, 0.28);
+      border-radius: 6px;
+      background: #1a2024;
+      color: var(--text);
+      text-align: left;
+    }
+    .agent-main-summary.expanded {
+      border-color: rgba(10, 132, 255, 0.72);
+      background: #1d2530;
+    }
+    .agent-main-summary.active {
+      border-color: rgba(10, 132, 255, 0.85);
+    }
+    .agent-main-copy {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+    .agent-main-name {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .agent-main-name span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-main-meta {
+      color: var(--text-dim);
+      font-size: 9px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-main-count,
+    .agent-child-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 17px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: rgba(100, 210, 255, 0.14);
+      color: #b9eeff;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .agent-child-count {
+      background: rgba(191, 90, 242, 0.18);
+      color: #e3c7ff;
+    }
+    .agent-main-toggle {
+      height: 20px;
+      min-width: 26px;
+      padding: 0 6px;
+      border-radius: 5px;
+      font-size: 10px;
+    }
+    .agent-subagent-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 0 0 1px 18px;
+    }
+    .agent-subagent-chip {
+      min-width: 0;
+      max-width: 240px;
+      display: inline-grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 5px;
+      align-items: center;
+      height: 24px;
+      padding: 0 7px;
+      border: 1px solid rgba(191, 90, 242, 0.35);
+      border-radius: 6px;
+      background: #201b25;
+      color: var(--text);
+      text-align: left;
+      font-size: 10px;
+    }
+    .agent-subagent-chip.active {
+      border-color: rgba(191, 90, 242, 0.9);
+      background: #271b31;
+    }
+    .agent-subagent-chip span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-subagent-chip small {
+      color: var(--text-dim);
+      font-size: 9px;
+    }
+    .agents-view {
+      display: grid;
+      gap: 8px;
+    }
+    .agents-view-head {
+      display: grid;
+      gap: 3px;
+      padding: 8px;
+      border: 1px solid rgba(100, 210, 255, 0.24);
+      border-radius: 6px;
+      background: #1a2024;
+    }
+    .agents-view-title {
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .agents-view-subtitle {
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+    .agent-tree-group {
+      display: grid;
+      gap: 5px;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #19191b;
+    }
+    .agent-tree-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      padding-bottom: 5px;
+      border-bottom: 1px solid rgba(72, 72, 74, 0.55);
+    }
+    .agent-tree-main strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-tree-main span {
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+    .agent-tree-children {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 5px;
+    }
+    .agent-tree-child {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 7px minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      padding: 6px;
+      border: 1px solid rgba(191, 90, 242, 0.3);
+      border-radius: 6px;
+      background: #201b25;
+      color: var(--text-dim);
+      text-align: left;
+    }
+    .agent-tree-child.active {
+      border-color: rgba(191, 90, 242, 0.9);
+      background: #271b31;
+    }
+    .agent-detail-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.25fr);
+      gap: 8px;
+      align-items: start;
+    }
+    .agent-detail-panel {
+      min-width: 0;
+      display: grid;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid rgba(191, 90, 242, 0.34);
+      border-radius: 6px;
+      background: #18171b;
+    }
+    .agent-detail-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: start;
+      padding-bottom: 7px;
+      border-bottom: 1px solid rgba(72, 72, 74, 0.62);
+    }
+    .agent-detail-title {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 780;
+      line-height: 17px;
+      overflow-wrap: anywhere;
+    }
+    .agent-detail-subtitle {
+      margin-top: 3px;
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 14px;
+      overflow-wrap: anywhere;
+    }
+    .agent-detail-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .agent-detail-chip {
+      min-width: 0;
+      height: 24px;
+      display: inline-grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      border: 1px solid rgba(142, 142, 147, 0.38);
+      border-radius: 6px;
+      background: #242426;
+      color: var(--text-dim);
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .agent-detail-chip.active {
+      border-color: rgba(191, 90, 242, 0.88);
+      background: #2b2032;
+      color: var(--text);
+    }
+    .agent-detail-chip span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-detail-chip strong {
+      color: #e3c7ff;
+      font-size: 10px;
+    }
+    .agent-detail-feed {
+      display: grid;
+      gap: 6px;
+    }
+    .agent-detail-empty {
+      padding: 12px;
+      border: 1px dashed rgba(142, 142, 147, 0.42);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.025);
+      color: var(--text-dim);
+      font-size: 11px;
+      line-height: 16px;
+    }
+    @media (max-width: 860px) {
+      .agent-detail-layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .agent-team-card {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 8px minmax(0, 1fr) 28px;
+      gap: 6px;
+      align-items: center;
+      padding: 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #1b1b1d;
+      color: var(--text-dim);
+      text-align: left;
+      cursor: pointer;
+    }
+    .agent-team-card.main {
+      border-color: rgba(100, 210, 255, 0.28);
+      background: #1a2024;
+    }
+    .agent-team-card.active {
+      border-color: rgba(10, 132, 255, 0.8);
+      background: #1d2530;
+    }
+    .agent-team-card.sub {
+      border-color: rgba(191, 90, 242, 0.35);
+      background: #201b25;
+    }
+    .agent-team-card.sub.active {
+      border-color: rgba(191, 90, 242, 0.9);
+      background: #271b31;
+    }
+    .agent-team-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 16px;
+    }
+    .agent-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #8e8e93;
+      flex-shrink: 0;
+    }
+    .agent-dot.sub { background: #bf5af2; }
+    .agent-card-body {
+      min-width: 0;
+      display: block;
+    }
+    .agent-card-name {
+      display: block;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-card-meta {
+      display: block;
+      margin-top: 2px;
+      color: var(--text-dim);
+      font-size: 9px;
+      line-height: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-card-count {
+      min-width: 22px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      background: #2c2c2e;
+      color: var(--text);
+      font-size: 9px;
+      text-align: center;
+      align-self: center;
+    }
+    .agent-team-overflow {
+      padding: 5px 6px;
+      border-radius: 6px;
+      border: 1px dashed rgba(142, 142, 147, 0.35);
+      background: rgba(255,255,255,0.025);
+      color: var(--text-dim);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-team-main {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .agent-filter {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      background: #211f2b;
+      border-bottom: 1px solid var(--border);
+      color: #d9c7ff;
+      font-size: 10px;
+    }
+    .agent-badge {
+      display: inline-flex;
+      align-items: center;
+      max-width: 190px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(191, 90, 242, 0.45);
+      background: rgba(191, 90, 242, 0.18);
+      color: #e3c7ff;
+      font-size: 9px;
+      line-height: 15px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    .agent-badge.main {
+      border-color: rgba(100, 210, 255, 0.35);
+      background: rgba(100, 210, 255, 0.12);
+      color: #b9eeff;
+    }
+    .agent-lanes {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .agent-lanes-title,
+    .feed-title {
+      color: var(--text-dim);
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      padding: 2px 1px;
+    }
+    .agent-lane {
+      border: 1px solid var(--border);
+      border-left: 3px solid #64d2ff;
+      border-radius: 6px;
+      background: #19191b;
+      overflow: hidden;
+    }
+    .agent-lane.sub {
+      border-left-color: #bf5af2;
+      background: #1d1822;
+    }
+    .agent-lane.active {
+      border-color: rgba(10, 132, 255, 0.75);
+    }
+    .agent-lane-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      padding: 6px;
+      border-bottom: 1px solid rgba(72, 72, 74, 0.55);
+    }
+    .agent-lane-name {
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 750;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-lane-meta {
+      color: var(--text-dim);
+      font-size: 9px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-lane-action {
+      height: 20px;
+      padding: 0 7px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: #2c2c2e;
+      color: var(--text);
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .agent-lane-events {
+      display: grid;
+      gap: 1px;
+      padding: 4px 6px 6px;
+    }
+    .agent-lane-row {
+      display: grid;
+      grid-template-columns: 42px 58px minmax(0, 1fr);
+      gap: 6px;
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 14px;
+    }
+    .agent-lane-row strong {
+      color: var(--text);
+      font-weight: 650;
+    }
+    .agent-lane-empty {
+      color: var(--text-dim);
+      font-size: 10px;
+      padding: 4px 0 1px;
+    }
+    .agent-lane-kind {
+      color: var(--text);
+      font-weight: 650;
+      text-transform: lowercase;
+    }
+    .agent-idle-summary {
+      padding: 5px 6px;
+      border: 1px dashed rgba(142, 142, 147, 0.35);
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-size: 10px;
+      background: rgba(255,255,255,0.025);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .attention-filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      padding: 5px 6px;
+      border: 1px solid rgba(255, 159, 10, 0.22);
+      border-radius: 6px;
+      background: rgba(255, 159, 10, 0.055);
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+    .attention-filter-main {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+    }
+    .attention-filter-label {
+      color: var(--text);
+      font-weight: 650;
+      font-size: 10px;
+    }
+    .attention-chip {
+      min-width: 0;
+      height: 20px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      border: 1px solid rgba(255, 159, 10, 0.35);
+      border-radius: 6px;
+      background: rgba(255, 159, 10, 0.12);
+      color: var(--text);
+      text-align: left;
+      font-size: 10px;
+    }
+    .attention-chip.active {
+      border-color: rgba(255, 159, 10, 0.9);
+      background: rgba(255, 159, 10, 0.22);
+    }
+    .attention-chip span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .attention-chip strong {
+      font-size: 10px;
+      color: var(--orange);
+    }
+    .attention-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .agent-more-summary {
+      padding: 5px 6px;
+      border: 1px solid rgba(10, 132, 255, 0.22);
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-size: 10px;
+      background: rgba(10,132,255,0.06);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .related-sub-events {
+      display: grid;
+      gap: 3px;
+      padding: 6px;
+      border: 1px solid rgba(191, 90, 242, 0.24);
+      border-radius: 5px;
+      background: rgba(191, 90, 242, 0.08);
+    }
+    .related-sub-events .related-title {
+      color: #e3c7ff;
+      font-size: 9px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .related-sub-events .related-row {
+      color: var(--text-dim);
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+    .tab {
+      height: 24px;
+      padding: 0 6px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: #242426;
+      color: var(--text-dim);
+      font-size: 10px;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .events {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 6px;
+      background: var(--bg);
+      font-size: 11px;
+    }
+    .event {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 5px 6px;
+      border-radius: 5px;
+      margin-bottom: 3px;
+      background: var(--bg-elev);
+      border-left: 3px solid var(--border);
+    }
+    .event.correlated {
+      border-left-color: var(--red);
+      background: #2a1f1f;
+    }
+    .event.network {
+      border-left-color: var(--accent);
+      background: #1d2530;
+    }
+    .event.network.attributed-network {
+      border-left-color: #bf5af2;
+      background: #1f1a28;
+      border: 1px solid rgba(191, 90, 242, 0.26);
+      border-left-width: 3px;
+    }
+    .event.network.compact-network {
+      gap: 4px;
+      padding: 5px 6px;
+    }
+    .network-row {
+      display: grid;
+      grid-template-columns: 52px minmax(120px, 1fr) minmax(86px, 112px) minmax(112px, max-content) minmax(78px, max-content) auto;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .network-dest {
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .network-compact-meta,
+    .network-state {
+      color: var(--text-dim);
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .network-state {
+      color: #78b7ff;
+      font-family: ui-monospace, monospace;
+    }
+    .network-attribution {
+      display: grid;
+      grid-template-columns: 52px minmax(120px, 1fr) minmax(100px, 140px) minmax(0, 1.25fr) auto;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .network-attribution-kind {
+      color: #e3c7ff;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .network-attribution-meta {
+      color: var(--text-dim);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .network-attribution-why {
+      color: #b9eeff;
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .network-raw {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 3px 8px;
+      padding: 4px 0 0 58px;
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+    }
+    .network-raw-label {
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-family: inherit;
+      font-size: 9px;
+    }
+    .network-raw-value {
+      color: var(--orange);
+      overflow-wrap: anywhere;
+    }
+    .event.evidence {
+      gap: 9px;
+      padding: 11px 12px;
+      border-left-color: var(--red);
+      background: #2a1f1f;
+      border: 1px solid rgba(255,255,255,0.04);
+      border-left-width: 4px;
+      border-radius: 7px;
+      margin-bottom: 8px;
+    }
+    .event.evidence.hot {
+      border-left-color: #ff6b61;
+      background: #321c1c;
+      box-shadow: inset 0 0 0 1px rgba(255, 69, 58, 0.18);
+    }
+    .event.evidence.medium {
+      border-left-color: var(--orange);
+      background: #2b2418;
+    }
+    .event.evidence.low {
+      border-left-color: var(--accent);
+      background: #1d2530;
+    }
+    .event.evidence.compact {
+      gap: 7px;
+    }
+    .event.evidence.false-positive {
+      border-left-color: var(--green);
+      background: #1f2722;
+      box-shadow: none;
+    }
+    .event.known-group {
+      border-left-color: #78b7ff;
+      background: #1d2530;
+    }
+    .event-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .ts {
+      color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      min-width: 52px;
+      flex-shrink: 0;
+    }
+    .summary {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tags {
+      display: flex;
+      gap: 3px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      font-size: 9px;
+      padding: 0 4px;
+      border-radius: 3px;
+      background: #3a3a3c;
+      color: var(--text-dim);
+      line-height: 14px;
+      white-space: nowrap;
+    }
+    .tag.sensitive_read, .tag.credential { background: #3a2323; color: var(--red); }
+    .tag.external_egress_attempt, .tag.egress, .tag.network { background: #1f2a3a; color: var(--accent); }
+    .detail {
+      font-size: 10px;
+      color: var(--orange);
+      padding-left: 58px;
+      font-family: ui-monospace, monospace;
+    }
+    .correlated-label {
+      font-size: 9px;
+      color: var(--red);
+      font-weight: 600;
+      margin-left: 4px;
+    }
+    .state-chip {
+      font-size: 9px;
+      line-height: 16px;
+      padding: 0 5px;
+      border-radius: 4px;
+      color: #d1f7dc;
+      background: #1d3a27;
+      white-space: nowrap;
+      text-transform: uppercase;
+      font-weight: 650;
+    }
+    .risk-chip {
+      font-size: 9px;
+      line-height: 16px;
+      padding: 0 5px;
+      border-radius: 4px;
+      color: var(--text-dim);
+      background: #3a3a3c;
+      white-space: nowrap;
+      text-transform: uppercase;
+      font-weight: 650;
+    }
+    .risk-chip.medium { color: #1c1c1e; background: var(--orange); }
+    .risk-chip.high { color: #fff; background: var(--red); }
+    .review-chip {
+      display: inline-flex;
+      align-items: center;
+      height: 20px;
+      padding: 0 8px;
+      border-radius: 5px;
+      font-size: 10px;
+      font-weight: 750;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .review-chip.needs-review {
+      color: #1c1c1e;
+      background: var(--orange);
+      border-color: rgba(255, 159, 10, 0.85);
+    }
+    .review-chip.review {
+      color: #ffd89b;
+      background: rgba(255, 159, 10, 0.14);
+      border-color: rgba(255, 159, 10, 0.35);
+    }
+    .review-chip.routine {
+      color: #a9d8ff;
+      background: rgba(10, 132, 255, 0.13);
+      border-color: rgba(10, 132, 255, 0.34);
+    }
+    .review-chip.likely-false-positive {
+      color: #b9f3c8;
+      background: rgba(48, 209, 88, 0.12);
+      border-color: rgba(48, 209, 88, 0.36);
+    }
+    .evidence-head {
+      display: grid;
+      grid-template-columns: 62px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+    }
+    .severity-mark {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: #fff;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+    .evidence.hot .severity-mark { background: var(--red); }
+    .evidence.medium .severity-mark { background: var(--orange); color: #1c1c1e; }
+    .evidence-title {
+      font-size: 13px;
+      font-weight: 760;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+    .evidence-heading {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+    .evidence-subtitle {
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 14px;
+      overflow-wrap: anywhere;
+    }
+    .evidence-meta-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-width: 0;
+    }
+    .evidence-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .known-destinations {
+      display: grid;
+      gap: 3px;
+      padding-left: 58px;
+      color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+    .known-destinations .more {
+      color: var(--text-dim);
+      font-family: inherit;
+    }
+    .group-chip {
+      font-size: 9px;
+      line-height: 16px;
+      padding: 0 5px;
+      border-radius: 4px;
+      color: #78b7ff;
+      background: #1f2a3a;
+      white-space: nowrap;
+    }
+    .mini-button {
+      height: 20px;
+      padding: 0 6px;
+      font-size: 9px;
+      line-height: 18px;
+    }
+    .mini-button.icon {
+      width: 22px;
+      padding: 0;
+      font-weight: 700;
+    }
+    .destination-pill {
+      display: inline-flex;
+      max-width: 100%;
+      width: fit-content;
+      padding: 2px 7px;
+      border-radius: 5px;
+      background: #1f2a3a;
+      color: #78b7ff;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .destination-note {
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 14px;
+      overflow-wrap: anywhere;
+    }
+    .category-pill {
+      display: inline-flex;
+      max-width: 100%;
+      width: fit-content;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: #263026;
+      color: #9ee0ad;
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      overflow-wrap: anywhere;
+    }
+    .evidence-body {
+      display: grid;
+      gap: 7px;
+      padding-left: 64px;
+    }
+    .evidence-body.compact-body {
+      gap: 7px;
+    }
+    .evidence-line {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 10px;
+      align-items: baseline;
+    }
+    .evidence-label {
+      color: var(--text-dim);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .evidence-text {
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+    .evidence-why {
+      color: #ffd89b;
+      font-size: 11px;
+      line-height: 15px;
+      overflow-wrap: anywhere;
+    }
+    .why-value {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      min-width: 0;
+    }
+    .why-value .evidence-why {
+      flex: 1;
+      min-width: 0;
+    }
+    .evidence-expanded {
+      display: grid;
+      gap: 7px;
+      margin-top: 2px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(0,0,0,0.18);
+    }
+    .evidence-detail {
+      display: grid;
+      grid-template-columns: 94px minmax(0, 1fr);
+      gap: 6px;
+      align-items: baseline;
+    }
+    .evidence-detail .value {
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+    .provenance-grid {
+      display: grid;
+      gap: 4px;
+      padding: 7px;
+      border: 1px solid rgba(120, 183, 255, 0.18);
+      border-radius: 6px;
+      background: rgba(10, 132, 255, 0.055);
+    }
+    .provenance-row {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 8px;
+      align-items: baseline;
+    }
+    .provenance-label {
+      color: var(--text-dim);
+      font-size: 9px;
+      text-transform: uppercase;
+    }
+    .provenance-value {
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+    .replay-block {
+      display: grid;
+      gap: 4px;
+      margin-top: 2px;
+      padding: 6px;
+      border: 1px solid rgba(120, 183, 255, 0.25);
+      border-radius: 5px;
+      background: rgba(10,132,255,0.08);
+    }
+	    .footer {
+	      background: var(--bg-elev);
+	      border-top: 1px solid var(--border);
+	      padding: 4px 8px;
+	      display: flex;
+      gap: 6px;
+      align-items: center;
+      font-size: 10px;
+    }
+	    .footer .status {
+	      color: var(--text-dim);
+	      flex: 1;
+	    }
+	    .modal-backdrop {
+	      position: fixed;
+	      inset: 0;
+	      display: none;
+	      place-items: center;
+	      padding: 18px;
+	      background: rgba(0, 0, 0, 0.46);
+	      z-index: 20;
+	    }
+	    .modal-backdrop.open {
+	      display: grid;
+	    }
+	    .settings-modal {
+	      width: min(420px, 100%);
+	      border: 1px solid var(--border);
+	      border-radius: 8px;
+	      background: #202022;
+	      box-shadow: 0 18px 42px rgba(0,0,0,0.45);
+	      overflow: hidden;
+	    }
+	    .settings-modal-header {
+	      display: flex;
+	      align-items: center;
+	      justify-content: space-between;
+	      gap: 10px;
+	      padding: 10px 12px;
+	      border-bottom: 1px solid var(--border);
+	      background: var(--bg-elev);
+	    }
+	    .settings-modal-title {
+	      font-size: 13px;
+	      font-weight: 700;
+	      color: var(--text);
+	    }
+	    .settings-modal-body {
+	      display: grid;
+	      gap: 10px;
+	      padding: 12px;
+	    }
+	    .settings-modal-actions {
+	      display: flex;
+	      justify-content: flex-end;
+	      gap: 8px;
+	      padding: 10px 12px;
+	      border-top: 1px solid var(--border);
+	      background: var(--bg-elev);
+	    }
+	    .settings-row {
+	      display: grid;
+	      grid-template-columns: minmax(0, 1fr) auto;
+	      gap: 10px;
+	      align-items: center;
+	    }
+	    .settings-label {
+	      display: grid;
+	      gap: 2px;
+	      min-width: 0;
+	    }
+	    .settings-title {
+	      color: var(--text);
+	      font-size: 11px;
+	      font-weight: 700;
+	    }
+	    .settings-status {
+	      color: var(--text-dim);
+	      font-size: 10px;
+	      overflow-wrap: anywhere;
+	    }
+	    .settings-copy {
+	      color: var(--text-dim);
+	      font-size: 10px;
+	      margin: 0;
+	      max-width: 520px;
+	    }
+	    .settings-warning {
+	      margin: 4px 0 0;
+	      padding: 6px 7px;
+	      border: 1px solid rgba(255, 159, 10, 0.45);
+	      border-radius: 5px;
+	      background: rgba(255, 159, 10, 0.08);
+	      color: var(--orange);
+	      font-size: 10px;
+	      line-height: 1.35;
+	    }
+	    .switch {
+	      position: relative;
+	      display: inline-flex;
+	      width: 34px;
+	      height: 20px;
+	      flex-shrink: 0;
+	    }
+	    .switch input {
+	      opacity: 0;
+	      width: 0;
+	      height: 0;
+	    }
+	    .switch-track {
+	      position: absolute;
+	      inset: 0;
+	      cursor: pointer;
+	      background: #48484a;
+	      border: 1px solid var(--border);
+	      border-radius: 999px;
+	      transition: background 120ms ease, border-color 120ms ease;
+	    }
+	    .switch-track::before {
+	      content: "";
+	      position: absolute;
+	      width: 14px;
+	      height: 14px;
+	      left: 2px;
+	      top: 2px;
+	      border-radius: 50%;
+	      background: var(--text);
+	      transition: transform 120ms ease;
+	    }
+	    .switch input:checked + .switch-track {
+	      background: rgba(48, 209, 88, 0.32);
+	      border-color: rgba(48, 209, 88, 0.72);
+	    }
+	    .switch input:checked + .switch-track::before {
+	      transform: translateX(14px);
+	    }
+	    button {
+	      font-size: 10px;
+	      padding: 3px 8px;
+	      border: 1px solid var(--border);
+      background: #3a3a3c;
+      color: var(--text);
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    button:hover { background: #4a4a4c; }
+    button.primary { background: var(--accent); border-color: var(--accent); }
+    .empty {
+      padding: 20px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 11px;
+    }
+    .scroll-hint {
+      position: absolute; bottom: 44px; right: 8px;
+      font-size: 9px; color: var(--text-dim); opacity: 0.5; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div id="title" class="title">AgentSnitch</div>
+      <div id="badge" class="badge">quiet</div>
+      <div id="meta" class="meta"></div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-view="attention" onclick="setView('attention')">Attention</button>
+      <button class="tab" data-view="linked" onclick="setView('linked')">Linked</button>
+      <button class="tab" data-view="agents" onclick="setView('agents')">Agents</button>
+      <button class="tab" data-view="hooks" onclick="setView('hooks')">Hooks</button>
+      <button class="tab" data-view="network" onclick="setView('network')">Network</button>
+      <button class="tab" data-view="all" onclick="setView('all')">All</button>
+    </div>
+
+    <div id="sessionSummary" class="session-summary"></div>
+    <div id="agentTeam" class="agent-team"></div>
+    <div id="agentFilter" class="agent-filter"></div>
+
+    <div id="events" class="events">
+      <div class="empty" id="empty">No events yet.<br>Run Claude Code normally after hooks are installed.</div>
+    </div>
+
+	    <div class="footer">
+	      <div class="status" id="status">All local • session in memory</div>
+	      <button onclick="quietKnownServices()">Quiet known</button>
+	      <button onclick="quietSession()">Quiet</button>
+	      <button onclick="clearSession()">Clear</button>
+	      <button onclick="doExport()" class="primary">Export</button>
+	    </div>
+	  </div>
+
+	  <div id="settingsModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+	    <div class="settings-modal">
+	      <div class="settings-modal-header">
+	        <div id="settingsModalTitle" class="settings-modal-title">Settings</div>
+	        <button onclick="closeSettingsModal()" title="Close settings">Close</button>
+	      </div>
+	      <div class="settings-modal-body">
+	        <div class="settings-row">
+	          <div class="settings-label">
+	            <div class="settings-title">Advanced: experimental Network Extension sensor</div>
+	            <div id="networkSensorStatus" class="settings-status">Loading</div>
+	            <p class="settings-copy">Expert-only ground-truth attribution path. The default install uses semantic hooks plus NetworkStatistics/process-tree correlation, with lsof fallback.</p>
+	            <p class="settings-warning">Warning: this installs a macOS system network extension and content filter. Disable it immediately if you experience any connectivity issues.</p>
+	          </div>
+	          <label class="switch" title="Enable the experimental macOS Network Extension content filter">
+	            <input id="networkSensorEnabled" type="checkbox" onchange="setDraftNetworkSensorEnabled(this.checked)">
+	            <span class="switch-track"></span>
+	          </label>
+	        </div>
+	      </div>
+	      <div class="settings-modal-actions">
+	        <button onclick="closeSettingsModal()">Cancel</button>
+	        <button onclick="saveSettingsModal()" class="primary">Save</button>
+	      </div>
+	    </div>
+	  </div>
+
+  <script>
+    // Minimal vanilla frontend for AgentSnitch panel (no build, no external deps at runtime)
+    // Uses Tauri's global API (enabled via withGlobalTauri) for invoke + listen.
+    // Falls back to polling if event API not present.
+
+    let events = [];
+    let teamAgents = [];
+    let pollTimer = null;
+    let activeView = 'attention';
+    let activeAgentFilter = '';
+    let activeAgentDetailKind = 'all';
+	    let activeReasonFilter = '';
+	    let appSettings = { network_sensor_disabled: true };
+	    let draftSettings = null;
+    const expandedIds = new Set();
+    const rawWhyIds = new Set();
+    const rawDetailIds = new Set();
+    const expandedKnownGroups = new Set();
+    const expandedMainGroups = new Set();
+    let autoResizeTimer = null;
+    let lastAutoResize = { width: 0, height: 0 };
+
+    function normalizeEvents(value) {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      if (typeof value === 'string') {
+        try { return normalizeEvents(JSON.parse(value)); } catch (_) { return []; }
+      }
+      if (value.events) return normalizeEvents(value.events);
+      if (typeof value === 'object') return Object.values(value).filter(v => v && typeof v === 'object' && 'summary' in v);
+      return [];
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function displayTimestamp(value) {
+      const raw = String(value || '');
+      const isoTime = raw.match(/T(\d{2}:\d{2}:\d{2})/);
+      if (isoTime) return isoTime[1];
+      return raw.replace(/^\d{4}-\d{2}-\d{2}[ T]/, '').slice(0, 8) || raw;
+    }
+
+    function getTauri() {
+      if (window.__TAURI__) return window.__TAURI__;
+      // fallback for some builds
+      return window.__TAURI__ || null;
+    }
+
+    async function invoke(cmd, args = {}) {
+      const t = getTauri();
+      if (t && t.core && t.core.invoke) {
+        return t.core.invoke(cmd, args);
+      }
+      // last resort for very old/embedded: try the internal
+      if (window.__TAURI_INVOKE__) {
+        return window.__TAURI_INVOKE__(cmd, args);
+      }
+      throw new Error('Tauri invoke not available (running outside Tauri?)');
+    }
+
+    async function listen(eventName, handler) {
+      const t = getTauri();
+      if (t && t.event && t.event.listen) {
+        return t.event.listen(eventName, handler);
+      }
+      // polling fallback will be used
+      return null;
+    }
+
+    function eventKind(ev) {
+      if (ev && ev.correlated && ev.evidence) return 'linked';
+      const tags = (ev && ev.tags) || [];
+      if (tags.some(t => String(t).includes('network_egress'))) return 'network';
+      if (String(ev?.summary || '').startsWith('Network pid ')) return 'network';
+      if (String(ev?.summary || '').startsWith('Network -> ')) return 'network';
+      return 'hooks';
+    }
+
+    function hasNetworkEvidence(ev) {
+      if (eventKind(ev) === 'network') return true;
+      const evidence = ev?.evidence || {};
+      return Boolean(evidence.flow || evidence.destination);
+    }
+
+    function isAttributedNetworkEvent(ev) {
+      return eventKind(ev) === 'linked' && hasNetworkEvidence(ev);
+    }
+
+    function agentType(agent) {
+      return String(agent?.type || agent?.agent_type || '').toLowerCase();
+    }
+
+    function agentName(agent) {
+      const name = String(agent?.name || 'claude').replace(/\s+code$/i, '');
+      return agentType(agent) === 'sub' ? name : name.toLowerCase();
+    }
+
+    function agentShortName(agent) {
+      const name = agentName(agent);
+      if (agentType(agent) !== 'sub') return 'Main';
+      const cleaned = name
+        .replace(/^Claude Code sub-agent$/i, 'Sub-agent')
+        .replace(/^READ-ONLY analysis\.\s*/i, 'Read-only audit ')
+        .replace(/\bDo NOT edit (?:any )?files\.\s*/ig, '')
+        .replace(/\bDo NOT use a browser\.\s*/ig, '')
+        .replace(/^Output a precise\s*/i, '')
+        .replace(/\bOutput a (?:precise|preliminary)\s*/ig, '')
+        .replace(/^You are doing\s+/i, '')
+        .replace(/^QA\s+/i, 'QA ');
+      return cleaned.length > 48 ? `${cleaned.slice(0, 45)}...` : cleaned;
+    }
+
+    function agentPid(agent) {
+      return Number(agent?.pid || 0);
+    }
+
+    function agentLabel(agent) {
+      if (!agent || !agent.id) return '';
+      const kind = agentType(agent) === 'sub' ? 'Sub-agent' : 'Main';
+      const name = agentName(agent) || 'claude';
+      const pid = agentPid(agent);
+      return `${kind} • ${name}${pid ? ` • PID ${pid}` : ''}`;
+    }
+
+    function agentMethodLabel(agent) {
+      const method = String(agent?.spawn_method || '').trim();
+      if (method === 'claude_sidechain') return 'sidechain';
+      if (method === 'claude_ancestor') return 'claude child';
+      if (method === 'hook_lineage') return 'hook lineage';
+      return method || (agentType(agent) === 'main' ? 'direct' : 'inferred');
+    }
+
+    function renderAgentBadge(agent) {
+      if (!agent || !agent.id) return '';
+      const label = agentLabel(agent);
+      const type = agentType(agent) === 'sub' ? 'sub' : 'main';
+      return `<button class="agent-badge ${escapeHtml(type)}" title="Filter to ${escapeHtml(label)}" onclick="filterAgent('${escapeHtml(agent.id)}')">${escapeHtml(label)}</button>`;
+    }
+
+    function filterAgent(agentId) {
+      activeAgentFilter = agentId || '';
+      activeReasonFilter = '';
+      renderEvents();
+    }
+
+    function filterAgentEvents(agentId, view = 'hooks') {
+      activeAgentFilter = agentId || '';
+      activeView = view || 'hooks';
+      activeReasonFilter = '';
+      renderEvents();
+    }
+
+    function showAgentDetail(agentId, kind = 'all') {
+      activeAgentFilter = agentId || '';
+      activeAgentDetailKind = kind || 'all';
+      activeView = 'agents';
+      activeReasonFilter = '';
+      renderEvents();
+    }
+
+    function setAgentDetailKind(kind) {
+      activeAgentDetailKind = kind || 'all';
+      renderEvents();
+    }
+
+    function clearAgentDetail() {
+      activeAgentFilter = '';
+      activeAgentDetailKind = 'all';
+      activeReasonFilter = '';
+      renderEvents();
+    }
+
+    function clearAgentFilter() {
+      activeAgentFilter = '';
+      activeAgentDetailKind = 'all';
+      renderEvents();
+    }
+
+    function filterAttentionReason(reason) {
+      activeReasonFilter = String(reason || '');
+      activeView = 'attention';
+      renderEvents();
+    }
+
+    function clearAttentionReason() {
+      activeReasonFilter = '';
+      renderEvents();
+    }
+
+    function eventMatchesAgent(ev, agentId) {
+      if (!agentId) return true;
+      const agent = ev?.agent || {};
+      return agent.id === agentId;
+    }
+
+    function findAgent(agentId) {
+      return teamAgents.find(agent => agent && agent.id === agentId) || null;
+    }
+
+    function agentScopeIds(agentId) {
+      const agent = findAgent(agentId);
+      const ids = new Set([agentId].filter(Boolean));
+      if (agent && agentType(agent) !== 'sub') {
+        for (const child of teamAgents) {
+          if (agentParentId(child) === agentId) ids.add(child.id);
+        }
+      }
+      return ids;
+    }
+
+    function eventMatchesAgentScope(ev, agentId) {
+      if (!agentId) return true;
+      const ids = agentScopeIds(agentId);
+      const agent = ev?.agent || {};
+      return ids.has(agent.id);
+    }
+
+    function countsForEvents(source, includeAttributedNetwork = false) {
+      return source.reduce((acc, ev) => {
+        const kind = eventKind(ev);
+        if (kind === 'network') acc.network += 1;
+        else acc[kind] += 1;
+        if (includeAttributedNetwork && isAttributedNetworkEvent(ev)) acc.network += 1;
+        if (attentionReasons(ev).length > 0) acc.attention += 1;
+        acc.all += 1;
+        return acc;
+      }, { attention: 0, linked: 0, hooks: 0, network: 0, all: 0, agents: 0 });
+    }
+
+    function filterEventsByKind(source, kind, reason = '', includeAttributedNetwork = false) {
+      if (kind === 'attention') {
+        return source.filter(ev => {
+          const reasons = attentionReasons(ev);
+          return reasons.length > 0 && (!reason || reasons.includes(reason));
+        });
+      }
+      if (kind === 'all') return source;
+      if (kind === 'network') {
+        return source.filter(ev => eventKind(ev) === 'network' || (includeAttributedNetwork && isAttributedNetworkEvent(ev)));
+      }
+      return source.filter(ev => eventKind(ev) === kind);
+    }
+
+    function viewEvents() {
+      const scoped = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
+      return filterEventsByKind(scoped, activeView, activeReasonFilter);
+    }
+
+    function eventCountForAgent(agentId, source = events) {
+      return source.filter(ev => eventMatchesAgent(ev, agentId)).length;
+    }
+
+    function eventMatchesAgentGroup(ev, group) {
+      if (!group) return false;
+      if (group.main?.id && eventMatchesAgent(ev, group.main.id)) return true;
+      return (group.children || []).some(agent => agent.id && eventMatchesAgent(ev, agent.id));
+    }
+
+    function eventCountForAgentGroup(group, source = events) {
+      return source.filter(ev => eventMatchesAgentGroup(ev, group)).length;
+    }
+
+    function rankedAgents(sourceEvents = events) {
+      return visibleTeamAgents().sort((a, b) => {
+        const aMain = agentType(a) === 'main' ? 1 : 0;
+        const bMain = agentType(b) === 'main' ? 1 : 0;
+        if (aMain !== bMain) return bMain - aMain;
+        const countDelta = eventCountForAgent(b.id, sourceEvents) - eventCountForAgent(a.id, sourceEvents);
+        if (countDelta) return countDelta;
+        const pidDelta = agentPid(b) - agentPid(a);
+        if (pidDelta) return pidDelta;
+        return agentShortName(a).localeCompare(agentShortName(b));
+      });
+    }
+
+    function visibleTeamAgents() {
+      return teamAgents
+        .filter(agent => agent && agent.id && (agentPid(agent) || agentType(agent)))
+        .filter(agent => agentType(agent) !== 'sub' || agentPid(agent) > 0)
+        .sort((a, b) => {
+          const typeDelta = (agentType(a) === 'sub' ? 1 : 0) - (agentType(b) === 'sub' ? 1 : 0);
+          if (typeDelta) return typeDelta;
+          return agentShortName(a).localeCompare(agentShortName(b));
+        });
+    }
+
+    function agentParentId(agent) {
+      return String(agent?.parent_agent_id || agent?.parentAgentID || agent?.parent_id || '');
+    }
+
+    function agentGroups() {
+      const visible = visibleTeamAgents();
+      const mains = visible.filter(agent => agentType(agent) !== 'sub');
+      const subs = visible.filter(agent => agentType(agent) === 'sub');
+      const groups = mains.map(main => ({ id: main.id, main, children: [] }));
+      const byId = new Map(groups.map(group => [group.main.id, group]));
+      let virtualGroup = null;
+
+      for (const sub of subs) {
+        const parentId = agentParentId(sub);
+        let group = parentId ? byId.get(parentId) : null;
+        if (!group && groups.length === 1) group = groups[0];
+        if (!group) {
+          if (!virtualGroup) {
+            const fallbackPid = agentPid(sub);
+            virtualGroup = {
+              id: 'main_virtual',
+              main: { id: 'main_virtual', type: 'main', name: 'claude', pid: fallbackPid, spawn_method: 'inferred' },
+              children: [],
+            };
+            groups.unshift(virtualGroup);
+            byId.set(virtualGroup.main.id, virtualGroup);
+          }
+          group = virtualGroup;
+        }
+        group.children.push(sub);
+      }
+
+      for (const group of groups) {
+        group.children.sort((a, b) => {
+          const countDelta = eventCountForAgent(b.id) - eventCountForAgent(a.id);
+          if (countDelta) return countDelta;
+          const pidDelta = agentPid(b) - agentPid(a);
+          if (pidDelta) return pidDelta;
+          return agentShortName(a).localeCompare(agentShortName(b));
+        });
+      }
+
+      return groups.sort((a, b) => {
+        const countDelta = eventCountForAgentGroup(b) - eventCountForAgentGroup(a);
+        if (countDelta) return countDelta;
+        return agentShortName(a.main).localeCompare(agentShortName(b.main));
+      });
+    }
+
+    function normalizePatternPiece(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._:/-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function evidenceHookTool(evidence) {
+      const details = Array.isArray(evidence?.details) ? evidence.details : [];
+      const hook = details.find(d => d && d.label === 'Hook event');
+      const parts = String(hook?.value || '').trim().split(/\s+/).filter(Boolean);
+      return parts[1] || evidence?.semantic || '';
+    }
+
+    function eventPatternKey(ev) {
+      const evidence = ev?.evidence;
+      if (!evidence) return '';
+      const title = normalizePatternPiece(evidence.title || ev.summary || '');
+      const hook = normalizePatternPiece(evidenceHookTool(evidence));
+      const destination = normalizePatternPiece(evidence.destination || ev.destination || '');
+      return title && destination ? `${title}|${hook}|${destination}` : '';
+    }
+
+    function eventFindingKey(ev) {
+      const evidence = ev?.evidence;
+      if (!evidence) return '';
+      const title = normalizePatternPiece(evidence.title || ev.summary || '');
+      const hook = normalizePatternPiece(evidenceHookTool(evidence));
+      const category = normalizePatternPiece(evidence.destination_category || '');
+      const destination = normalizePatternPiece(evidence.destination || ev.destination || '');
+      if (!title) return '';
+      if (['known claude service', 'cloud provider', 'telemetry/logging', 'playwright bridge traffic', 'package registry', 'local dev server bridge'].includes(category)) {
+        return `${title}|${hook}|category:${category}`;
+      }
+      return destination ? `${title}|${hook}|${destination}` : `${title}|${hook}|${category}`;
+    }
+
+    function linkedToolFamily(ev) {
+      const tool = normalizePatternPiece(evidenceHookTool(ev?.evidence || {}));
+      if (tool.includes('playwright')) return 'playwright';
+      if (tool.includes('browser_') || tool.includes('__browser') || tool.includes('chrome')) return 'browser_automation';
+      return '';
+    }
+
+    function knownQuietCategory(category) {
+      return [
+        'known Claude service',
+        'Playwright bridge traffic',
+        'telemetry/logging',
+        'local dev server bridge',
+        'local dev server',
+        'local dev tunnel',
+        'package registry',
+      ].includes(String(category || ''));
+    }
+
+    function collapsedKnownCategory(category) {
+      return [
+        'known Claude service',
+        'telemetry/logging',
+        'Playwright bridge traffic',
+        'package registry',
+        'local dev server bridge',
+      ].includes(String(category || ''));
+    }
+
+    function knownLowRiskEvidence(ev) {
+      const evidence = ev?.evidence || {};
+      return eventKind(ev) === 'linked'
+        && String(evidence.risk || '').toLowerCase() === 'low'
+        && !highSignalEvidence(ev)
+        && collapsedKnownCategory(evidence.destination_category);
+    }
+
+    function destinationHost(value) {
+      let host = String(value || '').trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+      if (host.includes(':') && !host.includes('::')) host = host.split(':')[0];
+      return host.replace(/^\[/, '').replace(/\]$/, '');
+    }
+
+    function rawIpDestination(value) {
+      const host = destinationHost(value);
+      return /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || /^[0-9a-f:]+$/i.test(host) && host.includes(':');
+    }
+
+    function privateNetworkDestination(value) {
+      const host = destinationHost(value);
+      const octets = host.split('.').map(part => Number(part));
+      if (octets.length === 4 && octets.every(n => Number.isInteger(n))) {
+        return octets[0] === 10
+          || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+          || (octets[0] === 192 && octets[1] === 168)
+          || (octets[0] === 169 && octets[1] === 254);
+      }
+      return host === 'localhost' || host === '::1' || host.startsWith('fc') || host.startsWith('fd');
+    }
+
+    function summaryDestination(ev) {
+      const summary = String(ev?.summary || '');
+      const match = summary.match(/Network\s*[-→>]+\s*([^\s]+)/i);
+      return match ? match[1] : '';
+    }
+
+    function hasHostnameHint(ev) {
+      const text = `${ev?.summary || ''} ${ev?.detail || ''}`;
+      return /\([a-z0-9.-]+\.[a-z]{2,}\)/i.test(text) || /\bSNI:\s*[a-z0-9.-]+\.[a-z]{2,}/i.test(text);
+    }
+
+    function detailMap(ev) {
+      const map = {};
+      const parts = String(ev?.detail || '').split(' • ');
+      for (const part of parts) {
+        const match = part.match(/^([^:]+):\s*(.*)$/);
+        if (!match) continue;
+        map[match[1].trim().toLowerCase()] = match[2].trim();
+      }
+      return map;
+    }
+
+    function networkCategory(ev) {
+      const evidence = ev?.evidence || {};
+      if (evidence.destination_category) return evidence.destination_category;
+      return detailMap(ev).category || 'unknown external';
+    }
+
+    function networkPid(ev) {
+      const agentPidValue = agentPid(ev?.agent || {});
+      if (agentPidValue) return String(agentPidValue);
+      const match = String(ev?.summary || '').match(/\(pid\s+([^)]+)\)/i);
+      return match ? match[1].trim() : '';
+    }
+
+    function networkIsHighByte(ev) {
+      const out = detailMap(ev).out || '';
+      const match = out.match(/^(\d+)B$/i);
+      return match ? Number(match[1]) >= 10 * 1024 * 1024 : false;
+    }
+
+    function networkIsSensitiveAdjacent(ev) {
+      const text = `${ev?.summary || ''} ${ev?.detail || ''} ${(ev?.tags || []).join(' ')}`.toLowerCase();
+      return text.includes('sensitive') || text.includes('credential') || text.includes('secret') || text.includes('after_sensitive_read');
+    }
+
+    function attentionReasons(ev) {
+      const evidence = ev?.evidence || null;
+      const reasons = [];
+      if (!evidence) {
+        const tags = Array.isArray(ev?.tags) ? ev.tags.map(String) : [];
+        const isNetwork = eventKind(ev) === 'network';
+        const destination = ev?.destination || summaryDestination(ev);
+        if (isNetwork) {
+          const category = networkCategory(ev);
+          if (tags.some(tag => tag.includes('network_new'))) reasons.push('new network flow');
+          if (category === 'unknown external') reasons.push('unknown external destination');
+          if (category === 'cloud provider') reasons.push('cloud provider destination');
+          if (networkIsSensitiveAdjacent(ev)) reasons.push('sensitive-adjacent network');
+          if (networkIsHighByte(ev)) reasons.push('large network transfer');
+          if (rawIpDestination(destination) && !hasHostnameHint(ev) && category === 'unknown external') reasons.push('raw IP destination');
+        } else if (rawIpDestination(destination) && !hasHostnameHint(ev)) {
+          reasons.push('raw IP destination');
+        }
+        if (privateNetworkDestination(destination)) reasons.push('private network destination');
+        return reasons;
+      }
+
+      const category = evidence.destination_category || 'unknown external';
+      const risk = String(evidence.risk || '').toLowerCase();
+      const title = String(evidence.title || ev.summary || '').toLowerCase();
+      const why = Array.isArray(evidence.why) ? evidence.why : [];
+      const destination = evidence.destination || ev.destination || '';
+      const decision = String(evidence.decision || '').toLowerCase();
+
+      if (risk === 'medium' || risk === 'high') reasons.push(`risk ${risk}`);
+      if (category === 'unknown external') reasons.push('unknown external destination');
+      if (category === 'cloud provider') reasons.push('cloud provider destination');
+      if (why.includes('first_destination') && category === 'unknown external') reasons.push('first-time destination');
+      if (rawIpDestination(destination)) reasons.push('raw IP destination');
+      if (privateNetworkDestination(destination)) reasons.push('private network destination');
+      if (title.includes('sensitive') || title.includes('credential') || title.includes('secret')) reasons.push('sensitive context');
+      if (why.includes('high_bytes') && category === 'unknown external') reasons.push('large transfer to unknown destination');
+      if (why.includes('mcp_server_flow') && why.includes('first_destination')) reasons.push('new MCP server');
+      if (category === 'local dev tunnel') reasons.push('public tunnel/listener');
+      if (decision.includes('blocked')) reasons.push('blocked flow');
+      if (decision.includes('ask') || decision.includes('needed')) reasons.push('ask needed');
+
+      if (knownLowRiskEvidence(ev) && !reasons.some(reason => reason.includes('blocked') || reason.includes('ask'))) {
+        return [];
+      }
+      return [...new Set(reasons)];
+    }
+
+    function quietKeys(ev, includeCategory = true) {
+      const evidence = ev?.evidence;
+      if (!evidence) return [];
+      const keys = [];
+      const pattern = eventPatternKey(ev);
+      if (pattern) keys.push(`exact:${pattern}`);
+      const tool = normalizePatternPiece(evidenceHookTool(evidence));
+      const destination = normalizePatternPiece(evidence.destination || ev.destination || '');
+      if (tool && destination) keys.push(`tool_dest:${tool}|${destination}`);
+      const family = linkedToolFamily(ev);
+      if (family && destination) keys.push(`family_dest:${family}|${destination}`);
+      if (family && knownQuietCategory(evidence.destination_category)) {
+        keys.push(`family_category:${family}|${normalizePatternPiece(evidence.destination_category)}`);
+      }
+      if (includeCategory && knownQuietCategory(evidence.destination_category)) {
+        keys.push(`category:${normalizePatternPiece(evidence.destination_category)}`);
+      }
+      return keys;
+    }
+
+    function highSignalEvidence(ev) {
+      const evidence = ev?.evidence || {};
+      if (likelyFalsePositiveEvidence(ev)) return false;
+      return evidence.severity === 'hot'
+        || evidence.risk === 'high'
+        || evidence.confidence === 'high'
+    }
+
+    function likelyFalsePositiveEvidence(ev) {
+      const evidence = ev?.evidence || {};
+      const status = String(evidence.review_status || '').toLowerCase();
+      if (status === 'likely false positive') return true;
+      const why = Array.isArray(evidence.why) ? evidence.why.map(v => String(v)) : [];
+      return why.includes('sensitive_read')
+        && why.includes('existing_connection_active')
+        && String(evidence.confidence || '').toLowerCase() !== 'high';
+    }
+
+    function groupableEvidence(ev) {
+      return eventKind(ev) === 'linked' && !highSignalEvidence(ev) && eventFindingKey(ev);
+    }
+
+    function displayEvents(selected) {
+      const sorted = [...selected].sort((a, b) => b.id - a.id);
+      if (activeView !== 'linked' && activeView !== 'all') return sorted;
+
+      const knownGroups = new Map();
+      const groups = new Map();
+      const rendered = [];
+      for (const ev of sorted) {
+        if (knownLowRiskEvidence(ev)) {
+          const category = ev.evidence.destination_category;
+          const key = `known:${normalizePatternPiece(category)}`;
+          const expanded = expandedKnownGroups.has(key);
+          let group = knownGroups.get(key);
+          if (!group) {
+            group = {
+              _knownGroup: true,
+              _groupKey: key,
+              _category: category,
+              _expanded: expanded,
+              _groupCount: 0,
+              _groupMembers: [],
+              _destinations: [],
+              id: ev.id,
+              ts: ev.ts,
+            };
+            knownGroups.set(key, group);
+            rendered.push(group);
+          }
+          group._groupCount += 1;
+          group._groupMembers.push(ev.id);
+          const destination = ev.evidence.destination || ev.destination || '';
+          if (destination && !group._destinations.includes(destination)) group._destinations.push(destination);
+          if (!expanded) {
+            continue;
+          }
+        }
+        if (!groupableEvidence(ev) || expandedIds.has(ev.id)) {
+          rendered.push(ev);
+          continue;
+        }
+        const key = eventFindingKey(ev);
+        const existing = groups.get(key);
+        if (existing) {
+          existing._groupCount += 1;
+          existing._groupMembers.push(ev.id);
+          continue;
+        }
+        const grouped = { ...ev, _groupCount: 1, _groupMembers: [ev.id] };
+        groups.set(key, grouped);
+        rendered.push(grouped);
+      }
+      return rendered;
+    }
+
+    function countsByKind() {
+      const source = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
+      const counts = countsForEvents(source);
+      counts.agents = visibleTeamAgents().length;
+      return counts;
+    }
+
+    function renderTabs() {
+      const counts = countsByKind();
+      document.querySelectorAll('.tab').forEach(tab => {
+        const view = tab.dataset.view;
+        tab.classList.toggle('active', view === activeView);
+        const label = view === 'attention' ? 'Attention' : view === 'linked' ? 'Linked' : view === 'agents' ? 'Agents' : view === 'hooks' ? 'Hooks' : view === 'network' ? 'Network' : 'All';
+        tab.textContent = `${label} ${counts[view] || 0}`;
+      });
+    }
+
+    function renderSessionSummary(summary) {
+      const panel = document.getElementById('sessionSummary');
+      if (!panel) return;
+      const data = summary || {};
+      const items = [
+        ['Known Claude traffic', Number(data.known_claude_traffic || 0)],
+        ['Telemetry', Number(data.telemetry_traffic || 0)],
+        ['Local bridges', Number(data.local_bridge_traffic || 0)],
+        ['Package traffic', Number(data.package_registry_traffic || 0)],
+        ['New destinations', Number(data.new_destinations || 0)],
+        ['High signal', Number(data.high_signal || 0)],
+      ];
+      const hasData = items.some(([, value]) => value > 0) || Number(data.quieted_patterns || 0) > 0;
+      if (!hasData) {
+        panel.style.display = 'none';
+        panel.innerHTML = '';
+        return;
+      }
+      panel.style.display = 'grid';
+      panel.innerHTML = items.map(([label, value]) => `
+        <div class="summary-pill" title="${escapeHtml(label)}: ${value}">
+          ${escapeHtml(label)}: <strong>${value}</strong>
+        </div>
+      `).join('');
+    }
+
+    function renderAgentTeam(agents) {
+      teamAgents = Array.isArray(agents) ? agents : [];
+      const panel = document.getElementById('agentTeam');
+      const filter = document.getElementById('agentFilter');
+      if (!panel || !filter) return;
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      if (activeAgentFilter && activeView !== 'agents') {
+        const agent = teamAgents.find(agent => agent.id === activeAgentFilter);
+        const label = agent ? agentLabel(agent) : activeAgentFilter;
+        filter.style.display = 'flex';
+        filter.innerHTML = `<span>Filtered to ${escapeHtml(label)}</span><button class="mini-button" onclick="clearAgentFilter()">Clear</button>`;
+      } else {
+        filter.style.display = 'none';
+        filter.innerHTML = '';
+      }
+    }
+
+    function renderAgentContextCard() {
+      const visible = visibleTeamAgents();
+      if (activeAgentFilter) return '';
+      if (!visible.length || activeView === 'agents') return '';
+      const groups = agentGroups();
+      const totalChildren = groups.reduce((sum, group) => sum + group.children.length, 0);
+      if (!totalChildren) return '';
+      const activeCount = visible.filter(agent => eventCountForAgent(agent.id) > 0).length;
+      const subtitle = `${totalChildren} subagents · ${activeCount} active · ${visible.length - activeCount} waiting`;
+      const rows = groups.map(renderAgentMainSummary).join('');
+      return `<section class="agent-context-card">
+        <div class="agent-team-title"><span>Claude Code (subagents)</span><span class="agent-team-subtitle">${escapeHtml(subtitle)}</span></div>
+        <div class="agent-main-list">${rows}</div>
+      </section>`;
+    }
+
+    function renderAgentContextGrid(agentContext, lanes) {
+      if (!agentContext && !lanes) return '';
+      return `<div class="agent-context-grid${(!agentContext || !lanes) ? ' single' : ''}">${agentContext}${lanes}</div>`;
+    }
+
+    function renderAgentMainSummary(group) {
+      const main = group.main || {};
+      const groupId = group.id || main.id || 'main_virtual';
+      const childCount = group.children.length;
+      const eventCount = eventCountForAgentGroup(group);
+      const pid = agentPid(main);
+      const expanded = expandedMainGroups.has(groupId);
+      const activeClass = activeAgentFilter === main.id ? ' active' : '';
+      const expandedClass = expanded ? ' expanded' : '';
+      const method = agentMethodLabel(main);
+      const meta = [pid ? `PID ${pid}` : 'PID inferred', method, eventCount === 1 ? '1 event' : `${eventCount} events`].filter(Boolean).join(' · ');
+      const children = expanded ? renderCompactSubagents(group) : '';
+      return `<div class="agent-main-group">
+        <button class="agent-main-summary${expandedClass}${activeClass}" title="${escapeHtml(agentLabel(main))}" onclick="toggleMainGroup('${escapeHtml(groupId)}')">
+          <span class="agent-main-copy">
+            <span class="agent-main-name"><span>Main</span><span class="agent-child-count">(${childCount})</span></span>
+            <span class="agent-main-meta">${escapeHtml(meta)}</span>
+          </span>
+          <span class="agent-main-count" title="${eventCount} events">${eventCount}</span>
+          <span class="agent-main-toggle">${expanded ? '-' : '+'}</span>
+        </button>
+        ${children}
+      </div>`;
+    }
+
+    function renderCompactSubagents(group) {
+      const limit = group.children.length > 24 ? 10 : 12;
+      const shown = group.children.slice(0, limit);
+      const chips = shown.map(agent => {
+        const count = eventCountForAgent(agent.id);
+        const pid = agentPid(agent);
+        const activeClass = activeAgentFilter === agent.id ? ' active' : '';
+        const meta = [pid ? `PID ${pid}` : agentMethodLabel(agent), count ? `${count}` : '0'].filter(Boolean).join(' · ');
+        return `<button class="agent-subagent-chip${activeClass}" title="${escapeHtml(agentLabel(agent))}" onclick="showAgentDetail('${escapeHtml(agent.id)}')">
+          <span>${escapeHtml(agentShortName(agent))}</span><small>${escapeHtml(meta)}</small>
+        </button>`;
+      }).join('');
+      const hidden = Math.max(0, group.children.length - shown.length);
+      const hiddenActive = hidden ? group.children.slice(shown.length).filter(agent => eventCountForAgent(agent.id) > 0).length : 0;
+      const overflow = hidden ? `<div class="agent-team-overflow">+${hidden} more agents · ${hiddenActive} active · ${hidden - hiddenActive} waiting</div>` : '';
+      return `<div class="agent-subagent-strip">${chips}${overflow}</div>`;
+    }
+
+    function toggleMainGroup(groupId) {
+      if (expandedMainGroups.has(groupId)) expandedMainGroups.delete(groupId);
+      else expandedMainGroups.add(groupId);
+      renderEvents();
+    }
+
+    function renderAgentsView() {
+      const visible = visibleTeamAgents();
+      if (!visible.length) {
+        return '<div class="empty" id="empty">No Claude Code agents detected yet.</div>';
+      }
+      const groups = agentGroups();
+      const subCount = visible.filter(agent => agentType(agent) === 'sub').length;
+      const activeCount = visible.filter(agent => eventCountForAgent(agent.id) > 0).length;
+      const title = subCount ? 'Claude Code (subagents)' : 'Claude Code agents';
+      const subtitle = subCount
+        ? `${groups.length} main · ${subCount} subagents · ${activeCount} active · click any card to inspect its events`
+        : `${groups.length} main · ${activeCount} active · click any card to inspect its events`;
+      const header = `<section class="agents-view-head">
+        <div class="agents-view-title">${escapeHtml(title)}</div>
+        <div class="agents-view-subtitle">${escapeHtml(subtitle)}</div>
+      </section>`;
+      const hierarchy = renderAgentHierarchy(groups);
+      if (activeAgentFilter) {
+        return `<div class="agents-view">${header}<div class="agent-detail-layout">${hierarchy}${renderAgentDetailView()}</div></div>`;
+      }
+      return `<div class="agents-view">${header}${hierarchy}</div>`;
+    }
+
+    function renderAgentHierarchy(groups) {
+      const rows = groups.map(group => {
+        const main = group.main || {};
+        const pid = agentPid(main);
+        const groupEvents = eventCountForAgentGroup(group);
+        const mainMeta = [
+          pid ? `PID ${pid}` : 'PID inferred',
+          agentMethodLabel(main),
+          group.children.length ? (group.children.length === 1 ? '1 subagent' : `${group.children.length} subagents`) : '',
+          groupEvents === 1 ? '1 event' : `${groupEvents} events`,
+        ].filter(Boolean).join(' · ');
+        const children = group.children.length
+          ? `<div class="agent-tree-children">${group.children.map(renderAgentTreeChild).join('')}</div>`
+          : '';
+        const mainLabel = group.children.length ? `Main (${group.children.length})` : 'Main';
+        return `<section class="agent-tree-group">
+          <div class="agent-tree-main">
+            <div>
+              <strong>${escapeHtml(mainLabel)}</strong>
+              <span>${escapeHtml(mainMeta)}</span>
+            </div>
+            <button class="mini-button" onclick="showAgentDetail('${escapeHtml(main.id)}')">Events</button>
+          </div>
+          ${children}
+        </section>`;
+      }).join('');
+      return `<div class="agent-main-list">${rows}</div>`;
+    }
+
+    function renderAgentTreeChild(agent) {
+      const pid = agentPid(agent);
+      const count = eventCountForAgent(agent.id);
+      const activeClass = activeAgentFilter === agent.id ? ' active' : '';
+      const meta = [
+        pid ? `PID ${pid}` : 'PID inferred',
+        agentMethodLabel(agent),
+        count === 1 ? '1 event' : `${count} events`,
+      ].filter(Boolean).join(' · ');
+      return `<button class="agent-tree-child${activeClass}" title="${escapeHtml(agentLabel(agent))}" onclick="showAgentDetail('${escapeHtml(agent.id)}')">
+        <span class="agent-dot sub"></span>
+        <span class="agent-card-body">
+          <span class="agent-card-name">${escapeHtml(agentShortName(agent))}</span>
+          <span class="agent-card-meta">${escapeHtml(meta)}</span>
+        </span>
+        <span class="agent-card-count">${count}</span>
+      </button>`;
+    }
+
+    function renderAgentDetailView() {
+      const agent = findAgent(activeAgentFilter) || { id: activeAgentFilter, name: activeAgentFilter, type: 'main' };
+      const scoped = events.filter(ev => eventMatchesAgentScope(ev, activeAgentFilter));
+      const selected = filterEventsByKind(scoped, activeAgentDetailKind, '', true);
+      const counts = countsForEvents(scoped, true);
+      const type = agentType(agent) === 'sub' ? 'Sub-agent' : 'Main agent';
+      const pid = agentPid(agent);
+      const parent = agentParentId(agent);
+      const parentAgent = parent ? findAgent(parent) : null;
+      const parentLabel = parentAgent ? `parent ${agentShortName(parentAgent)}${agentPid(parentAgent) ? ` PID ${agentPid(parentAgent)}` : ''}` : (parent ? `parent ${parent}` : '');
+      const meta = [
+        type,
+        pid ? `PID ${pid}` : 'PID inferred',
+        agentMethodLabel(agent),
+        parentLabel,
+        counts.all === 1 ? '1 scoped event' : `${counts.all} scoped events`,
+      ].filter(Boolean).join(' · ');
+      const filters = ['all', 'attention', 'linked', 'hooks', 'network'].map(kind => {
+        const label = kind === 'all' ? 'All' : kind[0].toUpperCase() + kind.slice(1);
+        const active = activeAgentDetailKind === kind ? ' active' : '';
+        return `<button class="agent-detail-chip${active}" onclick="setAgentDetailKind('${kind}')"><span>${label}</span><strong>${counts[kind] || 0}</strong></button>`;
+      }).join('');
+      const emptyText = agentDetailEmptyText(activeAgentDetailKind, agent);
+      const feed = selected.length
+        ? `<div class="agent-detail-feed">${displayEvents(selected).map(ev => renderAgentDetailEvent(ev, activeAgentDetailKind, agent)).join('')}</div>`
+        : `<div class="agent-detail-empty">${escapeHtml(emptyText)}</div>`;
+      return `<section class="agent-detail-panel">
+        <div class="agent-detail-head">
+          <div>
+            <div class="agent-detail-title">${escapeHtml(agentShortName(agent))}</div>
+            <div class="agent-detail-subtitle">${escapeHtml(meta)}</div>
+          </div>
+          <button class="mini-button" onclick="clearAgentDetail()">Back</button>
+        </div>
+        <div class="agent-detail-filters">${filters}</div>
+        ${feed}
+      </section>`;
+    }
+
+    function agentDetailEmptyText(kind, agent) {
+      const name = agentShortName(agent);
+      if (kind === 'attention') return `No attention-needed events attributed to ${name} yet.`;
+      if (kind === 'linked') return `No linked tool/network evidence attributed to ${name} yet.`;
+      if (kind === 'network') return `No network events attributed to ${name} yet.`;
+      if (kind === 'hooks') return `No hook events attributed to ${name} yet.`;
+      return `No events attributed to ${name} yet.`;
+    }
+
+    function renderAgentDetailEvent(ev, detailKind, agent) {
+      if (detailKind === 'network' && isAttributedNetworkEvent(ev) && eventKind(ev) !== 'network') {
+        return renderAttributedNetworkEvent(ev, agent);
+      }
+      return renderEvent(ev);
+    }
+
+    function setView(view) {
+      activeView = view;
+      renderEvents();
+    }
+
+    function renderEvents() {
+      const container = document.getElementById('events');
+      const empty = document.getElementById('empty');
+      renderTabs();
+      renderAgentTeam(teamAgents);
+      if (activeView === 'agents') {
+        container.innerHTML = renderAgentsView();
+        scheduleAutoResize();
+        return;
+      }
+      const selected = viewEvents();
+      const lanes = renderAgentLanes(selected);
+      const agentContext = renderAgentContextCard();
+      const contextGrid = renderAgentContextGrid(agentContext, lanes);
+      const attentionBrief = renderAttentionBrief();
+      if (!selected.length) {
+        const emptyText = activeView === 'attention'
+          ? (activeReasonFilter ? `No attention rows for "${activeReasonFilter}".` : 'No attention-needed evidence.')
+          : activeView === 'linked'
+          ? 'No linked evidence yet.'
+          : activeView === 'network'
+            ? 'No network events in this view yet.'
+            : activeView === 'hooks'
+              ? 'No hook events yet.'
+              : 'No events yet.';
+        container.innerHTML = `${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
+        scheduleAutoResize();
+        return;
+      }
+
+      const feedTitle = contextGrid ? '<div class="feed-title">Chronological Feed</div>' : '';
+      container.innerHTML = `${attentionBrief}${contextGrid}${feedTitle}${displayEvents(selected).map(renderEvent).join('')}`;
+      scheduleAutoResize();
+    }
+
+    function attentionBaseEvents() {
+      const scoped = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
+      return scoped.filter(ev => attentionReasons(ev).length > 0);
+    }
+
+    function renderAttentionBrief() {
+      if (activeView !== 'attention') return '';
+      const base = attentionBaseEvents();
+      if (!base.length) return '';
+      const reasonCounts = new Map();
+      for (const ev of base) {
+        for (const reason of attentionReasons(ev)) {
+          reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+        }
+      }
+      const reasonEntries = [...reasonCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 6);
+      const hasUsefulReasonChoice = reasonEntries.length > 1;
+      if (!hasUsefulReasonChoice && !activeReasonFilter && !activeAgentFilter) return '';
+      const reasonRows = hasUsefulReasonChoice
+        ? reasonEntries.map(([reason, count]) => `<button class="attention-chip ${activeReasonFilter === reason ? 'active' : ''}" onclick="filterAttentionReason('${escapeHtml(reason)}')" title="Show ${escapeHtml(reason)} rows">
+            <span>${escapeHtml(reason)}</span><strong>${count}</strong>
+          </button>`).join('')
+        : '';
+      const filterText = [
+        activeReasonFilter ? `reason: ${activeReasonFilter}` : '',
+        activeAgentFilter ? `agent: ${agentShortName(teamAgents.find(agent => agent.id === activeAgentFilter) || { name: activeAgentFilter })}` : '',
+      ].filter(Boolean).join(' · ');
+      const clearReason = activeReasonFilter ? '<button class="mini-button" onclick="clearAttentionReason()">Clear reason</button>' : '';
+      const clearAgent = activeAgentFilter ? '<button class="mini-button" onclick="clearAgentFilter()">Clear agent</button>' : '';
+      const label = filterText ? `Filtered: ${filterText}` : `Attention filters`;
+      const countLabel = base.length === 1 ? '1 row' : `${base.length} rows`;
+      return `<div class="attention-filter-bar">
+        <div class="attention-filter-main">
+          <span class="attention-filter-label">${escapeHtml(label)}</span>
+          <span>${escapeHtml(countLabel)}</span>
+          ${reasonRows}
+        </div>
+        ${(clearReason || clearAgent) ? `<div class="attention-actions">${clearReason}${clearAgent}</div>` : ''}
+      </div>`;
+    }
+
+    function renderAgentLanes(selected) {
+      if (activeView === 'linked') return '';
+      if (activeAgentFilter) return '';
+      const visible = visibleTeamAgents();
+      if (visible.length <= 1) return '';
+      if (!selected.length) return '';
+      const withEvents = visible.filter(agent => selected.some(ev => eventMatchesAgent(ev, agent.id)));
+      const laneLimit = visible.length > 24 ? 6 : (visible.length > 10 ? 8 : 12);
+      const ranked = rankedAgents(selected);
+      const laneAgents = (withEvents.length ? ranked.filter(agent => withEvents.some(active => active.id === agent.id)) : ranked).slice(0, laneLimit);
+      const idleAgents = visible.filter(agent => !withEvents.some(active => active.id === agent.id) && agentType(agent) === 'sub');
+      const moreActive = withEvents.filter(agent => !laneAgents.some(lane => lane.id === agent.id));
+      const lanes = laneAgents.map(agent => {
+        const type = agentType(agent) === 'sub' ? 'sub' : 'main';
+        const scoped = selected.filter(ev => eventMatchesAgent(ev, agent.id)).sort((a, b) => b.id - a.id);
+        const count = scoped.length;
+        const pid = agentPid(agent);
+        const method = agentMethodLabel(agent);
+        const meta = [
+          pid ? `PID ${pid}` : 'PID pending',
+          method,
+          count === 1 ? '1 event' : `${count} events`,
+        ].join(' · ');
+        const rows = scoped.slice(0, 4).map(ev => `
+          <div class="agent-lane-row">
+            <span>${escapeHtml(ev.ts || '')}</span>
+            <span class="agent-lane-kind">${escapeHtml(eventKind(ev))}</span>
+            <span>${escapeHtml(laneSummary(ev))}</span>
+          </div>
+        `).join('');
+        const empty = rows || '<div class="agent-lane-empty">No events in this tab yet</div>';
+        const activeClass = activeAgentFilter === agent.id ? ' active' : '';
+        return `<section class="agent-lane ${escapeHtml(type)}${activeClass}">
+          <div class="agent-lane-header">
+            <div>
+              <div class="agent-lane-name">${escapeHtml(agentShortName(agent))}</div>
+              <div class="agent-lane-meta">${escapeHtml(meta)}</div>
+            </div>
+            <button class="agent-lane-action" onclick="filterAgent('${escapeHtml(agent.id)}')">View</button>
+          </div>
+          <div class="agent-lane-events">${empty}</div>
+        </section>`;
+      }).filter(Boolean).join('');
+      if (!lanes) return '';
+      const idleLabel = activeView === 'all' ? 'visible rows' : `${activeView} rows`;
+      const moreSummary = moreActive.length
+        ? `<div class="agent-more-summary">+${moreActive.length} active agents with ${escapeHtml(idleLabel)}: ${escapeHtml(moreActive.slice(0, 8).map(agentShortName).join(', '))}${moreActive.length > 8 ? '...' : ''}</div>`
+        : '';
+      const idleNames = idleAgents.length <= 6 ? `: ${idleAgents.map(agentShortName).join(', ')}` : '. Open Agents for the full hierarchy.';
+      const idleSummary = idleAgents.length
+        ? `<div class="agent-idle-summary">No ${escapeHtml(idleLabel)} for ${idleAgents.length} sub-agents${escapeHtml(idleNames)}</div>`
+        : '';
+      return `<section class="agent-lanes"><div class="agent-lanes-title">Activity by agent</div>${lanes}${moreSummary}${idleSummary}</section>`;
+    }
+
+    function laneSummary(ev) {
+      return String(ev?.summary || '')
+        .replace(/^Network\s*[-→>]+\s*/i, '')
+        .replace(/^PreToolUse\s+/i, '')
+        .replace(/^PostToolUse\s+/i, '')
+        .trim();
+    }
+
+    function scheduleAutoResize() {
+      if (autoResizeTimer) clearTimeout(autoResizeTimer);
+      autoResizeTimer = setTimeout(autoResizeWindow, 90);
+    }
+
+    async function autoResizeWindow() {
+      autoResizeTimer = null;
+      if (!document.hasFocus()) {
+        return;
+      }
+      const team = visibleTeamAgents();
+      const selected = activeView === 'agents' ? events : viewEvents();
+      const teamCount = team.length;
+      const activeTeamCount = team.filter(agent => eventCountForAgent(agent.id, selected) > 0).length;
+      const laneCount = document.querySelectorAll('.agent-lane').length;
+      const contentHeight = Math.ceil(document.documentElement.scrollHeight || document.body.scrollHeight || 520);
+      const screenWidth = Number(window.screen?.availWidth || 1180);
+      const screenHeight = Number(window.screen?.availHeight || 900);
+      const maxWidth = Math.max(700, Math.min(1080, screenWidth - 72));
+      const maxHeight = Math.max(560, Math.min(900, screenHeight - 72));
+      let width = 660;
+      if (teamCount >= 3) width = 760;
+      if (teamCount >= 5) width = 920;
+      if (teamCount >= 18) width = 1080;
+      if (activeView === 'agents') width = Math.max(width, 1040);
+      if (activeTeamCount >= 3 || laneCount >= 3 || selected.length >= 28) width = Math.max(width, 980);
+      let height = 500;
+      if (teamCount >= 3) height = 560;
+      if (teamCount >= 5) height = 640;
+      if (teamCount >= 18) height = 760;
+      if (activeView === 'agents') height = Math.max(height, teamCount >= 18 ? 820 : 700);
+      if (selected.length >= 12 || laneCount >= 2) height = Math.max(height, 700);
+      if (selected.length >= 28) height = Math.max(height, 820);
+      height = Math.min(maxHeight, Math.max(height, Math.min(contentHeight + 12, maxHeight)));
+      width = Math.min(maxWidth, width);
+      if (Math.abs(width - lastAutoResize.width) < 18 && Math.abs(height - lastAutoResize.height) < 18) {
+        return;
+      }
+      lastAutoResize = { width, height };
+      try {
+        await invoke('resize_main_window', { width, height });
+      } catch (e) {
+        console.warn('auto resize failed', e);
+      }
+    }
+
+    function renderTags(ev) {
+      return (ev.tags || []).map(t => {
+        const cls = String(t).includes('sensitive') || String(t).includes('credential')
+          ? 'sensitive_read'
+          : (String(t).includes('network') ? 'network' : (String(t).includes('egress') ? 'external_egress_attempt' : ''));
+        return `<span class="tag ${cls}">${escapeHtml(t)}</span>`;
+      }).join('');
+    }
+
+    function renderNetworkEvent(ev) {
+      const meta = detailMap(ev);
+      const destination = ev.destination || summaryDestination(ev) || ev.summary || 'unknown destination';
+      const category = networkCategory(ev);
+      const source = meta.source || (ev.tags || []).find(tag => !String(tag).startsWith('network_')) || 'network';
+      const state = meta.state || (ev.tags || []).find(tag => String(tag).startsWith('network_'))?.replace(/^network_/, '') || 'observed';
+      const pid = networkPid(ev);
+      const process = meta.process || '';
+      const pidMeta = [pid ? `PID ${pid}` : '', process].filter(Boolean).join(' · ');
+      const stateLabel = [source, state].filter(Boolean).join(' / ');
+      const agentBadge = renderAgentBadge(ev.agent);
+      const expanded = rawDetailIds.has(ev.id);
+      const rawRows = [
+        ['remote', meta.remote || destination],
+        ['source', source],
+        ['state', state],
+        ['proto', meta.proto || ''],
+        ['process', process],
+        ['category', category],
+        ['SNI', meta.sni || ''],
+        ['bundle', meta.bundle || ''],
+        ['team', meta.team || ''],
+        ['out', meta.out || ''],
+      ].filter(([, value]) => value).map(([label, value]) => `
+        <div class="network-raw-label">${escapeHtml(label)}</div>
+        <div class="network-raw-value">${escapeHtml(value)}</div>
+      `).join('');
+      return `
+        <div class="event network compact-network">
+          <div class="network-row">
+            <span class="ts">${escapeHtml(ev.ts || '')}</span>
+            <span class="network-dest" title="${escapeHtml(destination)}">${escapeHtml(destination)}</span>
+            <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
+            ${agentBadge || `<span class="network-compact-meta">${escapeHtml(pidMeta || 'unattributed')}</span>`}
+            <span class="network-state" title="${escapeHtml(stateLabel)}">${escapeHtml(stateLabel)}</span>
+            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Raw Event'}</button>
+          </div>
+          ${expanded ? `<div class="network-raw">${rawRows || '<div class="network-raw-value">No raw details</div>'}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderAttributedNetworkEvent(ev, agent) {
+      const evidence = ev.evidence || {};
+      const destination = evidence.destination || ev.destination || 'unknown destination';
+      const category = evidence.destination_category || 'unknown external';
+      const flow = String(evidence.flow || ev.detail || '');
+      const pidMatch = flow.match(/PID\s+(\d+)/i);
+      const viaPid = pidMatch ? pidMatch[1] : '';
+      const hook = evidenceHookTool(evidence) || 'tool activity';
+      const confidence = evidence.confidence || 'low';
+      const why = evidence.why_human || (Array.isArray(evidence.why) ? evidence.why.join(', ') : 'linked by daemon correlation');
+      const agentNameText = agentShortName(agent || ev.agent || {});
+      const expanded = rawDetailIds.has(ev.id);
+      const rawRows = [
+        ['raw owner', viaPid ? `Main PID ${viaPid}` : 'main Claude process'],
+        ['logical agent', agentNameText],
+        ['tool', hook],
+        ['confidence', confidence],
+        ['why', why],
+        ['flow', flow],
+      ].filter(([, value]) => value).map(([label, value]) => `
+        <div class="network-raw-label">${escapeHtml(label)}</div>
+        <div class="network-raw-value">${escapeHtml(value)}</div>
+      `).join('');
+      return `
+        <div class="event network compact-network attributed-network">
+          <div class="network-attribution">
+            <span class="ts">${escapeHtml(ev.ts || '')}</span>
+            <span class="network-dest" title="${escapeHtml(destination)}">${escapeHtml(destination)}</span>
+            <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
+            <span class="network-attribution-meta" title="${escapeHtml(flow)}">${escapeHtml(viaPid ? `via Main PID ${viaPid}` : 'via main Claude')}</span>
+            <span class="network-attribution-kind">Attributed</span>
+          </div>
+          <div class="network-attribution">
+            <span></span>
+            <span class="network-attribution-meta" title="${escapeHtml(agentNameText)}">${escapeHtml(agentNameText)}</span>
+            <span class="network-attribution-meta" title="${escapeHtml(hook)}">${escapeHtml(hook)}</span>
+            <span class="network-attribution-why" title="${escapeHtml(why)}">${escapeHtml(confidence)} confidence · ${escapeHtml(why)}</span>
+            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Why'}</button>
+          </div>
+          ${expanded ? `<div class="network-raw">${rawRows || '<div class="network-raw-value">No attribution details</div>'}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderEvent(ev) {
+      if (ev._knownGroup) {
+        return renderKnownGroup(ev);
+      }
+      if (ev.correlated && ev.evidence) {
+        return renderEvidenceEvent(ev);
+      }
+      if (eventKind(ev) === 'network') {
+        return renderNetworkEvent(ev);
+      }
+
+      const tags = renderTags(ev);
+      const detail = ev.detail ? `<div class="detail">${escapeHtml(ev.detail)}</div>` : '';
+      const label = ev.correlated ? '<span class="correlated-label">CORRELATED</span>' : '';
+      const agentBadge = renderAgentBadge(ev.agent);
+      const kind = eventKind(ev);
+      return `
+        <div class="event ${escapeHtml(kind)}${ev.correlated ? ' correlated' : ''}">
+          <div class="event-row">
+            <span class="ts">${escapeHtml(ev.ts || '')}</span>
+            <span class="summary">${escapeHtml(ev.summary || '')}</span>
+            ${agentBadge}
+            ${label}
+          </div>
+          ${tags ? `<div class="tags">${tags}</div>` : ''}
+          ${detail}
+        </div>
+      `;
+    }
+
+    function knownGroupTitle(category) {
+      if (category === 'known Claude service') return 'Known Claude service traffic';
+      if (category === 'telemetry/logging') return 'Telemetry/logging traffic';
+      if (category === 'Playwright bridge traffic') return 'Playwright bridge traffic';
+      if (category === 'package registry') return 'Package registry traffic';
+      if (category === 'local dev server bridge') return 'Local bridge traffic';
+      return `${category || 'Known service'} traffic`;
+    }
+
+    function renderKnownGroup(group) {
+      const category = group._category || 'known service';
+      const key = group._groupKey || '';
+      const expanded = !!group._expanded;
+      const destinations = (group._destinations || []).slice(0, 5);
+      const more = Math.max(0, (group._destinations || []).length - destinations.length);
+      const destinationRows = destinations.map(destination => `<div>${escapeHtml(destination)}</div>`).join('');
+      const moreRow = more ? `<div class="more">+${more} more destinations</div>` : '';
+      return `
+        <div class="event evidence known-group compact">
+          <div class="evidence-head">
+            <span class="ts" title="${escapeHtml(group.ts || '')}">${escapeHtml(displayTimestamp(group.ts))}</span>
+            <span class="evidence-title">${escapeHtml(knownGroupTitle(category))} · ${Number(group._groupCount || 0)} events</span>
+            <span class="category-pill">${escapeHtml(category)}</span>
+            <span class="risk-chip low">Risk low</span>
+            <span class="evidence-actions">
+              <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">${expanded ? 'Collapse' : 'Expand'}</button>
+              <button class="mini-button" onclick="quietCategory('${escapeHtml(category)}')">Quiet category</button>
+              <button class="mini-button" onclick="doExport()">Export</button>
+            </span>
+          </div>
+          <div class="known-destinations">
+            ${destinationRows || '<div>No destination details</div>'}
+            ${moreRow}
+          </div>
+        </div>
+      `;
+    }
+
+    function relatedSubEvents(ev) {
+      const agent = ev?.agent || {};
+      const agentId = agent.id || '';
+      const childIds = teamAgents
+        .filter(item => item && item.parent_agent_id && item.parent_agent_id === agentId)
+        .map(item => item.id);
+      const ids = new Set([agentId, ...childIds].filter(Boolean));
+      return events
+        .filter(item => item && item.id !== ev.id && item.agent && agentType(item.agent) === 'sub' && ids.has(item.agent.id))
+        .sort((a, b) => b.id - a.id)
+        .slice(0, 5);
+    }
+
+    function renderRelatedSubEvents(ev) {
+      const related = relatedSubEvents(ev);
+      if (!related.length) return '';
+      const rows = related.map(item => {
+        const agent = item.agent || {};
+        const pid = agentPid(agent);
+        const label = `${agentName(agent) || 'claude'}${pid ? ` (${pid})` : ''}`;
+        return `<div class="related-row">${escapeHtml(item.ts || '')} Sub ${escapeHtml(label)} — ${escapeHtml(item.summary || '')}</div>`;
+      }).join('');
+      return `<div class="related-sub-events">
+        <div class="related-title">Related sub-agent activity</div>
+        ${rows}
+      </div>`;
+    }
+
+    function reviewStatusClass(status) {
+      return normalizePatternPiece(status || 'Review').replace(/[ /_]+/g, '-');
+    }
+
+    function reviewStatus(evidence) {
+      return evidence?.review_status || (String(evidence?.risk || '').toLowerCase() === 'high' ? 'Needs Review' : 'Review');
+    }
+
+    function reviewSubtitle(evidence) {
+      return evidence?.review_subtitle || `${evidence?.confidence || 'low'}-confidence correlation`;
+    }
+
+    function destinationProvenanceRows(evidence) {
+      const rows = Array.isArray(evidence?.destination_provenance) ? evidence.destination_provenance : [];
+      if (rows.length) return rows;
+      const fallback = [];
+      if (evidence?.destination) fallback.push({ label: 'Display name', value: evidence.destination });
+      if (evidence?.destination_category) fallback.push({ label: 'Category', value: evidence.destination_category });
+      return fallback;
+    }
+
+    function renderDestinationProvenance(evidence, compact = false) {
+      const rows = destinationProvenanceRows(evidence).filter(row => row && row.value);
+      if (!rows.length) return '';
+      const shown = compact ? rows.filter(row => ['Display name', 'Semantic intent', 'SNI / PTR host', 'Observed endpoint', 'Category'].includes(row.label)).slice(0, 3) : rows;
+      return `<div class="provenance-grid">
+        ${shown.map(row => `<div class="provenance-row">
+          <div class="provenance-label">${escapeHtml(row.label || '')}</div>
+          <div class="provenance-value">${escapeHtml(row.value || '')}</div>
+        </div>`).join('')}
+      </div>`;
+    }
+
+    function evidenceDiagnosticTags(ev, evidence, rawWhy) {
+      const tags = renderTags(ev);
+      const rows = [];
+      if (tags) rows.push(`<div class="tags">${tags}</div>`);
+      rows.push(`<div class="evidence-detail"><div class="evidence-label">Raw why</div><div class="value">${escapeHtml(rawWhy)}</div></div>`);
+      rows.push(`<div class="evidence-detail"><div class="evidence-label">Risk</div><div class="value">${escapeHtml(evidence.risk || 'low')}</div></div>`);
+      rows.push(`<div class="evidence-detail"><div class="evidence-label">Correlation</div><div class="value">${escapeHtml(evidence.confidence || 'low')} ${typeof evidence.score === 'number' ? evidence.score.toFixed(2) : ''}</div></div>`);
+      return rows.join('');
+    }
+
+    function renderEvidenceEvent(ev) {
+      const evidence = ev.evidence || {};
+      const rawWhy = Array.isArray(evidence.why) && evidence.why.length
+        ? evidence.why.join(', ')
+        : 'linked by daemon correlation';
+      const showingRawWhy = rawWhyIds.has(ev.id);
+      const why = showingRawWhy ? rawWhy : (evidence.why_human || rawWhy);
+      const risk = evidence.risk || evidence.severity || 'low';
+      const decision = evidence.decision || 'observed';
+      const category = evidence.destination_category || 'unknown external';
+      const severity = evidence.severity || 'low';
+      const destination = evidence.destination || '';
+      const isExpanded = expandedIds.has(ev.id);
+      const groupCount = Number(ev._groupCount || 1);
+      const compact = !isExpanded && !highSignalEvidence(ev);
+      const details = Array.isArray(evidence.details) ? evidence.details : [];
+      const replay = Array.isArray(evidence.replay) ? evidence.replay : [];
+      const showingRawDetails = rawDetailIds.has(ev.id);
+      const detailRows = details.map(d => `
+        <div class="evidence-detail">
+          <div class="evidence-label">${escapeHtml(d.label || '')}</div>
+          <div class="value">${escapeHtml(d.value || '')}</div>
+        </div>
+      `).join('');
+      const replayRows = replay.map(d => `
+        <div class="evidence-detail">
+          <div class="evidence-label">${escapeHtml(d.label || '')}</div>
+          <div class="value">${escapeHtml(d.value || '')}</div>
+        </div>
+      `).join('');
+      const groupChip = groupCount > 1 ? `<span class="group-chip">${groupCount} similar</span>` : '';
+      const agentBadge = renderAgentBadge(ev.agent);
+      const status = reviewStatus(evidence);
+      const statusClass = reviewStatusClass(status);
+      const subtitle = reviewSubtitle(evidence);
+      const falsePositive = likelyFalsePositiveEvidence(ev);
+      const displayDestination = destination || 'unknown destination';
+      const provenance = renderDestinationProvenance(evidence, compact);
+      const destinationLine = `<div class="evidence-line">
+        <div class="evidence-label">Destination</div>
+        <div>
+          <div class="destination-pill">${escapeHtml(displayDestination)}</div>
+          <div class="destination-note">Best display name from semantic intent, SNI/PTR host, or observed endpoint.</div>
+        </div>
+      </div>`;
+      const compactBody = `
+        <div class="evidence-body compact-body">
+          ${destinationLine}
+          ${provenance}
+          <div class="evidence-line">
+            <div class="evidence-label">Why</div>
+            <div class="why-value">
+              <div class="evidence-why">${escapeHtml(why)}</div>
+              <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
+            </div>
+          </div>
+        </div>
+      `;
+      const fullBody = `
+        <div class="evidence-body">
+          ${destinationLine}
+          ${provenance}
+          <div class="evidence-line">
+            <div class="evidence-label">Hook</div>
+            <div class="evidence-text">${escapeHtml(evidence.semantic || '')}</div>
+          </div>
+          <div class="evidence-line">
+            <div class="evidence-label">Network</div>
+            <div class="evidence-text">${escapeHtml(evidence.flow || ev.detail || '')}</div>
+          </div>
+          <div class="evidence-line">
+            <div class="evidence-label">Why</div>
+            <div class="why-value">
+              <div class="evidence-why">${escapeHtml(why)}</div>
+              <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
+            </div>
+          </div>
+          ${isExpanded ? `<div class="evidence-expanded">
+            ${renderRelatedSubEvents(ev)}
+            ${replayRows ? `<div class="replay-block">${replayRows}</div>` : ''}
+            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${showingRawDetails ? 'Hide Raw Details' : 'Raw Details'}</button>
+            ${showingRawDetails ? `${detailRows}${evidenceDiagnosticTags(ev, evidence, rawWhy)}` : ''}
+          </div>` : ''}
+        </div>
+      `;
+      return `
+        <div class="event evidence correlated ${escapeHtml(severity)}${compact ? ' compact' : ''}${falsePositive ? ' false-positive' : ''}">
+          <div class="evidence-head">
+            <span class="ts" title="${escapeHtml(ev.ts || '')}">${escapeHtml(displayTimestamp(ev.ts))}</span>
+            <div class="evidence-heading">
+              <div class="evidence-meta-row">
+                <span class="review-chip ${escapeHtml(statusClass)}">${escapeHtml(status)}</span>
+                ${groupChip}
+                <span class="category-pill">${escapeHtml(category)}</span>
+              </div>
+              <span class="evidence-title">${escapeHtml(evidence.title || ev.summary || 'Linked evidence')}</span>
+              <span class="evidence-subtitle">${escapeHtml(subtitle)} · ${escapeHtml(decision)} · risk ${escapeHtml(risk)}</span>
+            </div>
+            <span class="evidence-actions">
+              ${agentBadge}
+              <button class="mini-button" title="Quiet this linked pattern" onclick="quietPattern(${Number(ev.id)})">Quiet pattern</button>
+              <button class="mini-button" onclick="toggleDetails(${Number(ev.id)})">${isExpanded ? 'Less' : 'Explain'}</button>
+              <button class="mini-button icon" title="Dismiss card" onclick="dismissEvent(${Number(ev.id)})">x</button>
+            </span>
+          </div>
+          ${compact ? compactBody : fullBody}
+        </div>
+      `;
+    }
+
+    function toggleDetails(id) {
+      if (expandedIds.has(id)) expandedIds.delete(id);
+      else expandedIds.add(id);
+      renderEvents();
+    }
+
+    function toggleWhy(id) {
+      if (rawWhyIds.has(id)) rawWhyIds.delete(id);
+      else rawWhyIds.add(id);
+      renderEvents();
+    }
+
+    function toggleRawDetails(id) {
+      if (rawDetailIds.has(id)) rawDetailIds.delete(id);
+      else rawDetailIds.add(id);
+      renderEvents();
+    }
+
+    function toggleKnownGroup(key) {
+      if (expandedKnownGroups.has(key)) expandedKnownGroups.delete(key);
+      else expandedKnownGroups.add(key);
+      renderEvents();
+    }
+
+    async function dismissEvent(id) {
+      events = events.filter(ev => ev.id !== id);
+      expandedIds.delete(id);
+      rawWhyIds.delete(id);
+      rawDetailIds.delete(id);
+      renderEvents();
+      try {
+        await invoke('dismiss_event', { id });
+        await refreshStatus();
+      } catch (e) {
+        console.warn('dismiss failed', e);
+      }
+    }
+
+    async function quietPattern(id) {
+      const event = events.find(ev => ev.id === id);
+      const keys = quietKeys(event, false);
+      if (keys.length) {
+        events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).some(key => keys.includes(key)));
+        expandedIds.delete(id);
+        rawWhyIds.delete(id);
+        rawDetailIds.delete(id);
+        renderEvents();
+      }
+      try {
+        await invoke('quiet_pattern', { id });
+        await refreshStatus();
+      } catch (e) {
+        console.warn('quiet pattern failed', e);
+        await refreshFromBackend();
+      }
+    }
+
+    async function quietKnownServices() {
+      const knownKeys = [
+        'category:known claude service',
+        'category:playwright bridge traffic',
+        'category:telemetry/logging',
+        'category:local dev server bridge',
+        'category:local dev server',
+        'category:local dev tunnel',
+        'category:package registry',
+      ];
+      events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).some(key => knownKeys.includes(key)));
+      renderEvents();
+      try {
+        await invoke('quiet_known_services');
+        await refreshStatus();
+      } catch (e) {
+        console.warn('quiet known services failed', e);
+        await refreshFromBackend();
+      }
+    }
+
+    async function quietCategory(category) {
+      const key = `category:${normalizePatternPiece(category)}`;
+      events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).includes(key));
+      expandedKnownGroups.delete(`known:${normalizePatternPiece(category)}`);
+      renderEvents();
+      try {
+        await invoke('quiet_category', { category });
+        await refreshStatus();
+      } catch (e) {
+        console.warn('quiet category failed', e);
+        await refreshFromBackend();
+      }
+    }
+
+    async function refreshFromBackend() {
+      try {
+        let list = null;
+        try {
+          const json = await invoke('get_events_json');
+          list = normalizeEvents(json);
+        } catch (_) {
+          list = normalizeEvents(await invoke('get_events'));
+        }
+        events = normalizeEvents(list);
+        renderEvents();
+        await refreshStatus();
+      } catch (e) {
+        console.warn('get_events failed', e);
+      }
+    }
+
+	    async function refreshStatus() {
+	      try {
+	        const st = await invoke('get_status');
+        const titleEl = document.getElementById('title');
+        const badgeEl = document.getElementById('badge');
+        const metaEl = document.getElementById('meta');
+        const statusEl = document.getElementById('status');
+
+        titleEl.textContent = st.header || 'AgentSnitch';
+        if (st.active) {
+          badgeEl.textContent = 'active';
+          badgeEl.className = 'badge';
+        } else {
+          badgeEl.textContent = st.quiet ? 'quiet' : 'idle';
+          badgeEl.className = 'badge' + (st.quiet ? ' quiet' : '');
+        }
+        metaEl.textContent = st.event_count ? (st.event_count + ' ev') : '';
+        renderSessionSummary(st.summary);
+        renderAgentTeam(st.agents || []);
+        statusEl.textContent = st.active ? 'Live feed • all local' : 'No active agent • all local';
+        const recent = normalizeEvents(st.recent);
+        if (!st.active && st.event_count === 0 && !(st.agents || []).length) {
+          activeAgentFilter = '';
+          activeReasonFilter = '';
+          teamAgents = [];
+          expandedMainGroups.clear();
+        }
+        if (recent.length || st.event_count === 0) {
+          events = recent;
+          renderEvents();
+        }
+      } catch (e) {
+        // ignore
+	      }
+	    }
+
+	    function renderAppSettings(detail = '') {
+	      const toggle = document.getElementById('networkSensorEnabled');
+	      const statusEl = document.getElementById('networkSensorStatus');
+
+	      const source = draftSettings || appSettings;
+	      const disabled = !!source.network_sensor_disabled;
+	      const enabled = !disabled;
+	      if (toggle) toggle.checked = enabled;
+	      if (statusEl) statusEl.textContent = detail || (enabled ? 'On' : 'Off');
+	    }
+
+	    async function loadAppSettings() {
+	      try {
+	        appSettings = await invoke('get_app_settings');
+	        renderAppSettings();
+	      } catch (e) {
+	        renderAppSettings('Settings unavailable');
+	        console.warn('settings load failed', e);
+	      }
+	    }
+
+	    function openNetworkSensorSettings() {
+	      draftSettings = { ...appSettings };
+	      const modal = document.getElementById('settingsModal');
+	      if (modal) modal.classList.add('open');
+	      renderAppSettings();
+	    }
+
+	    function closeSettingsModal() {
+	      draftSettings = null;
+	      const modal = document.getElementById('settingsModal');
+	      if (modal) modal.classList.remove('open');
+	      renderAppSettings();
+	    }
+
+	    function setDraftNetworkSensorEnabled(enabled) {
+	      if (!draftSettings) draftSettings = { ...appSettings };
+	      draftSettings.network_sensor_disabled = !enabled;
+	      renderAppSettings('Unsaved');
+	    }
+
+	    async function saveSettingsModal() {
+	      if (!draftSettings) {
+	        closeSettingsModal();
+	        return;
+	      }
+	      await setNetworkSensorDisabled(!!draftSettings.network_sensor_disabled);
+	      draftSettings = null;
+	      const modal = document.getElementById('settingsModal');
+	      if (modal) modal.classList.remove('open');
+	      renderAppSettings();
+	    }
+
+	    async function setNetworkSensorDisabled(disabled) {
+	      const previous = !!appSettings.network_sensor_disabled;
+	      appSettings.network_sensor_disabled = !!disabled;
+	      if (draftSettings) draftSettings.network_sensor_disabled = !!disabled;
+	      renderAppSettings(disabled ? 'Turning off' : 'Turning on');
+
+	      try {
+	        const result = await invoke('set_network_sensor_disabled', { disabled: !!disabled });
+	        appSettings = result.settings || appSettings;
+	        renderAppSettings(result.warning || result.detail || '');
+	      } catch (e) {
+	        appSettings.network_sensor_disabled = previous;
+	        if (draftSettings) draftSettings.network_sensor_disabled = previous;
+	        renderAppSettings('Update failed');
+	        alert('network sensor setting failed: ' + e);
+	      }
+	    }
+
+	    async function clearSession() {
+      try {
+        await invoke('clear_session');
+        events = [];
+        expandedIds.clear();
+        rawWhyIds.clear();
+        rawDetailIds.clear();
+        expandedKnownGroups.clear();
+        expandedMainGroups.clear();
+        activeAgentFilter = '';
+        activeReasonFilter = '';
+        teamAgents = [];
+        renderEvents();
+        await refreshStatus();
+      } catch (e) {
+        alert('clear failed: ' + e);
+      }
+    }
+
+    async function quietSession() {
+      try {
+        await invoke('quiet_session');
+        await refreshStatus();
+      } catch (e) {
+        alert('quiet failed: ' + e);
+      }
+    }
+
+    async function doExport() {
+      try {
+        const jsonl = await invoke('export_transcript');
+        const blob = new Blob([jsonl || ''], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'agentsnitch-session.jsonl';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('export failed: ' + e);
+      }
+    }
+
+    function setupLiveUpdates() {
+      // Prefer real-time events from Rust
+      listen('event-received', (evt) => {
+        const payload = evt.payload;
+        if (payload) {
+          // dedup by id
+          if (!events.some(e => e.id === payload.id)) {
+            events.push(payload);
+          }
+          renderEvents();
+          refreshStatus();
+        }
+      }).catch(() => {});
+
+      listen('events-updated', () => {
+        refreshFromBackend();
+      }).catch(() => {});
+
+	      listen('status-changed', () => {
+	        refreshStatus();
+	      }).catch(() => {});
+
+	      listen('settings-changed', (evt) => {
+	        if (evt.payload) {
+	          appSettings = evt.payload;
+	          renderAppSettings();
+	        }
+	      }).catch(() => {});
+
+	      listen('open-network-sensor-settings', () => {
+	        openNetworkSensorSettings();
+	      }).catch(() => {});
+
+	      listen('trigger-export', () => {
+	        doExport();
+	      }).catch(() => {});
+
+      // Fallback polling (keeps UI live even if event channel has issues)
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        // only poll if we didn't get recent push (simple heuristic: always cheap)
+        refreshFromBackend();
+      }, 1200);
+    }
+
+	    async function boot() {
+	      // initial load
+	      await loadAppSettings();
+	      await refreshFromBackend();
+	      await refreshStatus();
+      setupLiveUpdates();
+
+      // Keyboard niceties (cmd-k etc for power users)
+      document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
+          e.preventDefault();
+          clearSession();
+        } else if (e.key === 'Escape') {
+          closeSettingsModal();
+        }
+      });
+
+	      window.AGENTSNITCH = { clearSession, quietSession, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, refresh: refreshFromBackend, invoke };
+      console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
+    }
+
+    // Start
+    boot();
+  </script>
+
+  <!-- ===== hidden creature easter egg ===== -->
+  <!-- Secret gesture: right-click the "Quiet" button 6 times in rapid succession. -->
+  <div id="creature-egg-overlay" role="dialog" aria-modal="true" aria-label="Creatures">
+    <div class="cr-topbar">
+      <div>
+        <div class="cr-title">Creatures</div>
+        <div class="cr-sub">your agents, as they really are · driven by live status · all local</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <span class="cr-egg-hint">🐾 you found the snitches</span>
+        <button id="creature-egg-close" type="button">close</button>
+      </div>
+    </div>
+    <div class="cr-stage" id="creature-stage"></div>
+  </div>
+
+  <script src="creatures-engine.js"></script>
+  <script src="creatures-bridge.js"></script>
+  <script>
+    (function () {
+      const overlay = document.getElementById('creature-egg-overlay');
+      const closeBtn = document.getElementById('creature-egg-close');
+      function openEgg() {
+        overlay.classList.add('open');
+        if (window.CreatureEgg) window.CreatureEgg.start();
+      }
+      function closeEgg() {
+        overlay.classList.remove('open');
+        if (window.CreatureEgg) window.CreatureEgg.stop();
+      }
+      closeBtn.addEventListener('click', closeEgg);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('open')) closeEgg(); });
+
+      // Secret knock: 6 rapid right-clicks on the "Quiet" button.
+      // Find it by its exact label so we don't depend on DOM order.
+      const quietBtn = Array.from(document.querySelectorAll('.footer button'))
+        .find(b => b.textContent.trim() === 'Quiet');
+      if (quietBtn) {
+        let clicks = 0, lastT = 0;
+        const WINDOW = 600;   // ms between clicks to count as "rapid"
+        const NEEDED = 6;
+        quietBtn.addEventListener('contextmenu', (e) => {
+          e.preventDefault();               // suppress the OS context menu during the knock
+          const now = performance.now();
+          clicks = (now - lastT <= WINDOW) ? clicks + 1 : 1;
+          lastT = now;
+          if (clicks >= NEEDED) { clicks = 0; openEgg(); }
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

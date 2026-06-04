@@ -1,0 +1,54 @@
+# .gitleaks.toml — AgentSnitch
+#
+# Extends gitleaks' built-in default ruleset, then allowlists this repo's
+# INTENTIONAL inert placeholders and fixture files. AgentSnitch is a security
+# tool that deliberately ships credential-SHAPED (but never real) test data and
+# docs. Per README/ARCHITECTURE, fixtures and docs MUST use placeholders like
+# `<example-token>` and `example.invalid` hosts. This config keeps real secret
+# detection fully active and only suppresses those known-inert patterns; it
+# disables no rules.
+#
+# Pinned for gitleaks v8.x. Run:
+#   pre-commit:  gitleaks protect --staged   (via the pinned pre-commit hook)
+#   CI:          gitleaks detect --redact    (full git history)
+
+title = "AgentSnitch gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow intentional inert placeholders and fixture/lockfiles"
+
+regexes = [
+  # <example-token>, <example-api-key>, <example-password>, <example-query-token>, ...
+  '''<[a-z][a-z0-9-]*-(?:token|key|secret|id|hash|value|password)>''',
+  '''<(?:session-id|bundle-id|extension-bundle-id|sidechain-tool-use-id)>''',
+  # RFC 2606 / RFC 6761 reserved test hosts used as inert destinations.
+  '''[a-z0-9.-]*\.example\.(?:com|invalid)''',
+  # Explicit obvious-fixture sentinel value present in tests.
+  '''should-not-leak''',
+  # Documented placeholder assignments such as SECRET_KEY=<example-token>.
+  '''(?i)(?:secret_key|config_value|api_?key|api_?token|password|token)\s*[:=]\s*<[^>]+>''',
+]
+
+stopwords = [
+  "example-token",
+  "example-api-key",
+  "example-password",
+  "example-query-token",
+  "example.invalid",
+  "should-not-leak",
+  "redacted",
+]
+
+paths = [
+  # Inert sample hook payloads (placeholders only).
+  '''^testdata/sample-claude-.*\.json$''',
+  # Rust lockfile: hundreds of SHA-256 crate checksums (integrity data, not secrets).
+  '''^ui/src-tauri/Cargo\.lock$''',
+  # Generated Tauri capability/schema files.
+  '''^ui/src-tauri/gen/''',
+  # This config file itself.
+  '''^\.gitleaks\.toml$''',
+]

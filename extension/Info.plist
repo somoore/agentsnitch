@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- This is the Info.plist *inside* the .systemextension bundle.
+         The directory containing this bundle must be named exactly:
+           com.somoore.agentsnitch.network-extension.systemextension
+         (i.e. CFBundleIdentifier + ".systemextension")
+    -->
+
+    <key>CFBundleIdentifier</key>
+    <string>com.somoore.agentsnitch.network-extension</string>
+
+    <key>CFBundleName</key>
+    <string>AgentSnitch Network Extension</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>AgentSnitchNetworkExtension</string>
+
+    <key>CFBundleVersion</key>
+    <string>0.1.5</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.5</string>
+
+    <key>CFBundlePackageType</key>
+    <string>SYSX</string>
+
+    <key>CFBundleExecutable</key>
+    <string>AgentSnitchNetworkExtension</string>
+
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>AgentSnitch uses a Network Extension to observe local network flows from AI coding agents for security visibility.</string>
+
+    <!-- Required for the Network Extension framework to find the provider class -->
+    <key>NSExtension</key>
+    <dict>
+        <!-- For NEFilterDataProvider (recommended starting point for observe) -->
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.networkextension.filter-data</string>
+
+        <key>NSExtensionPrincipalClass</key>
+        <string>AgentSnitchNetworkExtension.AgentSnitchNetworkExtension</string>
+    </dict>
+
+    <!-- Additional NE metadata (used by nesessionmanager etc.) -->
+    <key>NetworkExtension</key>
+    <dict>
+        <key>NEProviderClasses</key>
+        <dict>
+            <key>com.apple.networkextension.filter-data</key>
+            <string>AgentSnitchNetworkExtension.AgentSnitchNetworkExtension</string>
+        </dict>
+
+        <!-- Optional: explicit Mach service for XPC if using the NEMachServiceName pattern -->
+        <!-- <key>NEMachServiceName</key>
+        <string>com.somoore.agentsnitch.network-extension</string> -->
+    </dict>
+</dict>
+</plist>

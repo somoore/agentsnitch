@@ -1,0 +1,11 @@
+{
+  "hookEventName": "PostToolUse",
+  "session_id": "example-session-123",
+  "cwd": "/Users/example/my-project",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/example/.env"
+  },
+  "tool_use_id": "toolu_01AbCdEfGh",
+  "tool_output": "CONFIG_VALUE=<example-token>\nDATABASE_URL=postgres://example.invalid/db"
+}

@@ -1,0 +1,182 @@
+{
+  "schema": "agentsnitch.heuristics.v0",
+  "correlation": {
+    "correlation_window_seconds": 10,
+    "existing_connection_window_seconds": 30,
+    "process_ttl_minutes": 10,
+    "max_ancestor_depth": 12,
+    "high_byte_threshold": 1048576
+  },
+  "classify": {
+    "sensitive_paths": [
+      ".env",
+      ".env.local",
+      ".env.*",
+      "credentials",
+      "id_rsa",
+      "id_ed25519",
+      ".pem",
+      ".key",
+      ".aws/",
+      ".ssh/",
+      ".netrc",
+      ".git-credentials",
+      "config.json",
+      "secrets",
+      ".npmrc",
+      ".pypirc",
+      ".docker/config.json",
+      "docker/config.json",
+      ".kube/config",
+      "kubeconfig",
+      ".config/gcloud/",
+      "application_default_credentials.json",
+      "terraform.tfvars",
+      ".tfvars",
+      ".terraformrc",
+      "credentials.json",
+      "client_secret",
+      "service-account",
+      "service_account",
+      "ghp_",
+      "sk-",
+      "AKIA"
+    ],
+    "local_only_hosts": [
+      "localhost",
+      "127.0.0.1",
+      "::1",
+      "0.0.0.0",
+      "[::1]"
+    ],
+    "network_command_tokens": [
+      "curl",
+      "wget",
+      "nc",
+      "netcat",
+      "socat"
+    ]
+  },
+  "destination_categories": [
+    {
+      "name": "Playwright bridge traffic",
+      "domains": [
+        "bridge.claudeusercontent.com",
+        "playwright.azureedge.net"
+      ],
+      "quiet_by_default": true
+    },
+    {
+      "name": "known Claude service",
+      "domains": [
+        "anthropic.com",
+        "claude.ai",
+        "claudeusercontent.com",
+        "anthropic-cdn.com"
+      ],
+      "cidrs": [
+        "160.79.104.0/21"
+      ],
+      "quiet_by_default": true
+    },
+    {
+      "name": "telemetry/logging",
+      "domains": [
+        "datadoghq.com",
+        "datadoghq.eu",
+        "ddog-gov.com",
+        "sentry.io",
+        "sentry-cdn.com",
+        "segment.io",
+        "segment.com",
+        "segmentapis.com",
+        "posthog.com",
+        "statsig.com",
+        "statsigapi.net",
+        "amplitude.com",
+        "mixpanel.com"
+      ],
+      "quiet_by_default": true
+    },
+    {
+      "name": "package registry",
+      "domains": [
+        "npmjs.com",
+        "pypi.org",
+        "pythonhosted.org",
+        "rubygems.org",
+        "crates.io",
+        "pkg.go.dev",
+        "proxy.golang.org",
+        "sum.golang.org",
+        "github.com",
+        "githubusercontent.com",
+        "github.io",
+        "gitlab.com",
+        "bitbucket.org"
+      ],
+      "quiet_by_default": true
+    },
+    {
+      "name": "cloud provider",
+      "domains": [
+        "googleusercontent.com",
+        "amazonaws.com",
+        "cloudfront.net",
+        "azurefd.net",
+        "azurewebsites.net"
+      ],
+      "quiet_by_default": false
+    },
+    {
+      "name": "local dev tunnel",
+      "domains": [
+        "ngrok-free.app",
+        "ngrok.io",
+        "trycloudflare.com",
+        "loca.lt",
+        "localtunnel.me",
+        "localhost.run"
+      ],
+      "quiet_by_default": true
+    }
+  ],
+  "quiet_categories": [
+    "known Claude service",
+    "Playwright bridge traffic",
+    "telemetry/logging",
+    "local dev server bridge",
+    "local dev server",
+    "local dev tunnel",
+    "package registry"
+  ],
+  "noisy_automation": [
+    {
+      "family": "playwright",
+      "contains": [
+        "playwright"
+      ]
+    },
+    {
+      "family": "browser_automation",
+      "contains": [
+        "browser_batch",
+        "browser_screenshot",
+        "browser_snapshot",
+        "browser_navigate",
+        "browser_click",
+        "browser_type",
+        "browser_",
+        "__browser",
+        "chrome"
+      ]
+    },
+    {
+      "family": "localhost_paste",
+      "contains": [
+        "/paste"
+      ],
+      "requires_localhost": true
+    }
+  ]
+}

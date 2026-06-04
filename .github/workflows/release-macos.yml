@@ -1,0 +1,213 @@
+# Builds the signed, notarized macOS pre-alpha/release package. The package
+# contains the Tauri app, Go daemon/support tools, LaunchAgent, and hook
+# installer wiring in one installer artifact.
+name: release-macos
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, for example v0.1.0-pre-alpha.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build, sign, notarize, release
+    runs-on: macos-latest
+    environment: release-signing
+    env:
+      APP_BUNDLE_PATH: ui/src-tauri/target/release/bundle/macos/AgentSnitch.app
+      APP_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_IDENTITY }}
+      INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_IDENTITY }}
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Validate release ref
+        run: |
+          set -euo pipefail
+          case "$TAG_NAME" in
+            v*) ;;
+            *)
+              echo "::error::Release tag must start with v, got: $TAG_NAME"
+              exit 1
+              ;;
+          esac
+          git fetch --force origin main:refs/remotes/origin/main --tags
+          if ! git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null; then
+            echo "::error::Release ref is not an existing tag: $TAG_NAME"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "refs/tags/$TAG_NAME")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$tag_commit" != "$head_commit" ]; then
+            echo "::error::Checked-out commit does not match $TAG_NAME"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$head_commit" refs/remotes/origin/main; then
+            echo "::error::$TAG_NAME must point to a commit reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.3"
+          check-latest: false
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          components: clippy, rustfmt
+          cache-workspaces: ui/src-tauri
+
+      - name: Validate required release secrets
+        env:
+          APP_P12: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APP_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          INSTALLER_P12: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_P12_BASE64 }}
+          INSTALLER_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_P12_PASSWORD }}
+          HOST_PROFILE: ${{ secrets.AGENTSNITCH_HOST_PROFILE_BASE64 }}
+          EXT_PROFILE: ${{ secrets.AGENTSNITCH_EXTENSION_PROFILE_BASE64 }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_KEY_P8: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            APP_SIGN_IDENTITY \
+            INSTALLER_SIGN_IDENTITY \
+            APP_P12 \
+            APP_P12_PASSWORD \
+            INSTALLER_P12 \
+            INSTALLER_P12_PASSWORD \
+            HOST_PROFILE \
+            EXT_PROFILE \
+            APPLE_KEY_ID \
+            APPLE_ISSUER_ID \
+            APPLE_KEY_P8; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required secret/env: $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Import signing certificates
+        env:
+          APP_P12: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APP_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          INSTALLER_P12: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_P12_BASE64 }}
+          INSTALLER_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/agentsnitch-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          APP_P12_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          INSTALLER_P12_PATH="$RUNNER_TEMP/developer-id-installer.p12"
+
+          printf '%s' "$APP_P12" | base64 -D > "$APP_P12_PATH"
+          printf '%s' "$INSTALLER_P12" | base64 -D > "$INSTALLER_P12_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$APP_P12_PATH" -k "$KEYCHAIN_PATH" -P "$APP_P12_PASSWORD" -A -t cert -f pkcs12
+          security import "$INSTALLER_P12_PATH" -k "$KEYCHAIN_PATH" -P "$INSTALLER_P12_PASSWORD" -A -t cert -f pkcs12
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          rm -f "$APP_P12_PATH" "$INSTALLER_P12_PATH"
+
+      - name: Decode provisioning profiles and notarization key
+        env:
+          HOST_PROFILE: ${{ secrets.AGENTSNITCH_HOST_PROFILE_BASE64 }}
+          EXT_PROFILE: ${{ secrets.AGENTSNITCH_EXTENSION_PROFILE_BASE64 }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_KEY_P8: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$HOST_PROFILE" | base64 -D > "$RUNNER_TEMP/agentsnitch-host.provisionprofile"
+          printf '%s' "$EXT_PROFILE" | base64 -D > "$RUNNER_TEMP/agentsnitch-extension.provisionprofile"
+          printf '%s' "$APPLE_KEY_P8" | base64 -D > "$RUNNER_TEMP/AuthKey_${APPLE_KEY_ID}.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey_${APPLE_KEY_ID}.p8"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version 2.11.2 --locked
+
+      - name: Build Go support tools
+        run: make build
+
+      - name: Build Tauri app bundle
+        run: cd ui && cargo tauri build
+
+      - name: Embed extension and sign app bundle
+        env:
+          AGENTSNITCH_APP_PATH: ${{ github.workspace }}/${{ env.APP_BUNDLE_PATH }}
+          AGENTSNITCH_APP_SIGN_IDENTITY: ${{ env.APP_SIGN_IDENTITY }}
+          AGENTSNITCH_EXT_SIGN_IDENTITY: ${{ env.APP_SIGN_IDENTITY }}
+          AGENTSNITCH_HOST_PROFILE: ${{ runner.temp }}/agentsnitch-host.provisionprofile
+          AGENTSNITCH_EXTENSION_PROFILE: ${{ runner.temp }}/agentsnitch-extension.provisionprofile
+        run: make package-macos-dev
+
+      - name: Build signed notarized installer
+        env:
+          AGENTSNITCH_APP_PATH: ${{ github.workspace }}/${{ env.APP_BUNDLE_PATH }}
+          AGENTSNITCH_APP_SIGN_IDENTITY: ${{ env.APP_SIGN_IDENTITY }}
+          AGENTSNITCH_INSTALLER_SIGN_IDENTITY: ${{ env.INSTALLER_SIGN_IDENTITY }}
+          AGENTSNITCH_RELEASE_TAG: ${{ env.TAG_NAME }}
+          AGENTSNITCH_REQUIRE_RELEASE_SIGNING: "1"
+          AGENTSNITCH_NOTARIZE: "1"
+          AGENTSNITCH_APP_STORE_CONNECT_KEY_PATH: ${{ runner.temp }}/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
+          AGENTSNITCH_APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          AGENTSNITCH_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: scripts/package-macos-release.sh
+
+      - name: Verify installer package
+        run: |
+          set -euo pipefail
+          pkg="dist/AgentSnitch-${TAG_NAME}-macos.pkg"
+          pkgutil --check-signature "$pkg"
+          spctl -a -vv -t install "$pkg"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pkg="dist/AgentSnitch-${TAG_NAME}-macos.pkg"
+          checksum="$pkg.sha256"
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes" <<EOF
+          Pre-alpha macOS release for end-to-end installer validation.
+
+          This package installs:
+          - AgentSnitch.app
+          - AgentSnitch daemon and support tools
+          - LaunchAgent registration
+          - Claude Code hook registration for the console user during install
+          EOF
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "$pkg" "$checksum" --clobber
+          else
+            gh release create "$TAG_NAME" "$pkg" "$checksum" --verify-tag --title "AgentSnitch $TAG_NAME" --notes-file "$notes" --prerelease
+          fi

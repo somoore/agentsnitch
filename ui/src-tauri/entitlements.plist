@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Main app (Tauri host) entitlements for AgentSnitch.
+         These are applied by Tauri during codesign of the .app bundle.
+
+         For the Network Extension spike:
+         - com.apple.developer.system-extension.install is REQUIRED so the Rust/Swift bridge
+           can call OSSystemExtensionManager / OSSystemExtensionRequest to activate the NE.
+         - com.apple.developer.networking.networkextension lists the provider types the
+           *host* is entitled to install. Use the -systemextension suffix for Developer ID
+           distribution + notarization (the values the Apple-issued provisioning profile
+           will actually contain for non-App-Store builds).
+    -->
+
+    <!-- System Extension installation right (host only) -->
+    <key>com.apple.developer.system-extension.install</key>
+    <true/>
+
+    <!-- Network Extension providers we are allowed to ship/install.
+         Start with content-filter (pairs with NEFilterDataProvider in the extension).
+         Add app-proxy-provider-systemextension if you switch the provider to NETransparentProxyProvider.
+    -->
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>content-filter-provider-systemextension</string>
+        <!-- <string>app-proxy-provider-systemextension</string> -->
+    </array>
+
+    <!-- Basic networking for the Tauri app itself (tray, local HTTP/WS to daemon, etc.) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- For a developer tool / visibility product we often run unsandboxed or with
+         very broad exceptions. If you want App Sandbox:
+         - set this to true
+         - add com.apple.security.files.user-selected.read-write etc. as needed
+         - the NE extension itself usually has its own (minimal) entitlements file.
+         Many real NE-based security tools ship the host app unsandboxed.
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+
+    <!-- Add other entitlements the Tauri UI or future daemon bridge needs.
+         Examples:
+         <key>com.apple.security.automation.apple-events</key><true/>
+         <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+         <array><string>/Library/Logs/...</string></array>
+    -->
+</dict>
+</plist>
