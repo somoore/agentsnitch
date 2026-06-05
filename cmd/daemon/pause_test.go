@@ -48,13 +48,20 @@ func TestPauseControllerTransitions(t *testing.T) {
 	}
 }
 
-// TestDispatchControlMessageTogglesPause verifies a UI control message flips the
-// daemon's paused flag (peer trust is bypassed by passing hasPeerPID=false, the
-// same convention other dispatch tests use).
+// TestDispatchControlMessageTogglesPause verifies a control message from the
+// authenticated UI peer flips the daemon's paused flag. Control messages fail
+// closed, so the peer must present credentials matching the installed UI binary.
 func TestDispatchControlMessageTogglesPause(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("AGENTSNITCH_STATUS", filepath.Join(tmp, "status.json"))
 	t.Setenv("AGENTSNITCH_TRANSCRIPTS_DIR", filepath.Join(tmp, "sessions"))
+	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", filepath.Join(tmp, "support"))
+	orig := peerExePath
+	t.Cleanup(func() { peerExePath = orig })
+	peerExePath = func(int) (string, bool) {
+		return "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui", true
+	}
 
 	sessions := newDaemonSessions()
 	status := newStatusReporter()
@@ -62,15 +69,30 @@ func TestDispatchControlMessageTogglesPause(t *testing.T) {
 	pause := newPauseController()
 
 	pauseMsg := `{"schema":"agentsnitch.control.v0","action":"pause"}`
-	dispatch(pauseMsg, 0, false, sessions, status, transcripts, nil, pause)
+	dispatch(pauseMsg, 4242, true, sessions, status, transcripts, nil, pause)
 	if !pause.Paused() {
 		t.Fatal("pause control message did not pause the daemon")
 	}
 
 	resumeMsg := `{"schema":"agentsnitch.control.v0","action":"resume"}`
-	dispatch(resumeMsg, 0, false, sessions, status, transcripts, nil, pause)
+	dispatch(resumeMsg, 4242, true, sessions, status, transcripts, nil, pause)
 	if pause.Paused() {
 		t.Fatal("resume control message did not resume the daemon")
+	}
+}
+
+// TestControlMessageRejectedWithoutPeerCredentials is a fail-closed guard: when the
+// socket peer cannot be authenticated (no peer PID available — e.g. a transient
+// getsockopt failure), a control message must NOT be honored. Otherwise any
+// same-user process able to open the 0600 socket could halt sensing.
+func TestControlMessageRejectedWithoutPeerCredentials(t *testing.T) {
+	pause := newPauseController()
+	pauseMsg := `{"schema":"agentsnitch.control.v0","action":"pause"}`
+
+	// hasPeerPID=false means we could not authenticate the peer: must fail closed.
+	dispatch(pauseMsg, 0, false, newDaemonSessions(), newStatusReporter(), nil, nil, pause)
+	if pause.Paused() {
+		t.Fatal("control message without peer credentials must NOT pause the daemon")
 	}
 }
 

@@ -215,8 +215,15 @@ func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSession
 	if strings.Contains(line, "agentsnitch.control") {
 		var ctrl event.ControlMessage
 		if json.Unmarshal(raw, &ctrl) == nil && ctrl.Schema == event.SchemaControlV0 {
-			if hasPeerPID && peerPID > 0 && !trustedControlSocketPeer(peerPID) {
-				log.Printf("CONTROL_INVALID: socket peer pid %d is not the AgentSnitch UI", peerPID)
+			// Fail closed: control messages (pause/resume) are honored ONLY from the
+			// installed AgentSnitch UI, authenticated by the kernel-reported peer
+			// executable path. If the peer cannot be authenticated (no peer creds, or
+			// not the UI binary) we reject — never fall open. The threat is a
+			// same-user process (e.g. the monitored agent itself) opening the 0600
+			// socket to blind its own watcher, so an unauthenticated peer must not be
+			// able to halt sensing.
+			if !hasPeerPID || peerPID <= 0 || !trustedControlSocketPeer(peerPID) {
+				log.Printf("CONTROL_INVALID: socket peer pid %d (hasPeerPID=%t) is not the authenticated AgentSnitch UI; rejecting control message", peerPID, hasPeerPID)
 				return
 			}
 			handleControl(ctrl, pause, transcripts, status, sessions)
