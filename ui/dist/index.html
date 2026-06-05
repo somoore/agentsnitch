@@ -1560,6 +1560,50 @@
       text-transform: uppercase;
       letter-spacing: 0.02em;
     }
+    /* T9: process tree as an indented tree with role labels, mirroring the
+       agent-hierarchy rail/elbow styling so the two views read as related.
+       Lives in the machine-field (provenance details) tier, not promoted. */
+    .process-tree { display: grid; gap: 3px; margin-top: 2px; }
+    .process-tree .ptree-children {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-left: 8px;
+      padding-left: 10px;
+      border-left: 2px solid rgba(120, 183, 255, 0.3);
+    }
+    .ptree-node {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px;
+      padding: 3px 6px;
+      border: 1px solid rgba(120, 183, 255, 0.2);
+      border-radius: 5px;
+      background: rgba(10,132,255,0.06);
+      font-size: 11px;
+    }
+    .ptree-children .ptree-node::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 50%;
+      width: 8px;
+      height: 2px;
+      background: rgba(120, 183, 255, 0.3);
+    }
+    .ptree-pid { font-family: var(--mono, monospace); color: var(--text); font-weight: 600; }
+    .ptree-name { color: var(--text-dim); }
+    .ptree-role {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--accent-2, #78b7ff);
+      border: 1px solid rgba(120, 183, 255, 0.35);
+      border-radius: 3px;
+      padding: 0 4px;
+    }
 	    .footer {
 	      background: var(--bg-elev);
 	      border-top: 1px solid var(--border);
@@ -3490,6 +3534,70 @@
       </div>`;
     }
 
+    // T9: render the structured process_tree (leaf→root ProcessNodes linked by
+    // ppid) as an indented tree with humanized role labels, instead of the one
+    // long wrapped "pid <- ppid" line. The hook and network chains converge on a
+    // shared ancestor, so we nest by ppid (roots = nodes whose ppid is outside
+    // the set) and render the chain root→leaf.
+    function humanizeProcessRole(role) {
+      if (!role) return [];
+      return role.split(',').map(r => r.trim()).filter(Boolean).map(r => {
+        switch (r) {
+          case 'hook': return 'hook';
+          case 'flow': return 'network';
+          case 'hook_parent':
+          case 'flow_parent': return 'parent';
+          case 'hook_ancestor':
+          case 'flow_ancestor': return 'ancestor';
+          default: return r.replace(/_/g, ' ');
+        }
+      });
+    }
+
+    function renderProcessTreeNodes(node, byPpid) {
+      const pid = node.pid;
+      const name = node.name ? compactProcessName(node.name) : '';
+      const roles = [...new Set(humanizeProcessRole(node.role))];
+      const roleChips = roles.map(r => `<span class="ptree-role">${escapeHtml(r)}</span>`).join('');
+      const children = (byPpid.get(pid) || []).filter(child => child.pid !== pid);
+      const childHtml = children.length
+        ? `<div class="ptree-children">${children.map(c => renderProcessTreeNodes(c, byPpid)).join('')}</div>`
+        : '';
+      return `<div class="ptree-node-wrap">
+        <div class="ptree-node">
+          <span class="ptree-pid">pid ${escapeHtml(String(pid))}</span>
+          ${name ? `<span class="ptree-name">${escapeHtml(name)}</span>` : ''}
+          ${roleChips}
+        </div>
+        ${childHtml}
+      </div>`;
+    }
+
+    function compactProcessName(name) {
+      const trimmed = String(name || '').trim();
+      return trimmed.includes('/') ? (trimmed.split('/').pop() || trimmed) : trimmed;
+    }
+
+    function renderProcessTree(nodes) {
+      if (!Array.isArray(nodes) || !nodes.length) return '';
+      const pids = new Set(nodes.map(n => n.pid));
+      const byPpid = new Map();
+      for (const node of nodes) {
+        const ppid = node.ppid;
+        if (ppid && pids.has(ppid)) {
+          if (!byPpid.has(ppid)) byPpid.set(ppid, []);
+          byPpid.get(ppid).push(node);
+        }
+      }
+      // Roots: nodes whose parent is not part of the captured set (the ancestor
+      // we climbed to). Self-referential ppid guarded against above.
+      const roots = nodes.filter(n => !n.ppid || !pids.has(n.ppid) || n.ppid === n.pid);
+      const list = roots.length ? roots : [nodes[0]];
+      return `<div class="evidence-detail"><div class="evidence-label">Process tree</div>
+        <div class="process-tree">${list.map(r => renderProcessTreeNodes(r, byPpid)).join('')}</div>
+      </div>`;
+    }
+
     function evidenceDiagnosticTags(ev, evidence, rawWhy) {
       const tags = renderTags(ev);
       const rows = [];
@@ -3518,12 +3626,18 @@
       const details = Array.isArray(evidence.details) ? evidence.details : [];
       const replay = Array.isArray(evidence.replay) ? evidence.replay : [];
       const showingRawDetails = rawDetailIds.has(ev.id);
-      const detailRows = details.map(d => `
+      // T9: the structured process_tree replaces the flat "Process tree" string
+      // detail — render it as an indented tree below, not as a wrapped line here.
+      const processTree = Array.isArray(evidence.process_tree) ? evidence.process_tree : [];
+      const detailRows = details
+        .filter(d => !(processTree.length && d.label === 'Process tree'))
+        .map(d => `
         <div class="evidence-detail">
           <div class="evidence-label">${escapeHtml(d.label || '')}</div>
           <div class="value">${escapeHtml(d.value || '')}</div>
         </div>
       `).join('');
+      const processTreeHtml = renderProcessTree(processTree);
       const replayRows = replay.map(d => `
         <div class="evidence-detail">
           <div class="evidence-label">${escapeHtml(d.label || '')}</div>
@@ -3583,7 +3697,7 @@
             ${renderRelatedSubEvents(ev)}
             ${replayRows ? `<div class="replay-block"><div class="section-label">Process lineage</div>${replayRows}</div>` : ''}
             <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${showingRawDetails ? 'Hide provenance details' : 'Provenance details'}</button>
-            ${showingRawDetails ? `${detailRows}${evidenceDiagnosticTags(ev, evidence, rawWhy)}` : ''}
+            ${showingRawDetails ? `${detailRows}${processTreeHtml}${evidenceDiagnosticTags(ev, evidence, rawWhy)}` : ''}
           </div>` : ''}
         </div>
       `;
