@@ -653,13 +653,18 @@
     .agent-filter {
       display: none;
       align-items: center;
-      gap: 6px;
-      padding: 5px 8px;
-      background: #211f2b;
-      border-bottom: 1px solid var(--border);
-      color: #d9c7ff;
-      font-size: 10px;
+      gap: 8px;
+      padding: 6px 10px;
+      margin: 0 8px 6px;
+      border: 1px solid var(--orange);
+      border-radius: 6px;
+      background: rgba(255, 159, 10, 0.12);
+      color: var(--text);
+      font-size: 11px;
     }
+    .agent-filter .agent-filter-icon { color: var(--orange); flex-shrink: 0; }
+    .agent-filter .agent-filter-text { flex: 1; min-width: 0; }
+    .agent-filter .agent-filter-text strong { color: var(--orange); }
     .agent-badge {
       display: inline-flex;
       align-items: center;
@@ -2762,9 +2767,16 @@
       panel.innerHTML = '';
       if (activeAgentFilter && activeView !== 'agents') {
         const agent = teamAgents.find(agent => agent.id === activeAgentFilter);
-        const label = agent ? agentLabel(agent) : activeAgentFilter;
+        const label = agent ? agentShortName(agent) : activeAgentFilter;
+        // Loud, unmistakable indicator: a filtered view that shows "0" must never
+        // be misread as "nothing happened". State plainly that the view is scoped
+        // to one agent and that other activity is hidden.
+        const hiddenTotal = Math.max(0, events.length - events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)).length);
+        const hiddenNote = hiddenTotal > 0
+          ? ` · ${hiddenTotal} other ${pluralize(hiddenTotal, 'event')} hidden`
+          : '';
         filter.style.display = 'flex';
-        filter.innerHTML = `<span>Filtered to ${escapeHtml(label)}</span><button class="mini-button" onclick="clearAgentFilter()">Clear</button>`;
+        filter.innerHTML = `<span class="agent-filter-icon">⧉</span><span class="agent-filter-text">Showing only <strong>${escapeHtml(label)}</strong>${escapeHtml(hiddenNote)}</span><button class="mini-button" onclick="clearAgentFilter()">Show all</button>`;
       } else {
         filter.style.display = 'none';
         filter.innerHTML = '';
@@ -3006,6 +3018,16 @@
     }
 
     function setView(view) {
+      // Clicking a tab clears any active agent scope. Otherwise an agent filter
+      // set in the Agents drill-down would silently persist onto the new tab,
+      // making it look empty ("Network 0") when it isn't — the filter-persistence
+      // trap. Each tab the user explicitly opens starts unscoped. (Badge-driven
+      // cross-tab filtering uses filterAgent/filterAgentEvents, not setView, so it
+      // is unaffected.)
+      if (activeView !== view) {
+        activeAgentFilter = '';
+        activeAgentDetailKind = 'all';
+      }
       activeView = view;
       renderEvents();
     }
