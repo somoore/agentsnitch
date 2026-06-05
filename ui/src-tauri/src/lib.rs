@@ -198,9 +198,21 @@ pub struct UiEvent {
     pub tags: Vec<String>,
     pub detail: Option<String>,
     pub destination: Option<String>,
+    #[serde(rename = "destination_context")]
+    pub destination_context: Option<DestinationContext>,
     pub correlated: bool,
     pub evidence: Option<LinkedEvidence>,
     pub agent: Option<AgentInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestinationContext {
+    #[serde(rename = "project_key")]
+    pub project_key: String,
+    pub state: String,
+    pub label: String,
+    #[serde(rename = "previous_count")]
+    pub previous_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,8 +268,13 @@ struct AppState {
     runtime: Mutex<SessionRuntime>,
     next_id: Mutex<u64>,
     quiet: Mutex<bool>,
+    // paused: when true the user engaged Pause (Wireshark-style). The daemon halts
+    // sensing; the UI freezes live updates. Never persisted — defaults to false
+    // (Live) so a restart always comes back Live (fail-safe, see docs/ui-ux-plan.md).
+    paused: Mutex<bool>,
     quieted_patterns: Mutex<HashSet<String>>,
     quiet_preferences: Mutex<QuietPreferences>,
+    destination_memory: Mutex<DestinationMemory>,
     app_settings: Mutex<AppSettings>,
 }
 
@@ -306,6 +323,7 @@ pub struct Status {
     pub header: String,
     pub event_count: usize,
     pub quiet: bool,
+    pub paused: bool,
     pub summary: SessionSummary,
     pub agents: Vec<AgentInfo>,
     pub recent: Vec<UiEvent>,
@@ -331,6 +349,16 @@ pub struct SessionSummary {
     pub quieted_patterns: usize,
     #[serde(rename = "new_destination_samples")]
     pub new_destination_samples: Vec<String>,
+    #[serde(rename = "sensitive_context")]
+    pub sensitive_context: usize,
+    #[serde(rename = "agent_processes")]
+    pub agent_processes: usize,
+    #[serde(rename = "observer_coverage")]
+    pub observer_coverage: usize,
+    #[serde(rename = "project_new_destinations")]
+    pub project_new_destinations: usize,
+    #[serde(rename = "project_seen_destinations")]
+    pub project_seen_destinations: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -338,6 +366,21 @@ struct QuietPreferences {
     schema: String,
     global: HashSet<String>,
     projects: HashMap<String, HashSet<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DestinationMemory {
+    schema: String,
+    projects: HashMap<String, HashMap<String, usize>>,
+}
+
+impl Default for DestinationMemory {
+    fn default() -> Self {
+        Self {
+            schema: "agentsnitch.destination_memory.v0".into(),
+            projects: HashMap::new(),
+        }
+    }
 }
 
 fn compute_header(snap: &SessionSnapshot, active: bool, agents: &[AgentInfo]) -> String {
@@ -423,14 +466,24 @@ fn session_age_label(started_ts: &str, now: DateTime<Utc>) -> String {
 }
 
 fn refresh_tray(app: &AppHandle, active: bool) {
+    // Paused overrides the active/quiet display: while sensing is halted the tray
+    // must make the gap unmistakable (it is a security-relevant state).
+    let paused = app
+        .try_state::<AppState>()
+        .map(|s| *s.paused.lock().unwrap())
+        .unwrap_or(false);
     if let Some(tray) = app.tray_by_id("main") {
-        let tooltip = if active {
-            "AgentSnitch — AI agent active (click for details)"
+        let (tooltip, title) = if paused {
+            (
+                "AgentSnitch — PAUSED: sensing halted, activity not being recorded",
+                "⏸",
+            )
+        } else if active {
+            ("AgentSnitch — AI agent active (click for details)", "●")
         } else {
-            "AgentSnitch — quiet"
+            ("AgentSnitch — quiet", "")
         };
         let _ = tray.set_tooltip(Some(tooltip));
-        let title = if active { "●" } else { "" };
         let _ = tray.set_title(Some(title));
     }
 }
@@ -797,6 +850,7 @@ fn sem_to_ui(id: u64, ev: SemanticEvent) -> UiEvent {
         tags,
         detail: None,
         destination: None,
+        destination_context: None,
         correlated: false,
         evidence: None,
         agent: Some(ev.agent),
@@ -896,6 +950,7 @@ fn network_to_ui(id: u64, ev: NetworkFlowEvent) -> UiEvent {
             Some(detail_parts.join(" • "))
         },
         destination: Some(destination),
+        destination_context: None,
         correlated: false,
         evidence: None,
         agent: ev.agent,
@@ -945,6 +1000,7 @@ fn correlated_to_ui(id: u64, ev: CorrelatedEvent) -> UiEvent {
         tags,
         detail: flow_detail,
         destination: Some(evidence.destination.clone()),
+        destination_context: None,
         correlated: true,
         evidence: Some(evidence),
         agent,
@@ -2006,6 +2062,13 @@ fn append_ui_log(line: &str) {
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
 }
 
+fn verbose_ui_ingest_logging() -> bool {
+    matches!(
+        std::env::var("AGENTSNITCH_VERBOSE_UI_INGEST_LOG").as_deref(),
+        Ok("1")
+    )
+}
+
 fn ui_log_path() -> String {
     if let Ok(path) = std::env::var("AGENTSNITCH_UI_LOG") {
         return path;
@@ -2028,6 +2091,19 @@ fn quiet_preferences_path() -> String {
     }
     std::env::temp_dir()
         .join("agentsnitch-ui-quiet-preferences.json")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn destination_memory_path() -> String {
+    if let Ok(path) = std::env::var("AGENTSNITCH_DESTINATION_MEMORY") {
+        return path;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return format!("{}/.agentsnitch/ui-destination-memory.json", home);
+    }
+    std::env::temp_dir()
+        .join("agentsnitch-ui-destination-memory.json")
         .to_string_lossy()
         .into_owned()
 }
@@ -2161,6 +2237,53 @@ fn save_quiet_preferences(prefs: &QuietPreferences) -> Result<(), String> {
     Ok(())
 }
 
+fn load_destination_memory() -> DestinationMemory {
+    let path = destination_memory_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return DestinationMemory::default();
+    };
+    match serde_json::from_str::<DestinationMemory>(&text) {
+        Ok(mut memory) => {
+            if memory.schema.is_empty() {
+                memory.schema = "agentsnitch.destination_memory.v0".into();
+            }
+            memory
+        }
+        Err(err) => {
+            append_ui_log(&format!(
+                "[agentsnitch-ui] destination memory parse failed at {}: {}",
+                path, err
+            ));
+            DestinationMemory::default()
+        }
+    }
+}
+
+fn save_destination_memory(memory: &DestinationMemory) -> Result<(), String> {
+    let path = destination_memory_path();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        create_private_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(memory).map_err(|err| err.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|err| err.to_string())?;
+        file.write_all(text.as_bytes())
+            .map_err(|err| err.to_string())?;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 fn quiet_project_key(session: &SessionSnapshot) -> Option<String> {
     let cwd = session.cwd.trim();
     if cwd.is_empty() {
@@ -2168,6 +2291,66 @@ fn quiet_project_key(session: &SessionSnapshot) -> Option<String> {
     } else {
         Some(cwd.to_string())
     }
+}
+
+fn annotate_destination_context(ui: &mut UiEvent, state: &State<AppState>) {
+    let Some(destination) = ui_destination_for_memory(ui) else {
+        return;
+    };
+    let session = state.session.lock().unwrap().clone();
+    let Some(project) = quiet_project_key(&session) else {
+        return;
+    };
+    let key = normalize_pattern_piece(&destination);
+    if key.is_empty() || key == "unknown destination" {
+        return;
+    }
+
+    let memory_for_save = {
+        let mut memory = state.destination_memory.lock().unwrap();
+        let project_memory = memory.projects.entry(project.clone()).or_default();
+        let previous_count = project_memory.get(&key).copied().unwrap_or_default();
+        let state_name = if previous_count == 0 {
+            "new_for_project"
+        } else {
+            "seen_before_project"
+        };
+        ui.destination_context = Some(DestinationContext {
+            project_key: project,
+            state: state_name.into(),
+            label: if previous_count == 0 {
+                "new for this project".into()
+            } else {
+                "seen before in this project".into()
+            },
+            previous_count,
+        });
+        project_memory.insert(key, previous_count + 1);
+        memory.clone()
+    };
+
+    if let Err(err) = save_destination_memory(&memory_for_save) {
+        append_ui_log(&format!(
+            "[agentsnitch-ui] destination memory save failed: {}",
+            err
+        ));
+    }
+}
+
+fn ui_destination_for_memory(ui: &UiEvent) -> Option<String> {
+    ui.destination
+        .as_deref()
+        .or_else(|| {
+            ui.evidence
+                .as_ref()
+                .map(|evidence| evidence.destination.as_str())
+        })
+        .map(destination_memory_key)
+        .filter(|value| !value.is_empty())
+}
+
+fn destination_memory_key(value: &str) -> String {
+    normalize_destination_host(value.split(" (").next().unwrap_or(value))
 }
 
 fn effective_quieted_patterns(
@@ -2229,8 +2412,10 @@ fn process_incoming_semantic(app: &AppHandle, ev: SemanticEvent) {
         "[agentsnitch-ui] process_incoming_semantic: {} {} pid={} tags={:?}",
         ev.event, ev.tool, ev.pid, ev.tags
     );
-    println!("{}", log_line);
-    append_ui_log(&log_line);
+    if verbose_ui_ingest_logging() {
+        println!("{}", log_line);
+        append_ui_log(&log_line);
+    }
     let state: State<AppState> = app.state();
     note_agent_activity(&state);
     let mut events = state.events.lock().unwrap();
@@ -2278,8 +2463,6 @@ fn process_incoming_semantic(app: &AppHandle, ev: SemanticEvent) {
     if !was_active {
         let _ = app.emit("status-changed", ());
     }
-
-    let _ = app.emit("events-updated", ());
 }
 
 fn process_incoming_network(app: &AppHandle, ev: NetworkFlowEvent) {
@@ -2287,8 +2470,10 @@ fn process_incoming_network(app: &AppHandle, ev: NetworkFlowEvent) {
         "[agentsnitch-ui] process_incoming_network: pid={:?} remote={:?}",
         ev.pid, ev.remote
     );
-    println!("{}", log_line);
-    append_ui_log(&log_line);
+    if verbose_ui_ingest_logging() {
+        println!("{}", log_line);
+        append_ui_log(&log_line);
+    }
     let state: State<AppState> = app.state();
     if let Some(agent) = ev.agent.as_ref() {
         let mut agents = state.agents.lock().unwrap();
@@ -2296,8 +2481,9 @@ fn process_incoming_network(app: &AppHandle, ev: NetworkFlowEvent) {
     }
     let mut next_id = state.next_id.lock().unwrap();
     *next_id += 1;
-    let ui = network_to_ui(*next_id, ev);
+    let mut ui = network_to_ui(*next_id, ev);
     drop(next_id);
+    annotate_destination_context(&mut ui, &state);
     push_ui_event(app, ui);
 }
 
@@ -2306,8 +2492,10 @@ fn process_incoming_correlation(app: &AppHandle, ev: CorrelatedEvent) {
         "[agentsnitch-ui] process_incoming_correlation: score={} reasons={:?}",
         ev.score, ev.reasons
     );
-    println!("{}", log_line);
-    append_ui_log(&log_line);
+    if verbose_ui_ingest_logging() {
+        println!("{}", log_line);
+        append_ui_log(&log_line);
+    }
     let state: State<AppState> = app.state();
     note_agent_activity(&state);
     {
@@ -2330,8 +2518,9 @@ fn process_incoming_correlation(app: &AppHandle, ev: CorrelatedEvent) {
     }
     let mut next_id = state.next_id.lock().unwrap();
     *next_id += 1;
-    let ui = correlated_to_ui(*next_id, ev);
+    let mut ui = correlated_to_ui(*next_id, ev);
     drop(next_id);
+    annotate_destination_context(&mut ui, &state);
     if should_suppress_quieted_pattern(&ui, &state.quieted_patterns.lock().unwrap()) {
         let _ = app.emit("status-changed", ());
         return;
@@ -2348,7 +2537,6 @@ fn process_incoming_correlation(app: &AppHandle, ev: CorrelatedEvent) {
         *state.quiet.lock().unwrap() = false;
     }
     push_ui_event(app, ui);
-    let _ = app.emit("events-updated", ());
 }
 
 fn linked_event_breaks_quiet(ui: &UiEvent) -> bool {
@@ -2494,7 +2682,81 @@ fn is_agent_lifecycle_message(body: &str) -> bool {
     message_schema(body).as_deref() == Some("agentsnitch.agent.v0")
 }
 
+/// Wire shape of the daemon's pause_gap record (see event.PauseGapEvent in Go).
+#[derive(Debug, Clone, Deserialize)]
+struct PauseGapEvent {
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    to: String,
+    #[serde(default)]
+    duration_sec: f64,
+}
+
+/// Builds a feed-visible UiEvent for a daemon pause_gap record. Returns None if the
+/// body cannot be parsed as a pause_gap (the caller still emits so the UI refreshes).
+fn build_pause_gap_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent> {
+    let gap: PauseGapEvent = serde_json::from_str(body).ok()?;
+    let state: State<AppState> = app.state();
+    let mut next_id = state.next_id.lock().unwrap();
+    *next_id += 1;
+    let id = *next_id;
+    drop(next_id);
+
+    // Short HH:MM:SS timestamp, matching sem_to_ui's convention; fall back to the
+    // raw value when the timestamp is shorter than an RFC3339 prefix.
+    let ts = if gap.to.len() >= 19 {
+        gap.to[11..19].to_string()
+    } else {
+        gap.to.clone()
+    };
+    let duration = gap.duration_sec.round() as i64;
+    let summary = format!(
+        "Sensing paused — {}s coverage gap (no agent activity observed or recorded)",
+        duration.max(0)
+    );
+    let detail = if !gap.from.is_empty() && !gap.to.is_empty() {
+        Some(format!("Pause gap from {} to {}", gap.from, gap.to))
+    } else {
+        None
+    };
+    Some(UiEvent {
+        id,
+        ts,
+        summary,
+        tags: vec!["pause_gap".into()],
+        detail,
+        destination: None,
+        destination_context: None,
+        correlated: false,
+        evidence: None,
+        agent: None,
+    })
+}
+
 fn process_incoming_json(app: &AppHandle, body: &str, source: &str) {
+    // A pause_gap record is the daemon telling us a sensing gap just ended; always
+    // surface it so the halted window is shown as an explicit gap. We must push a
+    // UiEvent into state.events (not merely emit), because the feed is read from
+    // state.events via get_status — emitting alone leaves the gap invisible there.
+    if body.contains("agentsnitch.pause_gap") {
+        if let Some(ui) = build_pause_gap_ui_event(app, body) {
+            let state: State<AppState> = app.state();
+            let mut events = state.events.lock().unwrap();
+            events.push(ui.clone());
+            trim_ui_events(&mut events);
+            drop(events);
+            let _ = app.emit("event-received", &ui);
+        }
+        let _ = app.emit("pause-gap", body.to_string());
+        let _ = app.emit("status-changed", ());
+        return;
+    }
+    // While paused the daemon should have stopped sending, but in-flight lines may
+    // still arrive. Freeze the view: drop them rather than mutating state.
+    if *app.state::<AppState>().paused.lock().unwrap() {
+        return;
+    }
     if is_agent_lifecycle_message(body) {
         let Ok(ev) = serde_json::from_str::<AgentLifecycleEvent>(body) else {
             let err_line = format!(
@@ -2519,8 +2781,10 @@ fn process_incoming_json(app: &AppHandle, body: &str, source: &str) {
             ev.pid,
             ev.session.id
         );
-        println!("{}", log_line);
-        append_ui_log(&log_line);
+        if verbose_ui_ingest_logging() {
+            println!("{}", log_line);
+            append_ui_log(&log_line);
+        }
         process_incoming_semantic(app, ev);
         return;
     }
@@ -2542,8 +2806,10 @@ fn process_incoming_agent(app: &AppHandle, ev: AgentLifecycleEvent) {
         "[agentsnitch-ui] process_incoming_agent: {} id={} pid={:?} type={:?}",
         ev.event, ev.agent.id, ev.agent.pid, ev.agent.agent_type
     );
-    println!("{}", log_line);
-    append_ui_log(&log_line);
+    if verbose_ui_ingest_logging() {
+        println!("{}", log_line);
+        append_ui_log(&log_line);
+    }
     let state: State<AppState> = app.state();
     note_agent_activity(&state);
     {
@@ -2591,6 +2857,50 @@ fn ui_socket_path() -> String {
         return format!("{}/ui.sock", dir);
     }
     "/tmp/agentsnitch-ui.sock".into()
+}
+
+/// Path to the daemon's control/ingestion socket. Mirrors the Go side
+/// (internal/runtime.SocketPath): AGENTSNITCH_SOCK / AGENTSNITCH_SOCKET override,
+/// else ~/.agentsnitch/events.sock.
+fn daemon_socket_path() -> String {
+    for key in ["AGENTSNITCH_SOCK", "AGENTSNITCH_SOCKET"] {
+        if let Ok(path) = std::env::var(key) {
+            if !path.is_empty() {
+                return path;
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return format!("{}/.agentsnitch/events.sock", home);
+    }
+    "/tmp/agentsnitch-dev.sock".into()
+}
+
+/// Send a single pause/resume control message to the daemon over its socket. The
+/// daemon trusts the UI binary by executable path and flips its sensing flag. Best
+/// effort with a short timeout: the UI must never block on a wedged daemon.
+#[cfg(unix)]
+fn send_daemon_control(action: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::time::Duration;
+
+    let path = daemon_socket_path();
+    let mut stream =
+        UnixStream::connect(&path).map_err(|e| format!("connect daemon socket {}: {}", path, e))?;
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+    let msg = format!(
+        "{{\"schema\":\"agentsnitch.control.v0\",\"action\":\"{}\"}}\n",
+        action
+    );
+    stream
+        .write_all(msg.as_bytes())
+        .map_err(|e| format!("write control message: {}", e))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn send_daemon_control(_action: &str) -> Result<(), String> {
+    Err("daemon control socket is unix-only".into())
 }
 
 fn create_private_dir_all(path: &std::path::Path) -> std::io::Result<()> {
@@ -3062,7 +3372,7 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 
     let show = MenuItem::with_id(app, "show", "Show AgentSnitch", true, None::<&str>)?;
     let quiet = MenuItem::with_id(app, "quiet", "Quiet current session", true, None::<&str>)?;
-    let export = MenuItem::with_id(app, "export", "Export transcript", true, None::<&str>)?;
+    let export = MenuItem::with_id(app, "export", "Export Evidence Pack", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
     let menu = Menu::with_items(app, &[&show, &quiet, &export, &quit])?;
@@ -3222,17 +3532,26 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
     let reset = reconcile_session_liveness(&state, &app);
     let active = *state.active.lock().unwrap();
     let quiet = *state.quiet.lock().unwrap();
+    let paused = *state.paused.lock().unwrap();
     let recent = state.events.lock().unwrap().clone();
     let count = recent.len();
     let snap = state.session.lock().unwrap().clone();
     let quieted_count = state.quieted_patterns.lock().unwrap().len();
     let agents = sorted_agents(&state.agents.lock().unwrap());
+    let mut summary = session_summary(&recent, quieted_count);
+    apply_agent_summary(
+        &mut summary,
+        &agents,
+        active,
+        &state.runtime.lock().unwrap(),
+    );
     let status = Status {
         active,
         header: compute_header(&snap, active, &agents),
         event_count: count,
         quiet,
-        summary: session_summary(&recent, quieted_count),
+        paused,
+        summary,
         agents,
         recent,
     };
@@ -3340,6 +3659,40 @@ fn quiet_session(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Toggle Pause (halt sensing) / Live (resume). Pause is distinct from Quiet
+/// (which keeps sensing and only suppresses known-low-risk noise) and Clear (which
+/// wipes the view). While paused the daemon stops observing and recording; the UI
+/// freezes live updates and shows a loud banner. The daemon writes a pause_gap
+/// record on resume so the halted window is recorded as an explicit gap.
+#[tauri::command]
+fn set_paused(paused: bool, state: State<AppState>, app: AppHandle) -> Result<bool, String> {
+    {
+        let guard = state.paused.lock().unwrap();
+        if *guard == paused {
+            return Ok(paused); // no-op; already in this state
+        }
+    }
+    // Signal the daemon FIRST and only commit the UI state on success. If we cannot
+    // even reach the daemon, committing "paused" would be a lie: the banner/tray
+    // would report sensing is halted and process_incoming_json would drop live
+    // events, while the daemon keeps recording — a misleading frozen view. For a
+    // tool whose whole promise is "never an invisible hole", the honest behavior on
+    // failure is to leave the prior state and surface the error.
+    let control = if paused { "pause" } else { "resume" };
+    if let Err(e) = send_daemon_control(control) {
+        return Err(format!(
+            "daemon control {} failed; UI state unchanged: {}",
+            control, e
+        ));
+    }
+    *state.paused.lock().unwrap() = paused;
+    let active = *state.active.lock().unwrap();
+    refresh_tray(&app, active);
+    let _ = app.emit("pause-changed", paused);
+    let _ = app.emit("status-changed", ());
+    Ok(paused)
+}
+
 #[tauri::command]
 fn dismiss_event(id: u64, state: State<AppState>, app: AppHandle) -> Result<(), String> {
     let mut events = state.events.lock().unwrap();
@@ -3439,15 +3792,25 @@ fn quiet_category(category: String, state: State<AppState>, app: AppHandle) -> R
 
 #[tauri::command]
 fn export_transcript(state: State<AppState>) -> Result<String, String> {
+    build_export_transcript(&state)
+}
+
+fn build_export_transcript(state: &AppState) -> Result<String, String> {
     let evs = state.events.lock().unwrap().clone();
     let active = *state.active.lock().unwrap();
     let quiet = *state.quiet.lock().unwrap();
     let session = state.session.lock().unwrap().clone();
     let quieted_count = state.quieted_patterns.lock().unwrap().len();
+    let agents = sorted_agents(&state.agents.lock().unwrap());
+    let runtime = state.runtime.lock().unwrap().clone();
+    let mut summary = session_summary(&evs, quieted_count);
+    apply_agent_summary(&mut summary, &agents, active, &runtime);
     let mut out = Vec::new();
     out.push(
-        serde_json::to_string(&export_header(&evs, active, quiet, &session, quieted_count))
-            .map_err(|e| e.to_string())?,
+        serde_json::to_string(&export_header(
+            &evs, active, quiet, &session, &agents, summary,
+        ))
+        .map_err(|e| e.to_string())?,
     );
     for e in &evs {
         out.push(serde_json::to_string(&export_record(e)).map_err(|e| e.to_string())?);
@@ -3455,12 +3818,56 @@ fn export_transcript(state: State<AppState>) -> Result<String, String> {
     Ok(out.join("\n"))
 }
 
+#[tauri::command]
+fn export_evidence_pack_file(state: State<AppState>) -> Result<String, String> {
+    let text = build_export_transcript(&state)?;
+    write_evidence_pack_file(&text)
+}
+
+fn evidence_pack_path() -> std::path::PathBuf {
+    let base = std::env::var("AGENTSNITCH_EXPORT_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME").map(|home| std::path::Path::new(&home).join("Downloads"))
+        })
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let secs = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    base.join(format!("AgentSnitch-Evidence-Pack-{}.jsonl", secs))
+}
+
+fn write_evidence_pack_file(text: &str) -> Result<String, String> {
+    let path = evidence_pack_path();
+    if let Some(parent) = path.parent() {
+        create_private_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|err| err.to_string())?;
+        file.write_all(text.as_bytes())
+            .map_err(|err| err.to_string())?;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 fn export_header(
     events: &[UiEvent],
     active: bool,
     quiet: bool,
     session: &SessionSnapshot,
-    quieted_pattern_count: usize,
+    agents: &[AgentInfo],
+    summary: SessionSummary,
 ) -> serde_json::Value {
     let linked_count = events
         .iter()
@@ -3469,13 +3876,18 @@ fn export_header(
     serde_json::json!({
         "schema": "agentsnitch.export.v0",
         "record_type": "session",
+        "review_type": "evidence_pack",
+        "title": "AgentSnitch Evidence Pack",
         "exported_at": export_timestamp(),
         "event_count": events.len(),
         "linked_count": linked_count,
         "active": active,
         "quiet": quiet,
         "session": session,
-        "summary": session_summary(events, quieted_pattern_count),
+        "agents": agents,
+        "summary": summary.clone(),
+        "narrative": export_narrative(events, &summary),
+        "timeline": export_timeline(events),
     })
 }
 
@@ -3485,6 +3897,8 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
         ..SessionSummary::default()
     };
     let mut new_destinations = HashSet::new();
+    let mut project_new_destinations = HashSet::new();
+    let mut project_seen_destinations = HashSet::new();
 
     for event in events {
         let kind = event_kind(event);
@@ -3493,6 +3907,26 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
         }
         if event_has_network_evidence(event) {
             summary.network += 1;
+        }
+        if ui_event_has_sensitive_context(event) {
+            summary.sensitive_context += 1;
+        }
+        if ui_event_observer(event).is_some() {
+            summary.observer_coverage += 1;
+        }
+        if let Some(context) = event.destination_context.as_ref() {
+            let destination = ui_destination_for_memory(event).unwrap_or_default();
+            if !destination.is_empty() {
+                match context.state.as_str() {
+                    "new_for_project" => {
+                        project_new_destinations.insert(destination);
+                    }
+                    "seen_before_project" => {
+                        project_seen_destinations.insert(destination);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         let evidence = event.evidence.as_ref();
@@ -3510,7 +3944,7 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
                 }
                 "package registry" => summary.package_registry_traffic += 1,
                 "unknown external" | "cloud provider" if !evidence.destination.is_empty() => {
-                    new_destinations.insert(normalize_pattern_piece(&evidence.destination));
+                    new_destinations.insert(destination_memory_key(&evidence.destination));
                 }
                 _ => {}
             }
@@ -3522,7 +3956,7 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            let host = normalize_destination_host(destination);
+            let host = destination_memory_key(destination);
             match destination_category_for_host(&host).as_deref() {
                 Some("known Claude service" | "Playwright bridge traffic") => {
                     summary.known_claude_traffic += 1
@@ -3533,7 +3967,7 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
                 }
                 Some("package registry") => summary.package_registry_traffic += 1,
                 _ => {
-                    new_destinations.insert(normalize_pattern_piece(&host));
+                    new_destinations.insert(destination_memory_key(&host));
                 }
             }
         }
@@ -3546,7 +3980,113 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
     samples.sort();
     summary.new_destinations = samples.len();
     summary.new_destination_samples = samples.into_iter().take(3).collect();
+    summary.project_new_destinations = project_new_destinations.len();
+    summary.project_seen_destinations = project_seen_destinations.len();
     summary
+}
+
+fn apply_agent_summary(
+    summary: &mut SessionSummary,
+    agents: &[AgentInfo],
+    active: bool,
+    runtime: &SessionRuntime,
+) {
+    let process_count = agents.iter().filter(|agent| agent.pid.is_some()).count();
+    summary.agent_processes = if process_count > 0 {
+        process_count
+    } else if active && runtime.agent_process_running {
+        1
+    } else {
+        0
+    };
+}
+
+fn ui_event_has_sensitive_context(event: &UiEvent) -> bool {
+    event.tags.iter().any(|tag| {
+        let tag = tag.to_ascii_lowercase();
+        tag.contains("sensitive") || tag.contains("credential") || tag.contains("secret")
+    }) || event
+        .evidence
+        .as_ref()
+        .map(|evidence| {
+            evidence
+                .why
+                .iter()
+                .any(|reason| reason == "after_sensitive_read")
+                || evidence.risk == "high"
+                || evidence.severity == "hot"
+                || evidence
+                    .details
+                    .iter()
+                    .any(|detail| detail.value.to_ascii_lowercase().contains("sensitive"))
+        })
+        .unwrap_or(false)
+}
+
+fn ui_event_observer(event: &UiEvent) -> Option<String> {
+    event
+        .evidence
+        .as_ref()
+        .and_then(|evidence| {
+            evidence
+                .destination_provenance
+                .iter()
+                .chain(evidence.details.iter())
+                .find(|detail| detail.label == "Observer")
+                .map(|detail| detail.value.clone())
+        })
+        .or_else(|| {
+            event.detail.as_deref().and_then(|detail| {
+                detail.split(" • ").find_map(|part| {
+                    let (key, value) = part.split_once(':')?;
+                    if key.trim().eq_ignore_ascii_case("source") {
+                        let value = value.trim();
+                        if !value.is_empty() {
+                            return Some(value.to_string());
+                        }
+                    }
+                    None
+                })
+            })
+        })
+}
+
+fn export_narrative(events: &[UiEvent], summary: &SessionSummary) -> serde_json::Value {
+    let top_destinations = events
+        .iter()
+        .filter_map(|event| event.destination.as_deref())
+        .filter(|destination| !destination.is_empty())
+        .take(6)
+        .collect::<Vec<_>>();
+    let new_destinations = if summary.project_new_destinations > 0 {
+        summary.project_new_destinations
+    } else {
+        summary.new_destinations
+    };
+    serde_json::json!({
+        "headline": format!(
+            "{} linked evidence cards, {} sensitive-context events, {} new destinations",
+            summary.linked, summary.sensitive_context, new_destinations
+        ),
+        "triage_focus": if summary.high_signal > 0 { "attention" } else { "routine review" },
+        "top_destinations": top_destinations,
+    })
+}
+
+fn export_timeline(events: &[UiEvent]) -> Vec<serde_json::Value> {
+    events
+        .iter()
+        .map(|event| {
+            serde_json::json!({
+                "ts": event.ts,
+                "kind": event_kind(event),
+                "summary": event.summary,
+                "destination": event.destination.clone(),
+                "destination_context": event.destination_context.clone(),
+                "risk": event.evidence.as_ref().map(|evidence| evidence.risk.as_str()).unwrap_or("low"),
+            })
+        })
+        .collect()
 }
 
 fn event_kind(event: &UiEvent) -> &'static str {
@@ -3609,6 +4149,7 @@ fn export_record(e: &UiEvent) -> serde_json::Value {
         "risk": evidence.map(|ev| ev.risk.as_str()).unwrap_or("low"),
         "decision": evidence.map(|ev| ev.decision.as_str()).unwrap_or("observed"),
         "destination": destination,
+        "destination_context": e.destination_context.clone(),
         "destination_category": ui_event_destination_category(e),
         "why_human": evidence.map(|ev| ev.why_human.as_str()),
         "raw_reasons": evidence.map(|ev| ev.why.clone()).unwrap_or_default(),
@@ -4360,6 +4901,7 @@ mod tests {
                 tags: vec!["correlated".into()],
                 detail: None,
                 destination: Some("api.anthropic.com".into()),
+                destination_context: None,
                 correlated: true,
                 evidence: Some(claude),
                 agent: None,
@@ -4371,6 +4913,7 @@ mod tests {
                 tags: vec!["correlated".into()],
                 detail: None,
                 destination: Some("http-intake.logs.us5.datadoghq.com".into()),
+                destination_context: None,
                 correlated: true,
                 evidence: Some(telemetry),
                 agent: None,
@@ -4382,6 +4925,7 @@ mod tests {
                 tags: vec!["correlated".into()],
                 detail: None,
                 destination: Some("unseen.example.invalid".into()),
+                destination_context: None,
                 correlated: true,
                 evidence: Some(unknown),
                 agent: None,
@@ -4393,6 +4937,7 @@ mod tests {
                 tags: vec!["network_egress".into()],
                 detail: None,
                 destination: Some("registry.npmjs.com".into()),
+                destination_context: None,
                 correlated: false,
                 evidence: None,
                 agent: None,
@@ -4411,6 +4956,60 @@ mod tests {
         assert_eq!(summary.linked, 3);
         assert_eq!(summary.network, 4);
         assert_eq!(summary.quieted_patterns, 7);
+    }
+
+    #[test]
+    fn session_summary_dedupes_destination_display_variants() {
+        let mut evidence = linked_fixture(
+            "Tool call → outbound connection",
+            "unseen.example.invalid (93.184.216.34:443)",
+            "medium",
+        );
+        evidence.destination_category = "unknown external".into();
+        let events = vec![
+            UiEvent {
+                id: 1,
+                ts: "21:00:01".into(),
+                summary: "Linked".into(),
+                tags: vec!["correlated".into()],
+                detail: None,
+                destination: Some("unseen.example.invalid (93.184.216.34:443)".into()),
+                destination_context: Some(DestinationContext {
+                    project_key: "/tmp/project".into(),
+                    state: "new_for_project".into(),
+                    label: "new for this project".into(),
+                    previous_count: 0,
+                }),
+                correlated: true,
+                evidence: Some(evidence),
+                agent: None,
+            },
+            UiEvent {
+                id: 2,
+                ts: "21:00:02".into(),
+                summary: "Network".into(),
+                tags: vec!["network_egress".into()],
+                detail: None,
+                destination: Some("unseen.example.invalid".into()),
+                destination_context: Some(DestinationContext {
+                    project_key: "/tmp/project".into(),
+                    state: "new_for_project".into(),
+                    label: "new for this project".into(),
+                    previous_count: 0,
+                }),
+                correlated: false,
+                evidence: None,
+                agent: None,
+            },
+        ];
+
+        let summary = session_summary(&events, 0);
+        assert_eq!(summary.new_destinations, 1);
+        assert_eq!(
+            summary.new_destination_samples,
+            vec!["unseen.example.invalid"]
+        );
+        assert_eq!(summary.project_new_destinations, 1);
     }
 
     #[cfg(unix)]
@@ -4660,6 +5259,7 @@ mod tests {
             tags: vec!["hook".into()],
             detail: None,
             destination: None,
+            destination_context: None,
             correlated: false,
             evidence: None,
             agent: None,
@@ -4730,6 +5330,7 @@ mod tests {
             tags: vec!["correlated".into()],
             detail: None,
             destination: Some("api.example.com".into()),
+            destination_context: None,
             correlated: true,
             evidence: Some(evidence),
             agent: None,
@@ -4798,6 +5399,7 @@ mod tests {
                 tags: vec![],
                 detail: None,
                 destination: None,
+                destination_context: None,
                 correlated: false,
                 evidence: None,
                 agent: None,
@@ -4809,6 +5411,7 @@ mod tests {
                 tags: vec!["correlated".into()],
                 detail: None,
                 destination: Some("api.example.com".into()),
+                destination_context: None,
                 correlated: true,
                 evidence: Some(linked_fixture(
                     "Sensitive read → outbound connection",
@@ -4818,21 +5421,20 @@ mod tests {
                 agent: None,
             },
         ];
-        let header = export_header(
-            &events,
-            true,
-            false,
-            &SessionSnapshot {
-                id: "session-1".into(),
-                agent_name: "Claude Code".into(),
-                cwd: "/tmp/project".into(),
-                started_ts: "2026-06-02T21:00:00Z".into(),
-            },
-            3,
-        );
+        let snap = SessionSnapshot {
+            id: "session-1".into(),
+            agent_name: "Claude Code".into(),
+            cwd: "/tmp/project".into(),
+            started_ts: "2026-06-02T21:00:00Z".into(),
+        };
+        let mut summary = session_summary(&events, 3);
+        apply_agent_summary(&mut summary, &[], true, &SessionRuntime::default());
+        let header = export_header(&events, true, false, &snap, &[], summary);
 
         assert_eq!(header["schema"], "agentsnitch.export.v0");
         assert_eq!(header["record_type"], "session");
+        assert_eq!(header["review_type"], "evidence_pack");
+        assert_eq!(header["title"], "AgentSnitch Evidence Pack");
         assert_eq!(header["event_count"], 2);
         assert_eq!(header["linked_count"], 1);
         assert_eq!(header["active"], true);
@@ -4841,7 +5443,54 @@ mod tests {
         assert_eq!(header["summary"]["linked"], 1);
         assert_eq!(header["summary"]["high_signal"], 1);
         assert_eq!(header["summary"]["quieted_patterns"], 3);
+        assert!(header["narrative"]["headline"]
+            .as_str()
+            .unwrap()
+            .contains("linked evidence cards"));
+        assert_eq!(header["timeline"].as_array().unwrap().len(), 2);
         assert!(header["exported_at"].as_str().unwrap().starts_with("unix:"));
+    }
+
+    #[test]
+    fn evidence_pack_file_writes_local_jsonl_export() {
+        let dir = std::env::temp_dir().join(format!(
+            "agentsnitch-export-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::env::set_var("AGENTSNITCH_EXPORT_DIR", &dir);
+        let path = write_evidence_pack_file("{\"schema\":\"agentsnitch.export.v0\"}\n").unwrap();
+        assert!(path.contains("AgentSnitch-Evidence-Pack-"));
+        assert!(path.ends_with(".jsonl"));
+        let got = std::fs::read_to_string(&path).unwrap();
+        assert!(got.contains("agentsnitch.export.v0"));
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir_all(dir);
+        std::env::remove_var("AGENTSNITCH_EXPORT_DIR");
+    }
+
+    #[test]
+    fn export_narrative_falls_back_to_session_new_destinations() {
+        let summary = SessionSummary {
+            new_destinations: 2,
+            project_new_destinations: 0,
+            linked: 0,
+            sensitive_context: 0,
+            ..SessionSummary::default()
+        };
+        let narrative = export_narrative(&[], &summary);
+        assert!(narrative["headline"]
+            .as_str()
+            .unwrap()
+            .contains("2 new destinations"));
     }
 
     #[test]
@@ -4853,6 +5502,7 @@ mod tests {
             tags: vec!["correlated".into()],
             detail: None,
             destination: Some("api.example.com".into()),
+            destination_context: None,
             correlated: true,
             evidence: Some(linked_fixture(
                 "Sensitive read → outbound connection",
@@ -4884,6 +5534,7 @@ mod tests {
             tags: vec!["correlated".into(), "confidence_medium".into()],
             detail: None,
             destination: Some("Example.COM".into()),
+            destination_context: None,
             correlated: true,
             evidence: Some({
                 let mut evidence = linked_fixture(
@@ -4924,6 +5575,7 @@ mod tests {
             tags: vec!["correlated".into(), "confidence_medium".into()],
             detail: None,
             destination: Some("api.example.com".into()),
+            destination_context: None,
             correlated: true,
             evidence: Some({
                 let mut evidence = linked_fixture(
@@ -4979,6 +5631,7 @@ mod tests {
             tags: vec!["correlated".into()],
             detail: None,
             destination: Some("api.anthropic.com".into()),
+            destination_context: None,
             correlated: true,
             evidence: Some({
                 let mut evidence = linked_fixture(
@@ -5018,6 +5671,7 @@ mod tests {
             tags: vec!["correlated".into()],
             detail: None,
             destination: None,
+            destination_context: None,
             correlated: true,
             evidence: None,
             agent: None,
@@ -5030,6 +5684,7 @@ mod tests {
                 tags: vec![],
                 detail: None,
                 destination: None,
+                destination_context: None,
                 correlated: false,
                 evidence: None,
                 agent: None,
@@ -5081,11 +5736,13 @@ pub fn run() {
             resize_main_window,
             clear_session,
             quiet_session,
+            set_paused,
             dismiss_event,
             quiet_pattern,
             quiet_known_services,
             quiet_category,
-            export_transcript
+            export_transcript,
+            export_evidence_pack_file
         ])
         .setup(|app| {
             println!("AgentSnitch UI starting (tray + popup + event receiver)");
@@ -5095,11 +5752,13 @@ pub fn run() {
                 let prefs = load_quiet_preferences();
                 let effective = effective_quieted_patterns(&prefs, &SessionSnapshot::default());
                 let settings = load_app_settings();
+                let destination_memory = load_destination_memory();
                 if let Err(err) = save_app_settings(&settings) {
                     eprintln!("[agentsnitch-ui] settings save failed: {}", err);
                 }
                 *state.quiet_preferences.lock().unwrap() = prefs;
                 *state.quieted_patterns.lock().unwrap() = effective;
+                *state.destination_memory.lock().unwrap() = destination_memory;
                 *state.app_settings.lock().unwrap() = settings;
             }
             if let Err(e) = create_tray(&handle) {

@@ -10,7 +10,18 @@ echo "  settings: ${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 echo ""
 
 make build-emitter build-hookctl
-"$ROOT/bin/hookctl" --emitter "$ROOT/bin/emitter" install
+
+SUPPORT_DIR="${AGENTSNITCH_SUPPORT_DIR:-$HOME/Library/Application Support/AgentSnitch}"
+SUPPORT_BIN="$SUPPORT_DIR/bin"
+HOOKCTL="$ROOT/bin/hookctl"
+EMITTER="$ROOT/bin/emitter"
+
+if [[ -x "$SUPPORT_BIN/hookctl" && -x "$SUPPORT_BIN/emitter" ]]; then
+  HOOKCTL="$SUPPORT_BIN/hookctl"
+  EMITTER="$SUPPORT_BIN/emitter"
+fi
+
+"$HOOKCTL" --emitter "$EMITTER" install
 
 echo ""
 echo "Hook install complete. Start or restart Claude Code, then run:"

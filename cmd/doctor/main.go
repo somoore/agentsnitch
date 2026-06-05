@@ -33,7 +33,7 @@ type appSettings struct {
 func main() {
 	var checks []check
 
-	emitter := asruntime.DefaultEmitterPath()
+	emitter := preferredEmitterPath()
 	checks = append(checks, checkEmitter(emitter))
 	checks = append(checks, checkClaudeHooks(emitter))
 	checks = append(checks, checkDaemonSocket())
@@ -66,6 +66,35 @@ func main() {
 	if failed {
 		os.Exit(1)
 	}
+}
+
+func preferredEmitterPath() string {
+	if p := os.Getenv("AGENTSNITCH_EMITTER"); p != "" {
+		return p
+	}
+	if installed := installedEmitterPath(); installed != "" {
+		return installed
+	}
+	return asruntime.DefaultEmitterPath()
+}
+
+func installedEmitterPath() string {
+	if supportDir := os.Getenv("AGENTSNITCH_SUPPORT_DIR"); supportDir != "" {
+		return executableCandidate(filepath.Join(supportDir, "bin", "emitter"))
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return executableCandidate(filepath.Join(home, "Library", "Application Support", "AgentSnitch", "bin", "emitter"))
+}
+
+func executableCandidate(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return ""
+	}
+	return path
 }
 
 func checkEmitter(path string) check {

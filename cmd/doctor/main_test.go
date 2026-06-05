@@ -43,6 +43,36 @@ func TestIsClaudeCommand(t *testing.T) {
 	}
 }
 
+func TestPreferredEmitterPathUsesInstalledSupportEmitter(t *testing.T) {
+	dir := t.TempDir()
+	support := filepath.Join(dir, "support")
+	bin := filepath.Join(support, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	emitter := filepath.Join(bin, "emitter")
+	if err := os.WriteFile(emitter, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", support)
+	t.Setenv("AGENTSNITCH_EMITTER", "")
+
+	if got := preferredEmitterPath(); got != emitter {
+		t.Fatalf("preferredEmitterPath() = %q, want %q", got, emitter)
+	}
+}
+
+func TestPreferredEmitterPathHonorsExplicitEmitterOverride(t *testing.T) {
+	dir := t.TempDir()
+	override := filepath.Join(dir, "custom-emitter")
+	t.Setenv("AGENTSNITCH_EMITTER", override)
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", filepath.Join(dir, "missing"))
+
+	if got := preferredEmitterPath(); got != override {
+		t.Fatalf("preferredEmitterPath() = %q, want %q", got, override)
+	}
+}
+
 func TestMissingLinkedDetailExplainsLowSignalHook(t *testing.T) {
 	base := time.Now().UTC()
 	detail := missingLinkedDetail(asruntime.Status{
