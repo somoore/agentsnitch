@@ -5145,6 +5145,75 @@ mod tests {
     }
 
     #[test]
+    fn compute_header_pluralizes_when_multiple_projects_active() {
+        let snap = SessionSnapshot {
+            id: "session-1".into(),
+            agent_name: "Claude Code".into(),
+            cwd: "/tmp/frontend".into(),
+            started_ts: "2026-06-03T22:00:00Z".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-06-03T22:13:20Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // With >1 project, the single-folder name is replaced by "N projects" so
+        // the header does not misleadingly claim only one project is active.
+        assert_eq!(
+            compute_header_at(&snap, true, now, false, 2),
+            "Claude Code active in 2 projects • 13m"
+        );
+        // A single project keeps the folder name.
+        assert_eq!(
+            compute_header_at(&snap, true, now, false, 1),
+            "Claude Code active in frontend • 13m"
+        );
+    }
+
+    #[test]
+    fn distinct_agent_projects_counts_main_folders_and_ignores_subs() {
+        let agents = vec![
+            AgentInfo {
+                id: "main_1".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/Users/me/github/agentsnitch".into()),
+                ..AgentInfo::default()
+            },
+            AgentInfo {
+                id: "main_2".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/Users/me/github/sir".into()),
+                ..AgentInfo::default()
+            },
+            // Same project as main_1 (trailing slash) — must not double-count.
+            AgentInfo {
+                id: "main_3".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/Users/me/github/agentsnitch/".into()),
+                ..AgentInfo::default()
+            },
+            // Subagent — ignored even with a distinct cwd.
+            AgentInfo {
+                id: "sub_1".into(),
+                name: "QA login".into(),
+                agent_type: Some("sub".into()),
+                cwd: Some("/Users/me/github/other".into()),
+                ..AgentInfo::default()
+            },
+            // Main with no cwd — ignored (cannot attribute a project).
+            AgentInfo {
+                id: "main_4".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                ..AgentInfo::default()
+            },
+        ];
+        assert_eq!(distinct_agent_projects(&agents), 2);
+    }
+
+    #[test]
     fn update_agent_registry_creates_inferred_parent_for_subagent() {
         let mut agents = HashMap::new();
         update_agent_registry(
