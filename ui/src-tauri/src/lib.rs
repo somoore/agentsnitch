@@ -365,7 +365,13 @@ fn compute_verdict(active: bool, summary: &SessionSummary, recent: &[UiEvent]) -
     }
 
     // Look for the strongest linked evidence: sensitive/credential context that
-    // was followed by an outbound flow (raw reason "after_sensitive_read").
+    // was followed by an outbound flow. Red requires a *forward* sequence — the
+    // flow opened after the sensitive read (raw reason "within_10s") — which
+    // mirrors the daemon's own escalation gate in confidenceForReasons
+    // (after_sensitive_read only escalates alongside within_10s). A flow that was
+    // already active when the sensitive read happened carries
+    // "existing_connection_active" and predates the access, so it must NOT be
+    // called red; it falls through to amber as high-signal-to-review.
     let mut sensitive_egress: Option<&LinkedEvidence> = None;
     let mut high_signal: Option<&LinkedEvidence> = None;
     for ui in recent {
@@ -373,11 +379,14 @@ fn compute_verdict(active: bool, summary: &SessionSummary, recent: &[UiEvent]) -
             continue;
         };
         let is_high = ev.severity == "hot" || ev.risk == "high";
-        let after_sensitive = ev
-            .why
-            .iter()
-            .any(|r| r == "after_sensitive_read" || r == "credential_context");
-        if is_high && after_sensitive && sensitive_egress.is_none() {
+        let has_reason = |name: &str| ev.why.iter().any(|r| r == name);
+        let after_sensitive =
+            has_reason("after_sensitive_read") || has_reason("credential_context");
+        // Forward timing, and not a pre-existing (predating) connection.
+        let sensitive_then_egress = after_sensitive
+            && has_reason("within_10s")
+            && !has_reason("existing_connection_active");
+        if is_high && sensitive_then_egress && sensitive_egress.is_none() {
             sensitive_egress = Some(ev);
         }
         if is_high && high_signal.is_none() {
@@ -4506,8 +4515,9 @@ mod tests {
 
     #[test]
     fn verdict_red_when_sensitive_read_preceded_egress() {
-        // A high-risk linked card whose reasons include after_sensitive_read is the
-        // strongest signal: sensitive context, then an outbound flow.
+        // A high-risk linked card whose reasons include after_sensitive_read AND a
+        // forward-timing within_10s is the strongest signal: sensitive context,
+        // then a freshly opened outbound flow.
         let mut ev = linked_fixture(
             "Sensitive read → outbound connection",
             "evil.example.invalid",
@@ -4522,6 +4532,30 @@ mod tests {
         let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
         assert_eq!(verdict.level, "red");
         assert!(verdict.text.contains("evil.example.invalid"));
+    }
+
+    #[test]
+    fn verdict_not_red_for_preexisting_flow_after_sensitive_read() {
+        // A flow that was already active when the sensitive read happened carries
+        // existing_connection_active (and no within_10s). The daemon scores this
+        // "low" confidence because the flow predates the access — so the verdict
+        // must NOT call it red. It is high-signal, so it surfaces as amber.
+        let mut ev = linked_fixture(
+            "Sensitive read ↔ pre-existing connection",
+            "preexisting.example",
+            "hot",
+        );
+        ev.why = vec![
+            "existing_connection_active".into(),
+            "after_sensitive_read".into(),
+        ];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
+        assert_eq!(verdict.level, "amber");
     }
 
     #[test]
