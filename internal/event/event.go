@@ -14,7 +14,51 @@ const (
 	SchemaNetworkV0    = "agentsnitch.network.v0"
 	SchemaCorrelatedV0 = "agentsnitch.correlated.v0"
 	SchemaAgentV0      = "agentsnitch.agent.v0"
+	// SchemaControlV0 is a UI->daemon control message (e.g. pause/resume sensing).
+	// It is not product evidence; it never produces a card.
+	SchemaControlV0 = "agentsnitch.control.v0"
+	// SchemaPauseGapV0 records an interval during which sensing was intentionally
+	// halted (Pause). It is written to the transcript and forwarded to the UI so a
+	// pause is recorded *as a gap* rather than an invisible hole in the record.
+	SchemaPauseGapV0 = "agentsnitch.pause_gap.v0"
 )
+
+// Control actions carried by a ControlMessage.
+const (
+	ControlActionPause  = "pause"
+	ControlActionResume = "resume"
+)
+
+// ControlMessage is a UI->daemon command sent over the daemon socket. The daemon
+// trusts it only from the installed UI binary (same path check as network senders)
+// and never treats it as agent evidence.
+type ControlMessage struct {
+	Schema string `json:"schema"`
+	Action string `json:"action"`
+}
+
+// PauseGapEvent marks a window during which the daemon stopped sensing because the
+// user engaged Pause. Anything an agent did during [From, To] was deliberately not
+// observed or recorded; this event makes that gap explicit in the transcript and UI.
+type PauseGapEvent struct {
+	Schema      string    `json:"schema"`
+	From        time.Time `json:"from"`
+	To          time.Time `json:"to"`
+	DurationSec float64   `json:"duration_sec"`
+}
+
+// NewPauseGapEvent builds a PauseGapEvent for [from, to].
+func NewPauseGapEvent(from, to time.Time) PauseGapEvent {
+	if to.Before(from) {
+		to = from
+	}
+	return PauseGapEvent{
+		Schema:      SchemaPauseGapV0,
+		From:        from.UTC(),
+		To:          to.UTC(),
+		DurationSec: to.Sub(from).Seconds(),
+	}
+}
 
 // AgentInfo identifies the source AI coding agent.
 type AgentInfo struct {

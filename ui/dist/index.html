@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AgentSnitch</title>
-  <link rel="stylesheet" href="creatures.css">
   <style>
     :root {
       --bg: #1c1c1e;
@@ -114,7 +113,7 @@
     }
     .summary-pill {
       min-width: 0;
-      padding: 4px 6px;
+      padding: 5px 7px;
       border-radius: 5px;
       border: 1px solid var(--border);
       background: var(--bg);
@@ -127,6 +126,19 @@
     .summary-pill strong {
       color: var(--text);
       font-weight: 650;
+    }
+    .summary-pill.attention {
+      border-color: rgba(255, 159, 10, 0.42);
+      background: rgba(255, 159, 10, 0.08);
+      color: #f7c66a;
+    }
+    .summary-pill.good {
+      border-color: rgba(48, 209, 88, 0.34);
+      background: rgba(48, 209, 88, 0.07);
+      color: #b9f3c8;
+    }
+    .summary-pill.quiet {
+      opacity: 0.82;
     }
     .agent-team {
       display: none;
@@ -811,6 +823,32 @@
       background: var(--bg);
       font-size: 11px;
     }
+    .session-narrative {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      margin: 0 0 6px;
+      padding: 6px 7px;
+      border: 1px solid rgba(120, 183, 255, 0.18);
+      border-radius: 6px;
+      background: rgba(120, 183, 255, 0.055);
+      color: var(--text);
+      font-size: 11px;
+      line-height: 15px;
+    }
+    .session-narrative .muted {
+      color: var(--text-dim);
+    }
+    .session-narrative strong {
+      color: #b9eeff;
+      font-weight: 700;
+    }
+    .session-narrative-state {
+      color: var(--text-dim);
+      font-size: 10px;
+      white-space: nowrap;
+    }
     .event {
       display: flex;
       flex-direction: column;
@@ -829,6 +867,20 @@
       border-left-color: var(--accent);
       background: #1d2530;
     }
+    .event.network.routine {
+      border-left-color: rgba(120, 183, 255, 0.55);
+      background: #1b2229;
+    }
+    .event.network.attention-network {
+      border-left-color: #f7c66a;
+      background: #242116;
+      border: 1px solid rgba(247, 198, 106, 0.16);
+      border-left-width: 3px;
+    }
+    .event.network.network-group {
+      border-left-color: rgba(120, 183, 255, 0.75);
+      background: #1b2229;
+    }
     .event.network.attributed-network {
       border-left-color: #bf5af2;
       background: #1f1a28;
@@ -845,6 +897,12 @@
       gap: 6px;
       align-items: center;
       min-width: 0;
+    }
+    .network-row .mini-button,
+    .network-group-summary .mini-button {
+      justify-self: end;
+      white-space: nowrap;
+      min-width: max-content;
     }
     .network-dest {
       color: var(--text);
@@ -866,6 +924,39 @@
     .network-state {
       color: #78b7ff;
       font-family: ui-monospace, monospace;
+    }
+    .network-group-summary {
+      display: grid;
+      grid-template-columns: 52px minmax(120px, 1fr) minmax(86px, 112px) minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .network-group-title {
+      color: var(--text);
+      font-weight: 680;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .network-group-meta {
+      color: var(--text-dim);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .network-group-members {
+      display: grid;
+      gap: 3px;
+      padding: 4px 0 0 58px;
+    }
+    .network-group-member {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      gap: 6px;
+      color: var(--text-dim);
+      font-size: 10px;
     }
     .network-attribution {
       display: grid;
@@ -1100,6 +1191,112 @@
       gap: 4px;
       flex-shrink: 0;
     }
+    @media (max-width: 520px) {
+      .network-row {
+        grid-template-columns: 48px minmax(0, 1fr) auto;
+        grid-template-areas:
+          "ts dest action"
+          ". memory action"
+          ". category state"
+          ". meta meta";
+        gap: 4px 6px;
+        align-items: center;
+      }
+      .network-row .ts {
+        grid-area: ts;
+      }
+      .network-row .network-dest {
+        grid-area: dest;
+      }
+      .network-row .destination-memory {
+        grid-area: memory;
+        margin-top: 0;
+      }
+      .network-row .category-pill {
+        grid-area: category;
+      }
+      .network-row .agent-badge,
+      .network-row .network-compact-meta {
+        grid-area: meta;
+        width: fit-content;
+        max-width: 100%;
+      }
+      .network-row .network-state {
+        grid-area: state;
+        justify-self: end;
+        max-width: 100%;
+      }
+      .network-row .mini-button {
+        grid-area: action;
+        align-self: start;
+        justify-self: end;
+      }
+      .network-attribution,
+      .network-group-summary {
+        grid-template-columns: 48px minmax(0, 1fr);
+        gap: 4px 6px;
+        align-items: start;
+      }
+      .network-group-summary {
+        grid-template-columns: 48px minmax(0, 1fr) auto;
+        grid-template-areas:
+          "ts title action"
+          ". category action"
+          ". meta meta";
+        align-items: center;
+      }
+      .network-group-summary .ts {
+        grid-area: ts;
+      }
+      .network-group-summary .network-group-title {
+        grid-area: title;
+      }
+      .network-group-summary .category-pill {
+        grid-area: category;
+      }
+      .network-group-summary .network-group-meta {
+        grid-area: meta;
+      }
+      .network-group-summary .mini-button {
+        grid-area: action;
+        justify-self: end;
+        align-self: start;
+      }
+      .network-attribution .mini-button,
+      .network-attribution .mini-button {
+        justify-self: start;
+      }
+      .network-raw {
+        grid-template-columns: 64px minmax(0, 1fr);
+        padding-left: 0;
+      }
+      .network-group-members {
+        padding-left: 0;
+      }
+      .session-narrative {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 3px;
+      }
+      .session-narrative-state {
+        white-space: normal;
+      }
+      .event.evidence {
+        padding: 9px 8px;
+      }
+      .evidence-head {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+      }
+      .evidence-head > .ts {
+        min-width: 0;
+      }
+      .evidence-actions {
+        justify-content: flex-start;
+      }
+      .known-destinations {
+        padding-left: 0;
+      }
+    }
     .known-destinations {
       display: grid;
       gap: 3px;
@@ -1150,6 +1347,25 @@
       font-size: 10px;
       line-height: 14px;
       overflow-wrap: anywhere;
+    }
+    .destination-memory {
+      display: inline-flex;
+      width: fit-content;
+      max-width: 100%;
+      margin-top: 3px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid #343438;
+      color: var(--text-dim);
+      background: #252528;
+      font-size: 9px;
+      line-height: 14px;
+      white-space: nowrap;
+    }
+    .destination-memory.new_for_project {
+      color: #f7c66a;
+      border-color: #5a4324;
+      background: #302818;
     }
     .category-pill {
       display: inline-flex;
@@ -1260,6 +1476,13 @@
       border-radius: 5px;
       background: rgba(10,132,255,0.08);
     }
+    .section-label {
+      color: var(--text);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
 	    .footer {
 	      background: var(--bg-elev);
 	      border-top: 1px solid var(--border);
@@ -1272,6 +1495,10 @@
 	    .footer .status {
 	      color: var(--text-dim);
 	      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
 	    }
 	    .modal-backdrop {
 	      position: fixed;
@@ -1408,6 +1635,47 @@
     }
     button:hover { background: #4a4a4c; }
     button.primary { background: var(--accent); border-color: var(--accent); }
+    /* Pause/Live toggle: Live = neutral; Paused = loud amber so it reads as a held,
+       security-relevant state, not just another footer button. */
+    .pause-toggle {
+      font-weight: 600;
+      border-color: var(--border);
+    }
+    .pause-toggle.paused {
+      background: var(--orange);
+      border-color: var(--orange);
+      color: #1c1200;
+    }
+    .pause-toggle.paused:hover { background: #ffb02e; }
+    /* Paused banner: unmistakable amber bar stating the evidence gap. */
+    .paused-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 8px 6px;
+      padding: 7px 10px;
+      border: 1px solid var(--orange);
+      border-radius: 6px;
+      background: rgba(255, 159, 10, 0.14);
+      color: var(--text);
+      font-size: 11px;
+    }
+    .paused-banner[hidden] { display: none; }
+    .paused-banner .paused-dot {
+      font-size: 14px;
+      color: var(--orange);
+      flex-shrink: 0;
+    }
+    .paused-banner .paused-text { flex: 1; min-width: 0; }
+    .paused-banner .paused-text strong { color: var(--orange); }
+    .paused-banner .paused-resume {
+      background: var(--orange);
+      border-color: var(--orange);
+      color: #1c1200;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .paused-banner .paused-resume:hover { background: #ffb02e; }
     .empty {
       padding: 20px;
       text-align: center;
@@ -1437,6 +1705,12 @@
       <button class="tab" data-view="all" onclick="setView('all')">All</button>
     </div>
 
+    <div id="pausedBanner" class="paused-banner" hidden>
+      <span class="paused-dot">⏸</span>
+      <span class="paused-text"><strong>Paused — sensing halted.</strong> Agent activity during the pause is <strong>not</strong> being observed or recorded. Click <strong>Live</strong> to resume.</span>
+      <button class="paused-resume" onclick="togglePaused()">Go Live</button>
+    </div>
+
     <div id="sessionSummary" class="session-summary"></div>
     <div id="agentTeam" class="agent-team"></div>
     <div id="agentFilter" class="agent-filter"></div>
@@ -1447,10 +1721,11 @@
 
 	    <div class="footer">
 	      <div class="status" id="status">All local • session in memory</div>
+	      <button id="pauseToggle" class="pause-toggle" onclick="togglePaused()" title="Pause halts sensing so you can inspect the current data. Quiet only hides known-safe noise; Clear wipes the view.">Pause</button>
 	      <button onclick="quietKnownServices()">Quiet known</button>
 	      <button onclick="quietSession()">Quiet</button>
 	      <button onclick="clearSession()">Clear</button>
-	      <button onclick="doExport()" class="primary">Export</button>
+	      <button onclick="doExport()" class="primary">Evidence Pack</button>
 	    </div>
 	  </div>
 
@@ -1502,6 +1777,44 @@
     const expandedMainGroups = new Set();
     let autoResizeTimer = null;
     let lastAutoResize = { width: 0, height: 0 };
+    let renderTimer = null;
+    let statusTimer = null;
+    let backendTimer = null;
+    let statusRefreshInFlight = false;
+    let backendRefreshInFlight = false;
+    let pendingStatusRefresh = false;
+    let pendingBackendRefresh = false;
+    let lastPushAt = 0;
+    let latestSummary = {};
+    let latestStatus = {};
+    // paused: the user engaged Pause. While true the daemon halts sensing and the
+    // UI freezes live updates (no new events applied to the view). Mirrors the
+    // backend `paused` flag; always starts false (Live).
+    let paused = false;
+
+    function scheduleRender(delay = 50) {
+      if (renderTimer) return;
+      renderTimer = setTimeout(() => {
+        renderTimer = null;
+        renderEvents();
+      }, delay);
+    }
+
+    function scheduleStatusRefresh(delay = 90) {
+      if (statusTimer) return;
+      statusTimer = setTimeout(() => {
+        statusTimer = null;
+        refreshStatus();
+      }, delay);
+    }
+
+    function scheduleBackendRefresh(delay = 120) {
+      if (backendTimer) return;
+      backendTimer = setTimeout(() => {
+        backendTimer = null;
+        refreshFromBackend();
+      }, delay);
+    }
 
     function normalizeEvents(value) {
       if (!value) return [];
@@ -1957,6 +2270,15 @@
       return match ? match[1].trim() : '';
     }
 
+    function renderDestinationMemory(ev) {
+      const context = ev?.destination_context;
+      if (!context || !context.label) return '';
+      const cls = normalizePatternPiece(context.state || 'seen_before_project').replace(/[^a-z0-9_-]+/g, '-');
+      const count = Number(context.previous_count || 0);
+      const title = count ? `${context.label}; previously observed ${count} time${count === 1 ? '' : 's'} in this project` : context.label;
+      return `<span class="destination-memory ${escapeHtml(cls)}" title="${escapeHtml(title)}">${escapeHtml(context.label)}</span>`;
+    }
+
     function networkIsHighByte(ev) {
       const out = detailMap(ev).out || '';
       const match = out.match(/^(\d+)B$/i);
@@ -2058,8 +2380,89 @@
       return eventKind(ev) === 'linked' && !highSignalEvidence(ev) && eventFindingKey(ev);
     }
 
+    function pluralize(value, singular, plural = `${singular}s`) {
+      return Number(value) === 1 ? singular : plural;
+    }
+
+    function networkDisplayDestination(ev) {
+      return ev?.destination || summaryDestination(ev) || ev?.summary || 'unknown destination';
+    }
+
+    function networkState(ev) {
+      const meta = detailMap(ev);
+      return meta.state || (ev?.tags || []).find(tag => String(tag).startsWith('network_'))?.replace(/^network_/, '') || 'observed';
+    }
+
+    function networkSource(ev) {
+      const meta = detailMap(ev);
+      return meta.source || (ev?.tags || []).find(tag => !String(tag).startsWith('network_')) || 'network';
+    }
+
+    function routineNetworkEvent(ev) {
+      if (eventKind(ev) !== 'network') return false;
+      if (networkIsSensitiveAdjacent(ev) || networkIsHighByte(ev)) return false;
+      const destination = networkDisplayDestination(ev);
+      const category = networkCategory(ev);
+      const state = String(networkState(ev)).toLowerCase();
+      const contextState = String(ev?.destination_context?.state || '').toLowerCase();
+      if (category === 'unknown external' && rawIpDestination(destination) && !hasHostnameHint(ev)) return false;
+      if (knownQuietCategory(category) || collapsedKnownCategory(category)) return true;
+      if (category === 'cloud provider' && contextState === 'seen_before_project') return true;
+      if (category === 'cloud provider' && state.includes('established') && contextState !== 'new_for_project') return true;
+      if (privateNetworkDestination(destination)) return true;
+      return false;
+    }
+
+    function attentionNetworkGroupKey(ev) {
+      if (eventKind(ev) !== 'network' || !routineNetworkEvent(ev)) return '';
+      const destination = destinationHost(networkDisplayDestination(ev));
+      const category = normalizePatternPiece(networkCategory(ev));
+      return destination && category ? `network:${category}|${destination}` : '';
+    }
+
+    function groupAttentionNetworkEvents(sorted) {
+      const groups = new Map();
+      const rendered = [];
+      const expandedChildren = new Set();
+      for (const ev of sorted) {
+        const key = attentionNetworkGroupKey(ev);
+        if (!key) {
+          rendered.push(ev);
+          continue;
+        }
+        const expanded = expandedKnownGroups.has(key);
+        let group = groups.get(key);
+        if (!group) {
+          group = {
+            ...ev,
+            _networkGroup: true,
+            _groupKey: key,
+            _expanded: expanded,
+            _groupCount: 0,
+            _groupMembers: [],
+            _destinations: [],
+            id: ev.id,
+            ts: ev.ts,
+          };
+          groups.set(key, group);
+          rendered.push(group);
+        }
+        group._groupCount += 1;
+        group._groupMembers.push(ev.id);
+        const destination = networkDisplayDestination(ev);
+        if (destination && !group._destinations.includes(destination)) group._destinations.push(destination);
+        if (expanded) {
+          rendered.push(ev);
+          expandedChildren.add(ev.id);
+        }
+      }
+      return rendered.filter(item => !(item._networkGroup && Number(item._groupCount || 0) === 1 && expandedChildren.has(item.id)))
+        .map(item => item._networkGroup && Number(item._groupCount || 0) === 1 ? events.find(ev => ev.id === item.id) || item : item);
+    }
+
     function displayEvents(selected) {
       const sorted = [...selected].sort((a, b) => b.id - a.id);
+      if (activeView === 'attention') return groupAttentionNetworkEvents(sorted);
       if (activeView !== 'linked' && activeView !== 'all') return sorted;
 
       const knownGroups = new Map();
@@ -2133,26 +2536,113 @@
       const panel = document.getElementById('sessionSummary');
       if (!panel) return;
       const data = summary || {};
+      latestSummary = data;
+      const agentsWithPid = visibleTeamAgents().filter(agent => agentPid(agent)).length;
+      const agentProcesses = Number(data.agent_processes ?? agentsWithPid);
+      const projectNew = Number(data.project_new_destinations || 0);
+      const projectSeen = Number(data.project_seen_destinations || 0);
+      const newDestinationTitle = [
+        `${projectNew || Number(data.new_destinations || 0)} new`,
+        projectSeen ? `${projectSeen} seen before` : '',
+        Array.isArray(data.new_destination_samples) && data.new_destination_samples.length ? `samples: ${data.new_destination_samples.join(', ')}` : '',
+      ].filter(Boolean).join(' · ');
+      const newCount = projectNew || Number(data.new_destinations || 0);
+      const sensitive = Number(data.sensitive_context || 0);
+      const linked = Number(data.linked || 0);
+      const knownClaude = Number(data.known_claude_traffic || 0);
+      const observedFlows = Number(data.observer_coverage || 0);
       const items = [
-        ['Known Claude traffic', Number(data.known_claude_traffic || 0)],
-        ['Telemetry', Number(data.telemetry_traffic || 0)],
-        ['Local bridges', Number(data.local_bridge_traffic || 0)],
-        ['Package traffic', Number(data.package_registry_traffic || 0)],
-        ['New destinations', Number(data.new_destinations || 0)],
-        ['High signal', Number(data.high_signal || 0)],
+        [`${newCount} new ${pluralize(newCount, 'destination')}`, newCount, newDestinationTitle || 'New destinations in this session/project', newCount ? 'attention' : 'quiet'],
+        [`${sensitive} sensitive ${pluralize(sensitive, 'read')}`, sensitive, 'Events touching sensitive, credential, or secret context', sensitive ? 'attention' : 'good'],
+        [`${linked} linked evidence`, linked, linked ? 'Correlated tool and network evidence cards' : 'No linked evidence yet; waiting for a fresh tool and network pair', linked ? 'attention' : 'quiet'],
+        [`${agentProcesses} agent ${pluralize(agentProcesses, 'process', 'processes')}`, agentProcesses, 'Tracked Claude/agent processes with PID evidence', agentProcesses ? '' : 'quiet'],
+        [`${knownClaude} Claude ${pluralize(knownClaude, 'service')}`, knownClaude, 'Known Claude or bridge service traffic', knownClaude ? '' : 'quiet'],
+        [`${observedFlows} observed ${pluralize(observedFlows, 'flow')}`, observedFlows, 'Rows with network observer provenance', observedFlows ? '' : 'quiet'],
       ];
-      const hasData = items.some(([, value]) => value > 0) || Number(data.quieted_patterns || 0) > 0;
+      const hasData = items.some(([, value]) => Number(value) > 0) || Number(data.quieted_patterns || 0) > 0;
       if (!hasData) {
         panel.style.display = 'none';
         panel.innerHTML = '';
         return;
       }
       panel.style.display = 'grid';
-      panel.innerHTML = items.map(([label, value]) => `
-        <div class="summary-pill" title="${escapeHtml(label)}: ${value}">
-          ${escapeHtml(label)}: <strong>${value}</strong>
+      panel.innerHTML = items.map(([label, value, title, cls]) => `
+        <div class="summary-pill ${escapeHtml(cls || '')}" title="${escapeHtml(title || label)}">
+          <strong>${escapeHtml(String(value))}</strong> ${escapeHtml(label.replace(String(value), '').trim())}
         </div>
       `).join('');
+    }
+
+    function sessionCounts() {
+      const counts = countsForEvents(events, true);
+      const summary = latestSummary || {};
+      return {
+        hooks: counts.hooks,
+        network: counts.network,
+        linked: Number(summary.linked ?? counts.linked ?? 0),
+        sensitive: Number(summary.sensitive_context || 0),
+        newDestinations: Number(summary.project_new_destinations || summary.new_destinations || 0),
+        observed: Number(summary.observer_coverage || counts.network || 0),
+      };
+    }
+
+    function coverageStatusLine(status = latestStatus) {
+      const st = status || {};
+      const summary = st.summary || latestSummary || {};
+      const recent = normalizeEvents(st.recent || events);
+      const counts = countsForEvents(recent, true);
+      const agentProcesses = Number(summary.agent_processes || (st.agents || teamAgents || []).filter(agent => agentPid(agent)).length || 0);
+      const hooks = counts.hooks;
+      const network = Number(summary.observer_coverage || counts.network || 0);
+      const linked = Number(summary.linked ?? counts.linked ?? 0);
+      const hookState = hooks > 0
+        ? 'Hooks live'
+        : agentProcesses > 0
+          ? 'Hooks waiting for fresh tool action'
+          : 'Hooks installed';
+      const networkStateText = network > 0 ? 'Network live' : 'Network waiting';
+      const correlationState = linked > 0
+        ? 'Correlation live'
+        : hooks > 0 && network > 0
+          ? 'Correlation waiting'
+          : network > 0 && agentProcesses > 0
+            ? 'Current Claude may predate hooks'
+            : 'Correlation waiting';
+      const mode = st.active ? 'Live' : 'Idle';
+      return `${mode} · ${hookState} · ${networkStateText} · ${correlationState}`;
+    }
+
+    function renderSessionNarrative(selected) {
+      if (activeView === 'agents') return '';
+      const counts = sessionCounts();
+      if (!events.length && !selected.length) {
+        return `<div class="session-narrative">
+          <span><span class="muted">Waiting for the first hook or network observation.</span></span>
+          <span class="session-narrative-state">All local</span>
+        </div>`;
+      }
+      let text = '';
+      if (counts.linked > 0) {
+        const pieces = [
+          `<strong>${counts.linked}</strong> linked ${pluralize(counts.linked, 'evidence card')}`,
+          `<strong>${counts.newDestinations}</strong> new ${pluralize(counts.newDestinations, 'destination')}`,
+          `<strong>${counts.sensitive}</strong> sensitive ${pluralize(counts.sensitive, 'read')}`,
+        ];
+        text = `This session has ${pieces.join(', ')}.`;
+      } else if (counts.hooks > 0 && counts.network > 0) {
+        text = `Hooks and network are live; no tool/network pair has linked yet.`;
+      } else if (counts.network > 0) {
+        text = `Network observer is live; waiting for a fresh tool action to link agent activity.`;
+      } else if (counts.hooks > 0) {
+        text = `Hook evidence is live; waiting for a matching network observation.`;
+      } else {
+        text = `Recent rows are visible; coverage is still warming up.`;
+      }
+      const state = `${counts.observed} observed ${pluralize(counts.observed, 'flow')} · ${counts.linked ? 'correlated' : 'correlation waiting'}`;
+      return `<div class="session-narrative">
+        <span>${text}</span>
+        <span class="session-narrative-state">${escapeHtml(state)}</span>
+      </div>`;
     }
 
     function renderAgentTeam(agents) {
@@ -2389,23 +2879,24 @@
       const agentContext = renderAgentContextCard();
       const contextGrid = renderAgentContextGrid(agentContext, lanes);
       const attentionBrief = renderAttentionBrief();
+      const narrative = renderSessionNarrative(selected);
       if (!selected.length) {
         const emptyText = activeView === 'attention'
-          ? (activeReasonFilter ? `No attention rows for "${activeReasonFilter}".` : 'No attention-needed evidence.')
+          ? (activeReasonFilter ? `No attention rows for "${activeReasonFilter}".` : 'No attention-needed evidence. Hooks and network coverage will appear in the footer.')
           : activeView === 'linked'
-          ? 'No linked evidence yet.'
+          ? 'No linked evidence yet. Waiting for a fresh tool action and matching network observation.'
           : activeView === 'network'
             ? 'No network events in this view yet.'
             : activeView === 'hooks'
               ? 'No hook events yet.'
               : 'No events yet.';
-        container.innerHTML = `${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
+        container.innerHTML = `${narrative}${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
         scheduleAutoResize();
         return;
       }
 
       const feedTitle = contextGrid ? '<div class="feed-title">Chronological Feed</div>' : '';
-      container.innerHTML = `${attentionBrief}${contextGrid}${feedTitle}${displayEvents(selected).map(renderEvent).join('')}`;
+      container.innerHTML = `${narrative}${attentionBrief}${contextGrid}${feedTitle}${displayEvents(selected).map(renderEvent).join('')}`;
       scheduleAutoResize();
     }
 
@@ -2572,16 +3063,18 @@
 
     function renderNetworkEvent(ev) {
       const meta = detailMap(ev);
-      const destination = ev.destination || summaryDestination(ev) || ev.summary || 'unknown destination';
+      const destination = networkDisplayDestination(ev);
       const category = networkCategory(ev);
-      const source = meta.source || (ev.tags || []).find(tag => !String(tag).startsWith('network_')) || 'network';
-      const state = meta.state || (ev.tags || []).find(tag => String(tag).startsWith('network_'))?.replace(/^network_/, '') || 'observed';
+      const source = networkSource(ev);
+      const state = networkState(ev);
       const pid = networkPid(ev);
       const process = meta.process || '';
       const pidMeta = [pid ? `PID ${pid}` : '', process].filter(Boolean).join(' · ');
       const stateLabel = [source, state].filter(Boolean).join(' / ');
       const agentBadge = renderAgentBadge(ev.agent);
       const expanded = rawDetailIds.has(ev.id);
+      const memory = renderDestinationMemory(ev);
+      const signalClass = routineNetworkEvent(ev) ? 'routine' : 'attention-network';
       const rawRows = [
         ['remote', meta.remote || destination],
         ['source', source],
@@ -2598,16 +3091,55 @@
         <div class="network-raw-value">${escapeHtml(value)}</div>
       `).join('');
       return `
-        <div class="event network compact-network">
+        <div class="event network compact-network ${escapeHtml(signalClass)}">
           <div class="network-row">
             <span class="ts">${escapeHtml(ev.ts || '')}</span>
             <span class="network-dest" title="${escapeHtml(destination)}">${escapeHtml(destination)}</span>
+            ${memory}
             <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
             ${agentBadge || `<span class="network-compact-meta">${escapeHtml(pidMeta || 'unattributed')}</span>`}
             <span class="network-state" title="${escapeHtml(stateLabel)}">${escapeHtml(stateLabel)}</span>
-            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Raw Event'}</button>
+            <button class="mini-button" title="${expanded ? 'Hide raw event details' : 'Show raw event details'}" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Raw'}</button>
           </div>
           ${expanded ? `<div class="network-raw">${rawRows || '<div class="network-raw-value">No raw details</div>'}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderNetworkGroup(group) {
+      const key = group._groupKey || '';
+      const expanded = !!group._expanded;
+      const category = networkCategory(group);
+      const destinations = group._destinations || [networkDisplayDestination(group)];
+      const primaryDestination = destinations[0] || 'unknown destination';
+      const more = Math.max(0, destinations.length - 1);
+      const count = Number(group._groupCount || 0);
+      const memory = renderDestinationMemory(group);
+      const sourceState = [networkSource(group), networkState(group)].filter(Boolean).join(' / ');
+      const memberIds = new Set(group._groupMembers || []);
+      const members = events
+        .filter(ev => memberIds.has(ev.id))
+        .sort((a, b) => b.id - a.id)
+        .slice(0, 8);
+      const memberRows = expanded ? members.map(ev => `
+        <div class="network-group-member">
+          <span class="ts">${escapeHtml(ev.ts || '')}</span>
+          <span>${escapeHtml(networkDisplayDestination(ev))}</span>
+          <span>${escapeHtml(networkState(ev))}</span>
+        </div>
+      `).join('') : '';
+      const destinationLabel = `${primaryDestination}${more ? ` +${more} more` : ''}`;
+      return `
+        <div class="event network compact-network network-group routine">
+          <div class="network-group-summary">
+            <span class="ts">${escapeHtml(group.ts || '')}</span>
+            <span class="network-group-title" title="${escapeHtml(destinationLabel)}">Routine network traffic · ${count} ${escapeHtml(pluralize(count, 'flow'))}</span>
+            <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
+            <span class="network-group-meta" title="${escapeHtml(destinationLabel)}">${escapeHtml(primaryDestination)} ${memory}</span>
+            <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">${expanded ? 'Collapse' : 'Details'}</button>
+          </div>
+          <div class="network-group-meta">${escapeHtml(sourceState)} · grouped because destination/category already look routine</div>
+          ${expanded ? `<div class="network-group-members">${memberRows || '<div class="network-group-meta">No member details</div>'}</div>` : ''}
         </div>
       `;
     }
@@ -2624,6 +3156,7 @@
       const why = evidence.why_human || (Array.isArray(evidence.why) ? evidence.why.join(', ') : 'linked by daemon correlation');
       const agentNameText = agentShortName(agent || ev.agent || {});
       const expanded = rawDetailIds.has(ev.id);
+      const memory = renderDestinationMemory(ev);
       const rawRows = [
         ['raw owner', viaPid ? `Main PID ${viaPid}` : 'main Claude process'],
         ['logical agent', agentNameText],
@@ -2640,6 +3173,7 @@
           <div class="network-attribution">
             <span class="ts">${escapeHtml(ev.ts || '')}</span>
             <span class="network-dest" title="${escapeHtml(destination)}">${escapeHtml(destination)}</span>
+            ${memory}
             <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
             <span class="network-attribution-meta" title="${escapeHtml(flow)}">${escapeHtml(viaPid ? `via Main PID ${viaPid}` : 'via main Claude')}</span>
             <span class="network-attribution-kind">Attributed</span>
@@ -2659,6 +3193,9 @@
     function renderEvent(ev) {
       if (ev._knownGroup) {
         return renderKnownGroup(ev);
+      }
+      if (ev._networkGroup) {
+        return renderNetworkGroup(ev);
       }
       if (ev.correlated && ev.evidence) {
         return renderEvidenceEvent(ev);
@@ -2713,7 +3250,7 @@
             <span class="evidence-actions">
               <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">${expanded ? 'Collapse' : 'Expand'}</button>
               <button class="mini-button" onclick="quietCategory('${escapeHtml(category)}')">Quiet category</button>
-              <button class="mini-button" onclick="doExport()">Export</button>
+              <button class="mini-button" onclick="doExport()">Evidence Pack</button>
             </span>
           </div>
           <div class="known-destinations">
@@ -2833,10 +3370,12 @@
       const falsePositive = likelyFalsePositiveEvidence(ev);
       const displayDestination = destination || 'unknown destination';
       const provenance = renderDestinationProvenance(evidence, compact);
+      const destinationMemory = renderDestinationMemory(ev);
       const destinationLine = `<div class="evidence-line">
         <div class="evidence-label">Destination</div>
         <div>
           <div class="destination-pill">${escapeHtml(displayDestination)}</div>
+          ${destinationMemory}
           <div class="destination-note">Best display name from semantic intent, SNI/PTR host, or observed endpoint.</div>
         </div>
       </div>`;
@@ -2845,7 +3384,7 @@
           ${destinationLine}
           ${provenance}
           <div class="evidence-line">
-            <div class="evidence-label">Why</div>
+            <div class="evidence-label">Why this matters</div>
             <div class="why-value">
               <div class="evidence-why">${escapeHtml(why)}</div>
               <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
@@ -2858,15 +3397,15 @@
           ${destinationLine}
           ${provenance}
           <div class="evidence-line">
-            <div class="evidence-label">Hook</div>
+            <div class="evidence-label">Hook evidence</div>
             <div class="evidence-text">${escapeHtml(evidence.semantic || '')}</div>
           </div>
           <div class="evidence-line">
-            <div class="evidence-label">Network</div>
+            <div class="evidence-label">Network evidence</div>
             <div class="evidence-text">${escapeHtml(evidence.flow || ev.detail || '')}</div>
           </div>
           <div class="evidence-line">
-            <div class="evidence-label">Why</div>
+            <div class="evidence-label">Why this matters</div>
             <div class="why-value">
               <div class="evidence-why">${escapeHtml(why)}</div>
               <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
@@ -2874,8 +3413,8 @@
           </div>
           ${isExpanded ? `<div class="evidence-expanded">
             ${renderRelatedSubEvents(ev)}
-            ${replayRows ? `<div class="replay-block">${replayRows}</div>` : ''}
-            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${showingRawDetails ? 'Hide Raw Details' : 'Raw Details'}</button>
+            ${replayRows ? `<div class="replay-block"><div class="section-label">Process lineage</div>${replayRows}</div>` : ''}
+            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${showingRawDetails ? 'Hide provenance details' : 'Provenance details'}</button>
             ${showingRawDetails ? `${detailRows}${evidenceDiagnosticTags(ev, evidence, rawWhy)}` : ''}
           </div>` : ''}
         </div>
@@ -2998,6 +3537,11 @@
     }
 
     async function refreshFromBackend() {
+      if (backendRefreshInFlight) {
+        pendingBackendRefresh = true;
+        return;
+      }
+      backendRefreshInFlight = true;
       try {
         let list = null;
         try {
@@ -3007,23 +3551,43 @@
           list = normalizeEvents(await invoke('get_events'));
         }
         events = normalizeEvents(list);
-        renderEvents();
-        await refreshStatus();
+        scheduleRender();
+        scheduleStatusRefresh(0);
       } catch (e) {
         console.warn('get_events failed', e);
+      } finally {
+        backendRefreshInFlight = false;
+        if (pendingBackendRefresh) {
+          pendingBackendRefresh = false;
+          scheduleBackendRefresh();
+        }
       }
     }
 
 	    async function refreshStatus() {
+      if (statusRefreshInFlight) {
+        pendingStatusRefresh = true;
+        return;
+      }
+      statusRefreshInFlight = true;
 	      try {
 	        const st = await invoke('get_status');
+        latestStatus = st || {};
+        // Sync paused from the backend (e.g. resumed via tray/menu elsewhere).
+        if (typeof st.paused === 'boolean' && st.paused !== paused) {
+          paused = st.paused;
+          applyPausedUi();
+        }
         const titleEl = document.getElementById('title');
         const badgeEl = document.getElementById('badge');
         const metaEl = document.getElementById('meta');
         const statusEl = document.getElementById('status');
 
         titleEl.textContent = st.header || 'AgentSnitch';
-        if (st.active) {
+        if (st.paused) {
+          badgeEl.textContent = 'paused';
+          badgeEl.className = 'badge quiet';
+        } else if (st.active) {
           badgeEl.textContent = 'active';
           badgeEl.className = 'badge';
         } else {
@@ -3033,20 +3597,30 @@
         metaEl.textContent = st.event_count ? (st.event_count + ' ev') : '';
         renderSessionSummary(st.summary);
         renderAgentTeam(st.agents || []);
-        statusEl.textContent = st.active ? 'Live feed • all local' : 'No active agent • all local';
-        const recent = normalizeEvents(st.recent);
-        if (!st.active && st.event_count === 0 && !(st.agents || []).length) {
-          activeAgentFilter = '';
-          activeReasonFilter = '';
-          teamAgents = [];
-          expandedMainGroups.clear();
-        }
-        if (recent.length || st.event_count === 0) {
-          events = recent;
-          renderEvents();
+        statusEl.textContent = `${coverageStatusLine(st)} · all local`;
+        // While paused the view is frozen on the snapshot taken at pause time: do
+        // not overwrite the event list with backend state.
+        if (!paused) {
+          const recent = normalizeEvents(st.recent);
+          if (!st.active && st.event_count === 0 && !(st.agents || []).length) {
+            activeAgentFilter = '';
+            activeReasonFilter = '';
+            teamAgents = [];
+            expandedMainGroups.clear();
+          }
+          if (recent.length || st.event_count === 0) {
+            events = recent;
+            scheduleRender();
+          }
         }
       } catch (e) {
         // ignore
+	      } finally {
+        statusRefreshInFlight = false;
+        if (pendingStatusRefresh) {
+          pendingStatusRefresh = false;
+          scheduleStatusRefresh();
+        }
 	      }
 	    }
 
@@ -3149,43 +3723,95 @@
       }
     }
 
+    // togglePaused flips Pause/Live. Pause halts sensing in the daemon and freezes
+    // the live view so the current dataset can be inspected. Distinct from Quiet
+    // (hides known-safe noise, keeps sensing) and Clear (wipes the view).
+    async function togglePaused() {
+      const next = !paused;
+      try {
+        await invoke('set_paused', { paused: next });
+        paused = next;
+        applyPausedUi();
+      } catch (e) {
+        // The backend may have set the UI flag but failed to reach the daemon.
+        // Reflect whatever the backend reports rather than diverging.
+        await refreshStatus();
+        alert((next ? 'pause' : 'resume') + ' failed: ' + e);
+      }
+    }
+
+    // applyPausedUi reflects the paused flag in the button label/style and the loud
+    // banner. Idempotent; safe to call from togglePaused, refreshStatus, or the
+    // pause-changed listener.
+    function applyPausedUi() {
+      const btn = document.getElementById('pauseToggle');
+      if (btn) {
+        btn.textContent = paused ? 'Live' : 'Pause';
+        btn.classList.toggle('paused', paused);
+        btn.title = paused
+          ? 'Sensing is halted. Click to go Live and resume observing.'
+          : 'Pause halts sensing so you can inspect the current data. Quiet only hides known-safe noise; Clear wipes the view.';
+      }
+      const banner = document.getElementById('pausedBanner');
+      if (banner) banner.hidden = !paused;
+    }
+
     async function doExport() {
       try {
-        const jsonl = await invoke('export_transcript');
-        const blob = new Blob([jsonl || ''], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'agentsnitch-session.jsonl';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        const path = await invoke('export_evidence_pack_file');
+        const statusEl = document.getElementById('status');
+        if (statusEl) statusEl.textContent = `Evidence Pack saved · ${path}`;
       } catch (e) {
-        alert('export failed: ' + e);
+        try {
+          const jsonl = await invoke('export_transcript');
+          const blob = new Blob([jsonl || ''], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'agentsnitch-evidence-pack.jsonl';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (fallbackError) {
+          alert('export failed: ' + fallbackError);
+        }
       }
     }
 
     function setupLiveUpdates() {
       // Prefer real-time events from Rust
       listen('event-received', (evt) => {
+        // Frozen while paused: do not apply live events to the view.
+        if (paused) return;
         const payload = evt.payload;
         if (payload) {
+          lastPushAt = Date.now();
           // dedup by id
           if (!events.some(e => e.id === payload.id)) {
             events.push(payload);
           }
-          renderEvents();
-          refreshStatus();
+          scheduleRender();
+          scheduleStatusRefresh();
         }
       }).catch(() => {});
 
+      listen('pause-changed', (evt) => {
+        paused = !!evt.payload;
+        applyPausedUi();
+      }).catch(() => {});
+
+      listen('pause-gap', () => {
+        // The daemon recorded a sensing gap; refresh so it surfaces in the feed.
+        scheduleStatusRefresh();
+      }).catch(() => {});
+
       listen('events-updated', () => {
-        refreshFromBackend();
+        scheduleBackendRefresh();
       }).catch(() => {});
 
 	      listen('status-changed', () => {
-	        refreshStatus();
+	        scheduleStatusRefresh();
 	      }).catch(() => {});
 
 	      listen('settings-changed', (evt) => {
@@ -3206,8 +3832,11 @@
       // Fallback polling (keeps UI live even if event channel has issues)
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(() => {
-        // only poll if we didn't get recent push (simple heuristic: always cheap)
-        refreshFromBackend();
+        if (Date.now() - lastPushAt > 2000) {
+          scheduleBackendRefresh(0);
+        } else {
+          scheduleStatusRefresh();
+        }
       }, 1200);
     }
 
@@ -3228,7 +3857,7 @@
         }
       });
 
-	      window.AGENTSNITCH = { clearSession, quietSession, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, refresh: refreshFromBackend, invoke };
+	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, refresh: refreshFromBackend, invoke };
       console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
     }
 
@@ -3236,56 +3865,5 @@
     boot();
   </script>
 
-  <!-- ===== hidden creature easter egg ===== -->
-  <!-- Secret gesture: right-click the "Quiet" button 6 times in rapid succession. -->
-  <div id="creature-egg-overlay" role="dialog" aria-modal="true" aria-label="Creatures">
-    <div class="cr-topbar">
-      <div>
-        <div class="cr-title">Creatures</div>
-        <div class="cr-sub">your agents, as they really are · driven by live status · all local</div>
-      </div>
-      <div style="display:flex; align-items:center; gap:14px;">
-        <span class="cr-egg-hint">🐾 you found the snitches</span>
-        <button id="creature-egg-close" type="button">close</button>
-      </div>
-    </div>
-    <div class="cr-stage" id="creature-stage"></div>
-  </div>
-
-  <script src="creatures-engine.js"></script>
-  <script src="creatures-bridge.js"></script>
-  <script>
-    (function () {
-      const overlay = document.getElementById('creature-egg-overlay');
-      const closeBtn = document.getElementById('creature-egg-close');
-      function openEgg() {
-        overlay.classList.add('open');
-        if (window.CreatureEgg) window.CreatureEgg.start();
-      }
-      function closeEgg() {
-        overlay.classList.remove('open');
-        if (window.CreatureEgg) window.CreatureEgg.stop();
-      }
-      closeBtn.addEventListener('click', closeEgg);
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('open')) closeEgg(); });
-
-      // Secret knock: 6 rapid right-clicks on the "Quiet" button.
-      // Find it by its exact label so we don't depend on DOM order.
-      const quietBtn = Array.from(document.querySelectorAll('.footer button'))
-        .find(b => b.textContent.trim() === 'Quiet');
-      if (quietBtn) {
-        let clicks = 0, lastT = 0;
-        const WINDOW = 600;   // ms between clicks to count as "rapid"
-        const NEEDED = 6;
-        quietBtn.addEventListener('contextmenu', (e) => {
-          e.preventDefault();               // suppress the OS context menu during the knock
-          const now = performance.now();
-          clicks = (now - lastT <= WINDOW) ? clicks + 1 : 1;
-          lastT = now;
-          if (clicks >= NEEDED) { clicks = 0; openEgg(); }
-        });
-      }
-    })();
-  </script>
 </body>
 </html>

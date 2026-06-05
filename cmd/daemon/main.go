@@ -90,6 +90,8 @@ func main() {
 	status := newStatusReporter()
 	status.write()
 	transcripts := asruntime.NewTranscriptWriter()
+	// Pause is always Live on startup; the flag is never persisted (fail-safe).
+	pause := newPauseController()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -112,15 +114,15 @@ func main() {
 		}
 		startLsofFallbackOnce.Do(func() {
 			log.Printf("network observer: starting lsof fallback: %s", reason)
-			go startLsofNetworkObserver(ctx, sessions, status, transcripts, lsofBurstRequests)
+			go startLsofNetworkObserver(ctx, sessions, status, transcripts, lsofBurstRequests, pause)
 		})
 	}
 	if networkStatisticsObserverEnabled() {
-		go startNetworkStatisticsObserver(ctx, sessions, status, transcripts, startLsofFallback)
+		go startNetworkStatisticsObserver(ctx, sessions, status, transcripts, startLsofFallback, pause)
 	} else {
 		startLsofFallback("NetworkStatistics observer disabled")
 	}
-	go startProcessGraphObserver(ctx, sessions)
+	go startProcessGraphObserver(ctx, sessions, pause)
 
 	var wg sync.WaitGroup
 	connSlots := make(chan struct{}, MaxDaemonSocketConnections)
@@ -152,7 +154,7 @@ func main() {
 				case <-done:
 				}
 			}()
-			handleConn(ctx, cc, sessions, status, transcripts, lsofBurstRequests)
+			handleConn(ctx, cc, sessions, status, transcripts, lsofBurstRequests, pause)
 			close(done)
 		}(c)
 	}
@@ -160,7 +162,7 @@ func main() {
 	log.Print("daemon done")
 }
 
-func startProcessGraphObserver(ctx context.Context, sessions *daemonSessions) {
+func startProcessGraphObserver(ctx context.Context, sessions *daemonSessions, pause *pauseController) {
 	log.Print("process tracking: process snapshot observer enabled")
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -170,6 +172,11 @@ func startProcessGraphObserver(ctx context.Context, sessions *daemonSessions) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if pause.Paused() {
+				// Sensing halted: do not snapshot the process table or mutate
+				// session/subagent state while the user is inspecting.
+				continue
+			}
 			processes := snapshotProcessTable()
 			if len(processes) == 0 {
 				continue
@@ -179,7 +186,7 @@ func startProcessGraphObserver(ctx context.Context, sessions *daemonSessions) {
 	}
 }
 
-func handleConn(ctx context.Context, c net.Conn, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}) {
+func handleConn(ctx context.Context, c net.Conn, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}, pause *pauseController) {
 	peerPID, hasPeerPID := peerPIDForConn(c)
 	refreshReadDeadline := func() {
 		_ = c.SetReadDeadline(time.Now().Add(DaemonSocketReadIdleTimeout))
@@ -195,14 +202,33 @@ func handleConn(ctx context.Context, c net.Conn, sessions *daemonSessions, statu
 		if line == "" {
 			continue
 		}
-		dispatch(line, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests)
+		dispatch(line, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests, pause)
 	}
 	_ = sc.Err()
 }
 
-func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}) {
-	// Smarter dispatch for dev: network events have "remote" (or network schema); semantics have tool or semantic schema.
+func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}, pause *pauseController) {
 	raw := []byte(line)
+	// Control messages (pause/resume) are processed even while paused — resume is
+	// how the user gets out of pause. They are trusted only from the installed UI
+	// binary and never treated as agent evidence.
+	if strings.Contains(line, "agentsnitch.control") {
+		var ctrl event.ControlMessage
+		if json.Unmarshal(raw, &ctrl) == nil && ctrl.Schema == event.SchemaControlV0 {
+			if hasPeerPID && peerPID > 0 && !trustedControlSocketPeer(peerPID) {
+				log.Printf("CONTROL_INVALID: socket peer pid %d is not the AgentSnitch UI", peerPID)
+				return
+			}
+			handleControl(ctrl, pause, transcripts, status)
+			return
+		}
+	}
+	// While paused, sensing is halted: drop ingested evidence without recording it.
+	// (Control messages above are the deliberate exception.)
+	if pause.Paused() {
+		return
+	}
+	// Smarter dispatch for dev: network events have "remote" (or network schema); semantics have tool or semantic schema.
 	if strings.Contains(line, `"remote"`) || strings.Contains(line, "agentsnitch.network") {
 		var nf event.NetworkFlowEvent
 		if json.Unmarshal(raw, &nf) == nil {
@@ -325,6 +351,19 @@ func trustedSemanticSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
 // trustedNetworkSocketPeer reports whether the socket peer is the installed
 // AgentSnitch UI / Network Extension, validated by its actual executable path.
 func trustedNetworkSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
+	exe, ok := peerExePath(pid)
+	if !ok {
+		return false
+	}
+	return isTrustedNetworkSenderExe(exe)
+}
+
+// trustedControlSocketPeer reports whether the socket peer may send control
+// messages (pause/resume). Only the installed AgentSnitch UI drives Pause, so we
+// reuse the network-sender path validator (which accepts the installed .app
+// bundle). The Network Extension store path also passes, which is harmless: the
+// NE never sends control messages.
+func trustedControlSocketPeer(pid int) bool {
 	exe, ok := peerExePath(pid)
 	if !ok {
 		return false
@@ -710,7 +749,7 @@ func correlationSessionID(c event.Correlation) string {
 	return "correlated"
 }
 
-func startLsofNetworkObserver(ctx context.Context, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, burstRequests <-chan struct{}) {
+func startLsofNetworkObserver(ctx context.Context, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, burstRequests <-chan struct{}, pause *pauseController) {
 	log.Print("network observer: lsof fallback enabled (set AGENTSNITCH_DISABLE_LSOF=1 to disable)")
 	ticker := time.NewTicker(LsofDefaultPollInterval)
 	defer ticker.Stop()
@@ -718,6 +757,10 @@ func startLsofNetworkObserver(ctx context.Context, sessions *daemonSessions, sta
 	seen := make(map[string]time.Time)
 	transcriptSeen := make(map[string]time.Time)
 	poll := func() {
+		if pause.Paused() {
+			// Sensing halted: do not run lsof or ingest flows while paused.
+			return
+		}
 		flows, err := snapshotEstablishedTCP()
 		if err != nil {
 			log.Printf("network observer: lsof snapshot failed: %v", err)
@@ -792,9 +835,9 @@ type nettopProcessContext struct {
 	Name string
 }
 
-func startNetworkStatisticsObserver(ctx context.Context, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, fallback func(string)) {
+func startNetworkStatisticsObserver(ctx context.Context, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, fallback func(string), pause *pauseController) {
 	log.Print("network observer: NetworkStatistics/nettop enabled (set AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1 to disable)")
-	err := runNetworkStatisticsObserver(ctx, sessions, status, transcripts)
+	err := runNetworkStatisticsObserver(ctx, sessions, status, transcripts, pause)
 	if ctx.Err() != nil {
 		return
 	}
@@ -806,7 +849,7 @@ func startNetworkStatisticsObserver(ctx context.Context, sessions *daemonSession
 	}
 }
 
-func runNetworkStatisticsObserver(ctx context.Context, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) error {
+func runNetworkStatisticsObserver(ctx context.Context, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, pause *pauseController) error {
 	cmd := exec.CommandContext(ctx, "nettop", "-L", "0", "-x", "-t", "external", "-s", "1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -831,6 +874,11 @@ func runNetworkStatisticsObserver(ctx context.Context, sessions *daemonSessions,
 	for sc.Scan() {
 		if ctx.Err() != nil {
 			break
+		}
+		if pause.Paused() {
+			// Sensing halted: drain nettop output without ingesting. We keep
+			// reading so nettop's pipe never blocks, but we observe nothing.
+			continue
 		}
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "time,") {
