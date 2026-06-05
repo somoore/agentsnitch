@@ -176,6 +176,16 @@
       display: grid;
       gap: 5px;
     }
+    /* Project section label, shown only when >1 project is active. */
+    .agent-project-header {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 6px 2px 1px;
+    }
+    .agent-project-header:first-child { padding-top: 0; }
     .agent-context-grid {
       display: grid;
       grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.35fr);
@@ -1898,9 +1908,36 @@
       return agentType(agent) === 'sub' ? name : name.toLowerCase();
     }
 
+    // agentProjectKey is the stable identity for a project: the agent's full,
+    // normalized cwd (trimmed, trailing slashes stripped). Two mains in different
+    // paths that happen to share a folder name (/tmp/a/app vs /tmp/b/app) are
+    // distinct projects, so dedupe/grouping must key on this, not the basename.
+    // Returns '' when no usable cwd is known.
+    function agentProjectKey(agent) {
+      return String(agent?.cwd || '').trim().replace(/\/+$/, '');
+    }
+
+    // agentProjectName derives a short, human project label from an agent's cwd —
+    // the last path segment (folder name), e.g. "/Users/me/github/agentsnitch" -> "agentsnitch".
+    // This is display only; collisions are possible, so use agentProjectKey for identity.
+    // Returns '' when no usable cwd is known.
+    function agentProjectName(agent) {
+      const cwd = agentProjectKey(agent);
+      if (!cwd) return '';
+      const base = cwd.split('/').filter(Boolean).pop();
+      return base || '';
+    }
+
     function agentShortName(agent) {
       const name = agentName(agent);
-      if (agentType(agent) !== 'sub') return 'Main';
+      if (agentType(agent) !== 'sub') {
+        // Mains are identified by their project (folder), not the literal "Main"
+        // and not the PID — that's the dev's mental model. PID stays in the meta.
+        const project = agentProjectName(agent);
+        if (project) return `${project} — main`;
+        // No cwd: an exited/unattributed main. Keep it but de-emphasize.
+        return agentPid(agent) ? 'main' : '(ended) main';
+      }
       const cleaned = name
         .replace(/^Claude Code sub-agent$/i, 'Sub-agent')
         .replace(/^READ-ONLY analysis\.\s*/i, 'Read-only audit ')
@@ -2741,10 +2778,12 @@
       const groups = agentGroups();
       const subCount = visible.filter(agent => agentType(agent) === 'sub').length;
       const activeCount = visible.filter(agent => eventCountForAgent(agent.id) > 0).length;
+      const projectCount = new Set(groups.map(g => agentProjectKey(g.main || {})).filter(Boolean)).size;
       const title = subCount ? 'Claude Code (subagents)' : 'Claude Code agents';
+      const projectPart = projectCount > 1 ? `${projectCount} projects · ` : '';
       const subtitle = subCount
-        ? `${groups.length} main · ${subCount} subagents · ${activeCount} active · click any card to inspect its events`
-        : `${groups.length} main · ${activeCount} active · click any card to inspect its events`;
+        ? `${projectPart}${groups.length} main · ${subCount} subagents · ${activeCount} active · click any card to inspect its events`
+        : `${projectPart}${groups.length} main · ${activeCount} active · click any card to inspect its events`;
       const header = `<section class="agents-view-head">
         <div class="agents-view-title">${escapeHtml(title)}</div>
         <div class="agents-view-subtitle">${escapeHtml(subtitle)}</div>
@@ -2757,9 +2796,33 @@
     }
 
     function renderAgentHierarchy(groups) {
-      const rows = groups.map(group => {
+      // Sort by project (full cwd key), then display name as a tiebreak, then by
+      // activity (busiest first). Exited/unknown mains (no project) sort last so
+      // the live, named ones lead. Keying on the full path keeps distinct projects
+      // that share a folder name (e.g. /tmp/a/app, /tmp/b/app) in separate sections.
+      const sorted = [...groups].sort((a, b) => {
+        const ka = agentProjectKey(a.main || {});
+        const kb = agentProjectKey(b.main || {});
+        if (!!ka !== !!kb) return ka ? -1 : 1; // named projects before unknown
+        const nameDelta = agentProjectName(a.main || {}).localeCompare(agentProjectName(b.main || {}));
+        if (nameDelta) return nameDelta;
+        const keyDelta = ka.localeCompare(kb);
+        if (keyDelta) return keyDelta;
+        return eventCountForAgentGroup(b) - eventCountForAgentGroup(a);
+      });
+
+      // Only label by project section when more than one distinct project is
+      // present — the common single-project case stays flat (no header chrome).
+      // Identity is the full cwd key, so same-basename/different-path counts as 2.
+      const projects = new Set(sorted.map(g => agentProjectKey(g.main || {})).filter(Boolean));
+      const showProjectHeaders = projects.size > 1;
+      let lastProjectKey = null;
+
+      const rows = sorted.map(group => {
         const main = group.main || {};
         const pid = agentPid(main);
+        const project = agentProjectName(main);
+        const projectKey = agentProjectKey(main);
         const groupEvents = eventCountForAgentGroup(group);
         const mainMeta = [
           pid ? `PID ${pid}` : 'PID inferred',
@@ -2770,14 +2833,24 @@
         const children = group.children.length
           ? `<div class="agent-tree-children">${group.children.map(renderAgentTreeChild).join('')}</div>`
           : '';
-        const mainLabel = group.children.length ? `Main (${group.children.length})` : 'Main';
-        return `<section class="agent-tree-group">
+        // Project-derived label (e.g. "agentsnitch — main"); add the subagent count.
+        const baseLabel = agentShortName(main);
+        const mainLabel = group.children.length ? `${baseLabel} (${group.children.length})` : baseLabel;
+
+        let header = '';
+        if (showProjectHeaders && project && projectKey !== lastProjectKey) {
+          lastProjectKey = projectKey;
+          // Title carries the full path so same-named projects stay distinguishable.
+          header = `<div class="agent-project-header" title="${escapeHtml(projectKey)}">${escapeHtml(project)}</div>`;
+        }
+
+        return `${header}<section class="agent-tree-group">
           <div class="agent-tree-main">
             <div>
-              <strong>${escapeHtml(mainLabel)}</strong>
+              <strong title="${escapeHtml(String(main.cwd || ''))}">${escapeHtml(mainLabel)}</strong>
               <span>${escapeHtml(mainMeta)}</span>
             </div>
-            <button class="mini-button" onclick="showAgentDetail('${escapeHtml(main.id)}')">Events</button>
+            <button class="mini-button" onclick="showAgentDetail('${escapeHtml(main.id)}')">Inspect</button>
           </div>
           ${children}
         </section>`;

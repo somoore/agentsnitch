@@ -384,7 +384,33 @@ impl Default for DestinationMemory {
 }
 
 fn compute_header(snap: &SessionSnapshot, active: bool, agents: &[AgentInfo]) -> String {
-    compute_header_at(snap, active, Utc::now(), has_detected_subagents(agents))
+    compute_header_at(
+        snap,
+        active,
+        Utc::now(),
+        has_detected_subagents(agents),
+        distinct_agent_projects(agents),
+    )
+}
+
+/// Number of distinct projects across main agents. Identity is the full
+/// normalized cwd (trailing slashes trimmed), not the basename, so two mains in
+/// different paths that share a folder name (e.g. /tmp/a/app and /tmp/b/app)
+/// count as two projects. Used to pluralize the header when >1 project is active.
+fn distinct_agent_projects(agents: &[AgentInfo]) -> usize {
+    let mut seen = HashSet::new();
+    for agent in agents {
+        if agent.agent_type.as_deref() == Some("sub") {
+            continue;
+        }
+        if let Some(cwd) = agent.cwd.as_deref() {
+            let key = cwd.trim_end_matches('/');
+            if !key.is_empty() {
+                seen.insert(key.to_string());
+            }
+        }
+    }
+    seen.len()
 }
 
 fn compute_header_at(
@@ -392,6 +418,7 @@ fn compute_header_at(
     active: bool,
     now: DateTime<Utc>,
     has_subagents: bool,
+    project_count: usize,
 ) -> String {
     if !active {
         return "No agent active".to_string();
@@ -410,7 +437,11 @@ fn compute_header_at(
     if has_subagents && !name.to_ascii_lowercase().contains("subagent") {
         name.push_str(" (subagents)");
     }
-    let path = if snap.cwd.is_empty() {
+    // With more than one project active, "active in sir" would be misleading;
+    // say "active in N projects" so the header agrees with the agent list.
+    let path = if project_count > 1 {
+        format!("{} projects", project_count)
+    } else if snap.cwd.is_empty() {
         "~/project".to_string()
     } else {
         snap.cwd.rsplit('/').next().unwrap_or(&snap.cwd).to_string()
@@ -5070,7 +5101,7 @@ mod tests {
             .with_timezone(&Utc);
 
         assert_eq!(
-            compute_header_at(&snap, true, now, false),
+            compute_header_at(&snap, true, now, false, 0),
             "Claude Code active in frontend • 13m"
         );
     }
@@ -5088,7 +5119,7 @@ mod tests {
             .with_timezone(&Utc);
 
         assert_eq!(
-            compute_header_at(&snap, true, now, false),
+            compute_header_at(&snap, true, now, false, 0),
             "Claude Code active in frontend • active"
         );
     }
@@ -5106,13 +5137,106 @@ mod tests {
             .with_timezone(&Utc);
 
         assert_eq!(
-            compute_header_at(&snap, true, now, false),
+            compute_header_at(&snap, true, now, false, 0),
             "Claude Code active in agentsnitch • 13m"
         );
         assert_eq!(
-            compute_header_at(&snap, true, now, true),
+            compute_header_at(&snap, true, now, true, 0),
             "Claude Code (subagents) active in agentsnitch • 13m"
         );
+    }
+
+    #[test]
+    fn compute_header_pluralizes_when_multiple_projects_active() {
+        let snap = SessionSnapshot {
+            id: "session-1".into(),
+            agent_name: "Claude Code".into(),
+            cwd: "/tmp/frontend".into(),
+            started_ts: "2026-06-03T22:00:00Z".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-06-03T22:13:20Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // With >1 project, the single-folder name is replaced by "N projects" so
+        // the header does not misleadingly claim only one project is active.
+        assert_eq!(
+            compute_header_at(&snap, true, now, false, 2),
+            "Claude Code active in 2 projects • 13m"
+        );
+        // A single project keeps the folder name.
+        assert_eq!(
+            compute_header_at(&snap, true, now, false, 1),
+            "Claude Code active in frontend • 13m"
+        );
+    }
+
+    #[test]
+    fn distinct_agent_projects_counts_main_folders_and_ignores_subs() {
+        let agents = vec![
+            AgentInfo {
+                id: "main_1".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/Users/me/github/agentsnitch".into()),
+                ..AgentInfo::default()
+            },
+            AgentInfo {
+                id: "main_2".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/Users/me/github/sir".into()),
+                ..AgentInfo::default()
+            },
+            // Same project as main_1 (trailing slash) — must not double-count.
+            AgentInfo {
+                id: "main_3".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/Users/me/github/agentsnitch/".into()),
+                ..AgentInfo::default()
+            },
+            // Subagent — ignored even with a distinct cwd.
+            AgentInfo {
+                id: "sub_1".into(),
+                name: "QA login".into(),
+                agent_type: Some("sub".into()),
+                cwd: Some("/Users/me/github/other".into()),
+                ..AgentInfo::default()
+            },
+            // Main with no cwd — ignored (cannot attribute a project).
+            AgentInfo {
+                id: "main_4".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                ..AgentInfo::default()
+            },
+        ];
+        assert_eq!(distinct_agent_projects(&agents), 2);
+    }
+
+    #[test]
+    fn distinct_agent_projects_separates_same_basename_different_path() {
+        // Two mains whose cwds share a folder name but live at different paths are
+        // distinct projects; keying on the full cwd (not the basename) keeps the
+        // count at 2 so the header pluralizes correctly.
+        let agents = vec![
+            AgentInfo {
+                id: "main_1".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/tmp/a/app".into()),
+                ..AgentInfo::default()
+            },
+            AgentInfo {
+                id: "main_2".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/tmp/b/app".into()),
+                ..AgentInfo::default()
+            },
+        ];
+        assert_eq!(distinct_agent_projects(&agents), 2);
     }
 
     #[test]

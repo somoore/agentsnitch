@@ -414,9 +414,12 @@ func (m *subagentMonitor) annotateNetwork(nf *event.NetworkFlowEvent, processes 
 	if !isClaudeCLIBinary(nf.ProcessPath) {
 		return
 	}
-	cwd := ""
 	pid := firstPositive(nf.PID, nf.PPID)
 	if _, ok := m.pidToAgentID[pid]; !ok {
+		// Resolve the cwd so a network-attributed main carries its project path
+		// (the UI labels agents by project basename). Without this the main would
+		// register with an empty cwd and render as "unknown project".
+		cwd := cleanCWD(cwdForPID(pid))
 		agent := m.registerMainLocked(pid, cwd, now)
 		nf.Agent = &agent
 		return

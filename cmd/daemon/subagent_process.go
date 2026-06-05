@@ -157,7 +157,10 @@ func formatPIDs(pids []int) string {
 	return strings.Join(parts, ",")
 }
 
-func cwdForPID(pid int) string {
+// cwdForPID resolves a process's working directory. It is a package var so tests
+// can inject a fake resolver (mirrors the peerExePath pattern); the default shells
+// out to lsof.
+var cwdForPID = func(pid int) string {
 	if pid <= 0 {
 		return ""
 	}
