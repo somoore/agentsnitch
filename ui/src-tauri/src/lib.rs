@@ -3667,24 +3667,30 @@ fn quiet_session(state: State<AppState>, app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn set_paused(paused: bool, state: State<AppState>, app: AppHandle) -> Result<bool, String> {
     {
-        let mut guard = state.paused.lock().unwrap();
+        let guard = state.paused.lock().unwrap();
         if *guard == paused {
             return Ok(paused); // no-op; already in this state
         }
-        *guard = paused;
     }
-    // Best-effort signal to the daemon. If it fails, we still reflect the UI state
-    // and surface the error to the caller rather than silently diverging.
+    // Signal the daemon FIRST and only commit the UI state on success. If we cannot
+    // even reach the daemon, committing "paused" would be a lie: the banner/tray
+    // would report sensing is halted and process_incoming_json would drop live
+    // events, while the daemon keeps recording — a misleading frozen view. For a
+    // tool whose whole promise is "never an invisible hole", the honest behavior on
+    // failure is to leave the prior state and surface the error.
     let control = if paused { "pause" } else { "resume" };
-    let control_result = send_daemon_control(control);
+    if let Err(e) = send_daemon_control(control) {
+        return Err(format!(
+            "daemon control {} failed; UI state unchanged: {}",
+            control, e
+        ));
+    }
+    *state.paused.lock().unwrap() = paused;
     let active = *state.active.lock().unwrap();
     refresh_tray(&app, active);
     let _ = app.emit("pause-changed", paused);
     let _ = app.emit("status-changed", ());
-    match control_result {
-        Ok(()) => Ok(paused),
-        Err(e) => Err(format!("UI {} set; daemon control failed: {}", control, e)),
-    }
+    Ok(paused)
 }
 
 #[tauri::command]
