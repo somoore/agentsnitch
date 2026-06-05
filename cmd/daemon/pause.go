@@ -84,10 +84,16 @@ func (p *pauseController) Resume(now time.Time) (from, to time.Time, transitione
 }
 
 // handleControl applies a UI->daemon control message (pause/resume). On resume it
-// writes a pause_gap record to the transcript and forwards it to the UI so the gap
-// is recorded as a gap. The peer is already trusted as the installed UI binary by
-// the caller.
-func handleControl(msg event.ControlMessage, pause *pauseController, transcripts *asruntime.TranscriptWriter, status *statusReporter) {
+// writes a pause_gap record into the transcript of every session that was live and
+// forwards it to the UI so the gap is recorded as a gap. The peer is already trusted
+// as the installed UI binary by the caller.
+//
+// Why sessions.list() at resume == the sessions live at pause: while paused, sensing
+// is fully halted — dispatch drops all ingested evidence (no new sessions are ever
+// created) and the process-graph observer is skipped (so pruneIdle never runs). The
+// session set is therefore frozen for the whole pause window, so iterating it now
+// lands the gap in exactly the sessions that were affected.
+func handleControl(msg event.ControlMessage, pause *pauseController, transcripts *asruntime.TranscriptWriter, status *statusReporter, sessions *daemonSessions) {
 	switch msg.Action {
 	case event.ControlActionPause:
 		pause.Pause(time.Now().UTC())
@@ -97,8 +103,23 @@ func handleControl(msg event.ControlMessage, pause *pauseController, transcripts
 			return
 		}
 		gap := event.NewPauseGapEvent(from, to)
-		// Record the gap in the active session transcript and surface it in the UI.
-		appendTranscript(transcripts, status, "pause-gap", "pause_gap", gap)
+		// Record the gap in each affected session's own transcript so per-session
+		// evidence shows the gap explicitly rather than leaving an invisible hole.
+		var live []*daemonSession
+		if sessions != nil {
+			live = sessions.list()
+		}
+		if len(live) == 0 {
+			// No known live session: fall back to a synthetic transcript so the gap
+			// is still recorded somewhere.
+			appendTranscript(transcripts, status, "pause-gap", "pause_gap", gap)
+		} else {
+			for _, sess := range live {
+				appendTranscript(transcripts, status, sess.id, "pause_gap", gap)
+			}
+		}
+		// Surface the gap in the UI once (PauseGapEvent has no per-session field; the
+		// UI shows a single coverage gap regardless of how many sessions it spanned).
 		forwardToUI(gap)
 	default:
 		log.Printf("CONTROL_INVALID: unknown action %q", msg.Action)

@@ -219,7 +219,7 @@ func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSession
 				log.Printf("CONTROL_INVALID: socket peer pid %d is not the AgentSnitch UI", peerPID)
 				return
 			}
-			handleControl(ctrl, pause, transcripts, status)
+			handleControl(ctrl, pause, transcripts, status, sessions)
 			return
 		}
 	}

@@ -117,7 +117,7 @@ func TestResumeWritesPauseGapTranscript(t *testing.T) {
 	pause := newPauseController()
 
 	pause.Pause(time.Now().UTC())
-	handleControl(event.ControlMessage{Schema: event.SchemaControlV0, Action: event.ControlActionResume}, pause, transcripts, status)
+	handleControl(event.ControlMessage{Schema: event.SchemaControlV0, Action: event.ControlActionResume}, pause, transcripts, status, newDaemonSessions())
 
 	got, err := asruntime.ReadStatus()
 	if err != nil {
@@ -138,6 +138,46 @@ func TestResumeWritesPauseGapTranscript(t *testing.T) {
 	}
 	if rec.Kind != "pause_gap" {
 		t.Fatalf("record kind = %q, want pause_gap", rec.Kind)
+	}
+}
+
+// TestResumeWritesPauseGapToEachLiveSessionTranscript verifies that on resume the
+// pause_gap is recorded in every live session's own transcript (not just a synthetic
+// "pause-gap" stream), so per-session evidence shows the coverage gap explicitly.
+func TestResumeWritesPauseGapToEachLiveSessionTranscript(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("AGENTSNITCH_STATUS", filepath.Join(tmp, "status.json"))
+	t.Setenv("AGENTSNITCH_TRANSCRIPTS_DIR", filepath.Join(tmp, "sessions"))
+
+	transcripts := asruntime.NewTranscriptWriter()
+	status := newStatusReporter()
+	pause := newPauseController()
+	sessions := newDaemonSessions()
+
+	base := time.Now().UTC()
+	sessions.forSemantic(semanticForSessionTest("session-a", 100, 90, base))
+	sessions.forSemantic(semanticForSessionTest("session-b", 200, 190, base))
+
+	pause.Pause(base)
+	handleControl(event.ControlMessage{Schema: event.SchemaControlV0, Action: event.ControlActionResume}, pause, transcripts, status, sessions)
+
+	for _, id := range []string{"session-a", "session-b"} {
+		data, err := os.ReadFile(asruntime.TranscriptPath(id))
+		if err != nil {
+			t.Fatalf("read transcript for %s: %v", id, err)
+		}
+		var rec asruntime.TranscriptRecord
+		if err := json.Unmarshal(trimLastLine(data), &rec); err != nil {
+			t.Fatalf("unmarshal transcript record for %s: %v", id, err)
+		}
+		if rec.Kind != "pause_gap" {
+			t.Fatalf("session %s: record kind = %q, want pause_gap", id, rec.Kind)
+		}
+	}
+
+	// With real sessions present, the synthetic "pause-gap" stream must NOT be used.
+	if _, err := os.Stat(asruntime.TranscriptPath("pause-gap")); !os.IsNotExist(err) {
+		t.Fatalf("synthetic pause-gap transcript should not exist when live sessions are known (err=%v)", err)
 	}
 }
 
