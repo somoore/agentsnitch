@@ -393,8 +393,10 @@ fn compute_header(snap: &SessionSnapshot, active: bool, agents: &[AgentInfo]) ->
     )
 }
 
-/// Number of distinct project folders across main agents (by cwd basename). Used
-/// to pluralize the header when more than one project is active.
+/// Number of distinct projects across main agents. Identity is the full
+/// normalized cwd (trailing slashes trimmed), not the basename, so two mains in
+/// different paths that share a folder name (e.g. /tmp/a/app and /tmp/b/app)
+/// count as two projects. Used to pluralize the header when >1 project is active.
 fn distinct_agent_projects(agents: &[AgentInfo]) -> usize {
     let mut seen = HashSet::new();
     for agent in agents {
@@ -402,9 +404,9 @@ fn distinct_agent_projects(agents: &[AgentInfo]) -> usize {
             continue;
         }
         if let Some(cwd) = agent.cwd.as_deref() {
-            let base = cwd.trim_end_matches('/').rsplit('/').next().unwrap_or("");
-            if !base.is_empty() {
-                seen.insert(base.to_string());
+            let key = cwd.trim_end_matches('/');
+            if !key.is_empty() {
+                seen.insert(key.to_string());
             }
         }
     }
@@ -5207,6 +5209,30 @@ mod tests {
                 id: "main_4".into(),
                 name: "claude".into(),
                 agent_type: Some("main".into()),
+                ..AgentInfo::default()
+            },
+        ];
+        assert_eq!(distinct_agent_projects(&agents), 2);
+    }
+
+    #[test]
+    fn distinct_agent_projects_separates_same_basename_different_path() {
+        // Two mains whose cwds share a folder name but live at different paths are
+        // distinct projects; keying on the full cwd (not the basename) keeps the
+        // count at 2 so the header pluralizes correctly.
+        let agents = vec![
+            AgentInfo {
+                id: "main_1".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/tmp/a/app".into()),
+                ..AgentInfo::default()
+            },
+            AgentInfo {
+                id: "main_2".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                cwd: Some("/tmp/b/app".into()),
                 ..AgentInfo::default()
             },
         ];
