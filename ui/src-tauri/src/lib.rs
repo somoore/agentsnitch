@@ -2682,10 +2682,72 @@ fn is_agent_lifecycle_message(body: &str) -> bool {
     message_schema(body).as_deref() == Some("agentsnitch.agent.v0")
 }
 
+/// Wire shape of the daemon's pause_gap record (see event.PauseGapEvent in Go).
+#[derive(Debug, Clone, Deserialize)]
+struct PauseGapEvent {
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    to: String,
+    #[serde(default)]
+    duration_sec: f64,
+}
+
+/// Builds a feed-visible UiEvent for a daemon pause_gap record. Returns None if the
+/// body cannot be parsed as a pause_gap (the caller still emits so the UI refreshes).
+fn build_pause_gap_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent> {
+    let gap: PauseGapEvent = serde_json::from_str(body).ok()?;
+    let state: State<AppState> = app.state();
+    let mut next_id = state.next_id.lock().unwrap();
+    *next_id += 1;
+    let id = *next_id;
+    drop(next_id);
+
+    // Short HH:MM:SS timestamp, matching sem_to_ui's convention; fall back to the
+    // raw value when the timestamp is shorter than an RFC3339 prefix.
+    let ts = if gap.to.len() >= 19 {
+        gap.to[11..19].to_string()
+    } else {
+        gap.to.clone()
+    };
+    let duration = gap.duration_sec.round() as i64;
+    let summary = format!(
+        "Sensing paused — {}s coverage gap (no agent activity observed or recorded)",
+        duration.max(0)
+    );
+    let detail = if !gap.from.is_empty() && !gap.to.is_empty() {
+        Some(format!("Pause gap from {} to {}", gap.from, gap.to))
+    } else {
+        None
+    };
+    Some(UiEvent {
+        id,
+        ts,
+        summary,
+        tags: vec!["pause_gap".into()],
+        detail,
+        destination: None,
+        destination_context: None,
+        correlated: false,
+        evidence: None,
+        agent: None,
+    })
+}
+
 fn process_incoming_json(app: &AppHandle, body: &str, source: &str) {
     // A pause_gap record is the daemon telling us a sensing gap just ended; always
-    // surface it so the halted window is shown as an explicit gap.
+    // surface it so the halted window is shown as an explicit gap. We must push a
+    // UiEvent into state.events (not merely emit), because the feed is read from
+    // state.events via get_status — emitting alone leaves the gap invisible there.
     if body.contains("agentsnitch.pause_gap") {
+        if let Some(ui) = build_pause_gap_ui_event(app, body) {
+            let state: State<AppState> = app.state();
+            let mut events = state.events.lock().unwrap();
+            events.push(ui.clone());
+            trim_ui_events(&mut events);
+            drop(events);
+            let _ = app.emit("event-received", &ui);
+        }
         let _ = app.emit("pause-gap", body.to_string());
         let _ = app.emit("status-changed", ());
         return;
