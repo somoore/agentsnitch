@@ -1350,15 +1350,12 @@ fn evidence_risk(
     destination_category: &str,
 ) -> String {
     let tags = semantic.and_then(|ev| ev.tags.clone()).unwrap_or_default();
-    if tags
-        .iter()
-        .any(|tag| tag == "sensitive_read" || tag.contains("credential"))
-        || reasons
-            .iter()
-            .any(|reason| reason == "after_sensitive_read")
-    {
-        return "high".into();
-    }
+    // Known-safe destinations are reconciled FIRST, before the sensitive-read
+    // escalation. A file read followed by traffic to Claude's own API (or a
+    // package registry, telemetry endpoint, Playwright bridge) is ordinary tool
+    // operation and must not read as full-red high (T5). The escalation below
+    // still fires for sensitive reads to *unknown* destinations — the
+    // timing/exfil case that compute_verdict keeps surfacing as amber.
     if flow.map(known_safe_destination).unwrap_or(false)
         || matches!(
             destination_category,
@@ -1369,6 +1366,15 @@ fn evidence_risk(
         )
     {
         return "low".into();
+    }
+    if tags
+        .iter()
+        .any(|tag| tag == "sensitive_read" || tag.contains("credential"))
+        || reasons
+            .iter()
+            .any(|reason| reason == "after_sensitive_read")
+    {
+        return "high".into();
     }
     if reasons.iter().any(|reason| reason == "high_bytes") {
         if semantic
@@ -5104,6 +5110,44 @@ mod tests {
                 "local dev tunnel"
             ),
             "medium"
+        );
+    }
+
+    #[test]
+    fn evidence_risk_reconciles_sensitive_read_with_destination_category() {
+        // T5: a sensitive read followed by traffic to a KNOWN-SAFE destination
+        // (Claude's own API, package registry, telemetry, Playwright bridge) is
+        // ordinary tool operation and must NOT read as full-red high. The
+        // known-safe reconciliation is applied before the after_sensitive_read
+        // escalation, so this resolves to "low".
+        assert_eq!(
+            evidence_risk(
+                None,
+                &["after_sensitive_read".into(), "within_10s".into()],
+                None,
+                "known Claude service",
+            ),
+            "low",
+            "sensitive read → known Claude service should reconcile to low, not full-red high"
+        );
+
+        // Regression guard (the green→amber-preserving invariant): the SAME
+        // sensitive-read escalation must still fire for an UNKNOWN destination.
+        // This is the timing/exfil case the verdict banner keeps surfacing as
+        // amber — the category fix must not bleed into it and silence the safety
+        // net (it also feeds linked_event_breaks_quiet).
+        assert_eq!(
+            evidence_risk(
+                None,
+                &[
+                    "after_sensitive_read".into(),
+                    "existing_connection_active".into(),
+                ],
+                None,
+                "unknown external",
+            ),
+            "high",
+            "sensitive read → unknown external must stay high so it surfaces for review"
         );
     }
 
