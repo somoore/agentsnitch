@@ -384,7 +384,31 @@ impl Default for DestinationMemory {
 }
 
 fn compute_header(snap: &SessionSnapshot, active: bool, agents: &[AgentInfo]) -> String {
-    compute_header_at(snap, active, Utc::now(), has_detected_subagents(agents))
+    compute_header_at(
+        snap,
+        active,
+        Utc::now(),
+        has_detected_subagents(agents),
+        distinct_agent_projects(agents),
+    )
+}
+
+/// Number of distinct project folders across main agents (by cwd basename). Used
+/// to pluralize the header when more than one project is active.
+fn distinct_agent_projects(agents: &[AgentInfo]) -> usize {
+    let mut seen = HashSet::new();
+    for agent in agents {
+        if agent.agent_type.as_deref() == Some("sub") {
+            continue;
+        }
+        if let Some(cwd) = agent.cwd.as_deref() {
+            let base = cwd.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+            if !base.is_empty() {
+                seen.insert(base.to_string());
+            }
+        }
+    }
+    seen.len()
 }
 
 fn compute_header_at(
@@ -392,6 +416,7 @@ fn compute_header_at(
     active: bool,
     now: DateTime<Utc>,
     has_subagents: bool,
+    project_count: usize,
 ) -> String {
     if !active {
         return "No agent active".to_string();
@@ -410,7 +435,11 @@ fn compute_header_at(
     if has_subagents && !name.to_ascii_lowercase().contains("subagent") {
         name.push_str(" (subagents)");
     }
-    let path = if snap.cwd.is_empty() {
+    // With more than one project active, "active in sir" would be misleading;
+    // say "active in N projects" so the header agrees with the agent list.
+    let path = if project_count > 1 {
+        format!("{} projects", project_count)
+    } else if snap.cwd.is_empty() {
         "~/project".to_string()
     } else {
         snap.cwd.rsplit('/').next().unwrap_or(&snap.cwd).to_string()
@@ -5070,7 +5099,7 @@ mod tests {
             .with_timezone(&Utc);
 
         assert_eq!(
-            compute_header_at(&snap, true, now, false),
+            compute_header_at(&snap, true, now, false, 0),
             "Claude Code active in frontend • 13m"
         );
     }
@@ -5088,7 +5117,7 @@ mod tests {
             .with_timezone(&Utc);
 
         assert_eq!(
-            compute_header_at(&snap, true, now, false),
+            compute_header_at(&snap, true, now, false, 0),
             "Claude Code active in frontend • active"
         );
     }
@@ -5106,11 +5135,11 @@ mod tests {
             .with_timezone(&Utc);
 
         assert_eq!(
-            compute_header_at(&snap, true, now, false),
+            compute_header_at(&snap, true, now, false, 0),
             "Claude Code active in agentsnitch • 13m"
         );
         assert_eq!(
-            compute_header_at(&snap, true, now, true),
+            compute_header_at(&snap, true, now, true, 0),
             "Claude Code (subagents) active in agentsnitch • 13m"
         );
     }
