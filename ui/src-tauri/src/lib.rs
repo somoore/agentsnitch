@@ -324,9 +324,120 @@ pub struct Status {
     pub event_count: usize,
     pub quiet: bool,
     pub paused: bool,
+    pub verdict: Verdict,
     pub summary: SessionSummary,
     pub agents: Vec<AgentInfo>,
     pub recent: Vec<UiEvent>,
+}
+
+/// Verdict is the one-line, always-visible risk posture for the current session.
+/// Level is "green" | "amber" | "red"; text is a plain-English sentence. Kept
+/// deliberately conservative (see architecture.md: prefer "linked"/"after
+/// sensitive access" over "exfiltrated"); the human judges intent.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Verdict {
+    pub level: String,
+    pub text: String,
+}
+
+impl Default for Verdict {
+    fn default() -> Self {
+        Verdict {
+            level: "green".into(),
+            text: "No sensitive context has left this machine.".into(),
+        }
+    }
+}
+
+/// compute_verdict derives the session risk posture from linked evidence + the
+/// session summary. Ordering matters: the highest applicable level wins.
+///   red   — a high-signal linked card where sensitive/credential context
+///           preceded an outbound flow (the "sensitive read → outbound" case).
+///   amber — new external destination(s) observed but not linked to sensitive
+///           context, OR any high-signal linked card without the sensitive tie.
+///   green — nothing concerning has left the machine.
+fn compute_verdict(active: bool, summary: &SessionSummary, recent: &[UiEvent]) -> Verdict {
+    if !active && summary.linked == 0 && summary.new_destinations == 0 {
+        return Verdict {
+            level: "green".into(),
+            text: "Idle — nothing observed leaving this machine.".into(),
+        };
+    }
+
+    // Look for the strongest linked evidence: sensitive/credential context that
+    // was followed by an outbound flow. Red requires a *forward* sequence — the
+    // flow opened after the sensitive read (raw reason "within_10s") — which
+    // mirrors the daemon's own escalation gate in confidenceForReasons
+    // (after_sensitive_read only escalates alongside within_10s). A flow that was
+    // already active when the sensitive read happened carries
+    // "existing_connection_active" and predates the access, so it must NOT be
+    // called red; it falls through to amber as high-signal-to-review.
+    let mut sensitive_egress: Option<&LinkedEvidence> = None;
+    let mut high_signal: Option<&LinkedEvidence> = None;
+    for ui in recent {
+        let Some(ev) = ui.evidence.as_ref() else {
+            continue;
+        };
+        let is_high = ev.severity == "hot" || ev.risk == "high";
+        let has_reason = |name: &str| ev.why.iter().any(|r| r == name);
+        let after_sensitive =
+            has_reason("after_sensitive_read") || has_reason("credential_context");
+        // Forward timing, and not a pre-existing (predating) connection.
+        let sensitive_then_egress = after_sensitive
+            && has_reason("within_10s")
+            && !has_reason("existing_connection_active");
+        if is_high && sensitive_then_egress && sensitive_egress.is_none() {
+            sensitive_egress = Some(ev);
+        }
+        if is_high && high_signal.is_none() {
+            high_signal = Some(ev);
+        }
+    }
+
+    if let Some(ev) = sensitive_egress {
+        let dest = if ev.destination.is_empty() {
+            "an external host".to_string()
+        } else {
+            ev.destination.clone()
+        };
+        return Verdict {
+            level: "red".into(),
+            text: format!("Sensitive context, then outbound connection to {}.", dest),
+        };
+    }
+
+    if let Some(ev) = high_signal {
+        let dest = if ev.destination.is_empty() {
+            "a new destination".to_string()
+        } else {
+            ev.destination.clone()
+        };
+        return Verdict {
+            level: "amber".into(),
+            text: format!(
+                "High-signal activity to {} — review (not linked to sensitive reads).",
+                dest
+            ),
+        };
+    }
+
+    if summary.new_destinations > 0 {
+        let n = summary.new_destinations;
+        let noun = if n == 1 {
+            "1 new external destination".to_string()
+        } else {
+            format!("{} new external destinations", n)
+        };
+        return Verdict {
+            level: "amber".into(),
+            text: format!("{}, not linked to sensitive reads.", noun),
+        };
+    }
+
+    Verdict {
+        level: "green".into(),
+        text: "No sensitive context has left this machine.".into(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -3576,12 +3687,14 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
         active,
         &state.runtime.lock().unwrap(),
     );
+    let verdict = compute_verdict(active, &summary, &recent);
     let status = Status {
         active,
         header: compute_header(&snap, active, &agents),
         event_count: count,
         quiet,
         paused,
+        verdict,
         summary,
         agents,
         recent,
@@ -4375,6 +4488,99 @@ mod tests {
             confidence: "medium".into(),
             score: 0.85,
         }
+    }
+
+    fn ui_with_evidence(id: u64, evidence: LinkedEvidence) -> UiEvent {
+        UiEvent {
+            id,
+            ts: "21:00:00".into(),
+            summary: evidence.title.clone(),
+            tags: vec!["correlated".into()],
+            detail: None,
+            destination: Some(evidence.destination.clone()),
+            destination_context: None,
+            correlated: true,
+            evidence: Some(evidence),
+            agent: None,
+        }
+    }
+
+    #[test]
+    fn verdict_green_when_nothing_concerning() {
+        let summary = SessionSummary::default();
+        let verdict = compute_verdict(true, &summary, &[]);
+        assert_eq!(verdict.level, "green");
+        assert!(verdict.text.contains("No sensitive context"));
+    }
+
+    #[test]
+    fn verdict_red_when_sensitive_read_preceded_egress() {
+        // A high-risk linked card whose reasons include after_sensitive_read AND a
+        // forward-timing within_10s is the strongest signal: sensitive context,
+        // then a freshly opened outbound flow.
+        let mut ev = linked_fixture(
+            "Sensitive read → outbound connection",
+            "evil.example.invalid",
+            "hot",
+        );
+        ev.why = vec!["within_10s".into(), "after_sensitive_read".into()];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
+        assert_eq!(verdict.level, "red");
+        assert!(verdict.text.contains("evil.example.invalid"));
+    }
+
+    #[test]
+    fn verdict_not_red_for_preexisting_flow_after_sensitive_read() {
+        // A flow that was already active when the sensitive read happened carries
+        // existing_connection_active (and no within_10s). The daemon scores this
+        // "low" confidence because the flow predates the access — so the verdict
+        // must NOT call it red. It is high-signal, so it surfaces as amber.
+        let mut ev = linked_fixture(
+            "Sensitive read ↔ pre-existing connection",
+            "preexisting.example",
+            "hot",
+        );
+        ev.why = vec![
+            "existing_connection_active".into(),
+            "after_sensitive_read".into(),
+        ];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
+        assert_eq!(verdict.level, "amber");
+    }
+
+    #[test]
+    fn verdict_amber_for_high_signal_without_sensitive_tie() {
+        // High-risk but NOT after a sensitive read → review, not red.
+        let mut ev = linked_fixture("Tool call → outbound connection", "unseen.example", "hot");
+        ev.why = vec!["within_10s".into(), "first_destination".into()];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
+        assert_eq!(verdict.level, "amber");
+    }
+
+    #[test]
+    fn verdict_amber_for_new_destination_without_link() {
+        let summary = SessionSummary {
+            new_destinations: 2,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[]);
+        assert_eq!(verdict.level, "amber");
+        assert!(verdict.text.contains("2 new external destinations"));
     }
 
     #[test]

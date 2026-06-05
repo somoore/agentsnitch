@@ -172,6 +172,40 @@
     .agent-team-grid.dense {
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     }
+    /* Verdict banner: the always-visible one-line risk posture. Color carries the
+       meaning (green safe / amber review / red sensitive→egress). */
+    .verdict-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 8px 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .verdict-banner .verdict-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .verdict-banner .verdict-text { flex: 1; min-width: 0; }
+    .verdict-banner.green {
+      border-color: rgba(48, 209, 88, 0.5);
+      background: rgba(48, 209, 88, 0.10);
+    }
+    .verdict-banner.green .verdict-dot { background: var(--green); }
+    .verdict-banner.amber {
+      border-color: rgba(255, 159, 10, 0.55);
+      background: rgba(255, 159, 10, 0.12);
+    }
+    .verdict-banner.amber .verdict-dot { background: var(--orange); }
+    .verdict-banner.red {
+      border-color: rgba(255, 69, 58, 0.6);
+      background: rgba(255, 69, 58, 0.14);
+    }
+    .verdict-banner.red .verdict-dot { background: var(--red); }
+    .verdict-banner.red .verdict-text { color: var(--red); }
     .agent-main-list {
       display: grid;
       gap: 5px;
@@ -1706,6 +1740,11 @@
       <div id="meta" class="meta"></div>
     </div>
 
+    <div id="verdictBanner" class="verdict-banner green">
+      <span class="verdict-dot"></span>
+      <span id="verdictText" class="verdict-text">No sensitive context has left this machine.</span>
+    </div>
+
     <div class="tabs" id="tabs">
       <button class="tab active" data-view="attention" onclick="setView('attention')">Attention</button>
       <button class="tab" data-view="linked" onclick="setView('linked')">Linked</button>
@@ -2632,21 +2671,25 @@
       const hooks = counts.hooks;
       const network = Number(summary.observer_coverage || counts.network || 0);
       const linked = Number(summary.linked ?? counts.linked ?? 0);
-      const hookState = hooks > 0
-        ? 'Hooks live'
-        : agentProcesses > 0
-          ? 'Hooks waiting for fresh tool action'
-          : 'Hooks installed';
-      const networkStateText = network > 0 ? 'Network live' : 'Network waiting';
-      const correlationState = linked > 0
-        ? 'Correlation live'
-        : hooks > 0 && network > 0
-          ? 'Correlation waiting'
-          : network > 0 && agentProcesses > 0
-            ? 'Current Claude may predate hooks'
-            : 'Correlation waiting';
-      const mode = st.active ? 'Live' : 'Idle';
-      return `${mode} · ${hookState} · ${networkStateText} · ${correlationState}`;
+      // Present-tense, confident framing: when live and nothing has linked, the
+      // tool is "watching", not "waiting" (which reads as broken). Lead with what
+      // is actively being observed.
+      if (st.active) {
+        const pieces = [];
+        if (agentProcesses > 0) pieces.push(`${agentProcesses} ${pluralize(agentProcesses, 'agent')}`);
+        if (hooks > 0) pieces.push(`${hooks} tool ${pluralize(hooks, 'call')}`);
+        if (network > 0) pieces.push(`${network} ${pluralize(network, 'flow')}`);
+        const watching = pieces.length ? `Watching ${pieces.join(' · ')}` : 'Watching for agent activity';
+        const tail = linked > 0
+          ? `${linked} linked`
+          : (hooks > 0 || network > 0)
+            ? 'no risky link so far'
+            : 'sensors live';
+        return `${watching} · ${tail}`;
+      }
+      const hookState = hooks > 0 ? 'Hooks live' : 'Hooks installed';
+      const networkStateText = network > 0 ? 'Network live' : 'Network ready';
+      return `Idle · ${hookState} · ${networkStateText}`;
     }
 
     function renderSessionNarrative(selected) {
@@ -2654,7 +2697,7 @@
       const counts = sessionCounts();
       if (!events.length && !selected.length) {
         return `<div class="session-narrative">
-          <span><span class="muted">Waiting for the first hook or network observation.</span></span>
+          <span><span class="muted">Watching for the first hook or network observation.</span></span>
           <span class="session-narrative-state">All local</span>
         </div>`;
       }
@@ -2667,11 +2710,11 @@
         ];
         text = `This session has ${pieces.join(', ')}.`;
       } else if (counts.hooks > 0 && counts.network > 0) {
-        text = `Hooks and network are live; no tool/network pair has linked yet.`;
+        text = `Watching hooks and network — no risky tool/network link so far.`;
       } else if (counts.network > 0) {
-        text = `Network observer is live; waiting for a fresh tool action to link agent activity.`;
+        text = `Watching network flows — no agent tool action linked yet.`;
       } else if (counts.hooks > 0) {
-        text = `Hook evidence is live; waiting for a matching network observation.`;
+        text = `Watching hook activity — no matching network flow yet.`;
       } else {
         text = `Recent rows are visible; coverage is still warming up.`;
       }
@@ -2957,7 +3000,7 @@
         const emptyText = activeView === 'attention'
           ? (activeReasonFilter ? `No attention rows for "${activeReasonFilter}".` : 'No attention-needed evidence. Hooks and network coverage will appear in the footer.')
           : activeView === 'linked'
-          ? 'No linked evidence yet. Waiting for a fresh tool action and matching network observation.'
+          ? 'Watching for a tool action and a matching network flow to link — none risky so far.'
           : activeView === 'network'
             ? 'No network events in this view yet.'
             : activeView === 'hooks'
@@ -3668,6 +3711,7 @@
           badgeEl.className = 'badge' + (st.quiet ? ' quiet' : '');
         }
         metaEl.textContent = st.event_count ? (st.event_count + ' ev') : '';
+        applyVerdict(st.verdict);
         renderSessionSummary(st.summary);
         renderAgentTeam(st.agents || []);
         statusEl.textContent = `${coverageStatusLine(st)} · all local`;
@@ -3827,6 +3871,18 @@
       }
       const banner = document.getElementById('pausedBanner');
       if (banner) banner.hidden = !paused;
+    }
+
+    // applyVerdict renders the one-line risk posture banner from the backend
+    // verdict ({level, text}). Defaults to green when absent.
+    function applyVerdict(verdict) {
+      const banner = document.getElementById('verdictBanner');
+      const textEl = document.getElementById('verdictText');
+      if (!banner || !textEl) return;
+      const level = (verdict && verdict.level) || 'green';
+      const text = (verdict && verdict.text) || 'No sensitive context has left this machine.';
+      banner.className = `verdict-banner ${level === 'red' || level === 'amber' ? level : 'green'}`;
+      textEl.textContent = text;
     }
 
     async function doExport() {
