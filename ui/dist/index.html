@@ -415,28 +415,53 @@
       color: var(--text-dim);
       font-size: 10px;
     }
+    /* Subagents stack vertically beneath their main, indented behind a connecting
+       rail so the parent→child relationship is unmistakable (T1). */
     .agent-tree-children {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 5px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin: 4px 0 2px 14px;
+      padding-left: 12px;
+      border-left: 2px solid rgba(191, 90, 242, 0.35);
     }
     .agent-tree-child {
+      position: relative;
       min-width: 0;
       display: grid;
-      grid-template-columns: 7px minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 6px;
       align-items: center;
-      padding: 6px;
-      border: 1px solid rgba(191, 90, 242, 0.3);
+      padding: 6px 8px;
+      border: 1px solid rgba(191, 90, 242, 0.22);
       border-radius: 6px;
       background: #201b25;
       color: var(--text-dim);
       text-align: left;
     }
-    .agent-tree-child.active {
-      border-color: rgba(191, 90, 242, 0.9);
-      background: #271b31;
+    /* Elbow connector from the rail to each child. */
+    .agent-tree-child::before {
+      content: "";
+      position: absolute;
+      left: -12px;
+      top: 50%;
+      width: 10px;
+      height: 2px;
+      background: rgba(191, 90, 242, 0.35);
     }
+    .agent-tree-child:hover {
+      border-color: rgba(191, 90, 242, 0.5);
+      background: #271f2e;
+    }
+    /* Loud active selection (T1): the selected subagent must be obvious, not a
+       subtle border tint. */
+    .agent-tree-child.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+      background: #1e2536;
+      color: var(--text);
+    }
+    .agent-tree-child.active .agent-card-name { color: var(--accent); }
     .agent-detail-layout {
       display: grid;
       grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.25fr);
@@ -606,6 +631,9 @@
       font-size: 9px;
       text-align: center;
       align-self: center;
+      /* Soften count updates so a ticking number reads as live, not jittery (T2).
+         Width is already fixed (min-width), so the digit change doesn't reflow. */
+      transition: background-color 0.25s ease;
     }
     .agent-team-overflow {
       padding: 5px 6px;
@@ -2910,8 +2938,10 @@
         agentMethodLabel(agent),
         count === 1 ? '1 event' : `${count} events`,
       ].filter(Boolean).join(' · ');
-      return `<button class="agent-tree-child${activeClass}" title="${escapeHtml(agentLabel(agent))}" onclick="showAgentDetail('${escapeHtml(agent.id)}')">
-        <span class="agent-dot sub"></span>
+      // Full subagent name/prompt on hover (T3); the visible name stays single-line
+      // and truncates via CSS so long task descriptions don't wrap.
+      const fullName = String(agent.name || agentShortName(agent));
+      return `<button class="agent-tree-child${activeClass}" title="${escapeHtml(fullName)}" onclick="showAgentDetail('${escapeHtml(agent.id)}')">
         <span class="agent-card-body">
           <span class="agent-card-name">${escapeHtml(agentShortName(agent))}</span>
           <span class="agent-card-meta">${escapeHtml(meta)}</span>
