@@ -3619,6 +3619,15 @@
       const decision = evidence.decision || 'observed';
       const category = evidence.destination_category || 'unknown external';
       const severity = evidence.severity || 'low';
+      // T5: the card border/background tracks the reconciled risk, not the raw
+      // mechanism-level severity. A sensitive read followed by known-safe traffic
+      // (Claude API etc.) is "hot" at the mechanism level but reconciled to low
+      // risk — so it must not paint the card red while the subtitle says "risk
+      // low". Reading risk (rather than re-deriving from category) catches both
+      // the category and SNI/flow known-safe paths, mirroring the Rust guards.
+      // (`.hot`/`.medium`/`.low` are the styled classes; risk "high" maps to the
+      // hot styling, every other non-low risk keeps the raw severity.)
+      const cardSeverity = (evidence.risk === 'low') ? 'low' : severity;
       const destination = evidence.destination || '';
       const isExpanded = expandedIds.has(ev.id);
       const groupCount = Number(ev._groupCount || 1);
@@ -3702,7 +3711,7 @@
         </div>
       `;
       return `
-        <div class="event evidence correlated ${escapeHtml(severity)}${compact ? ' compact' : ''}${falsePositive ? ' false-positive' : ''}">
+        <div class="event evidence correlated ${escapeHtml(cardSeverity)}${compact ? ' compact' : ''}${falsePositive ? ' false-positive' : ''}">
           <div class="evidence-head">
             <span class="ts" title="${escapeHtml(ev.ts || '')}">${escapeHtml(displayTimestamp(ev.ts))}</span>
             <div class="evidence-heading">
