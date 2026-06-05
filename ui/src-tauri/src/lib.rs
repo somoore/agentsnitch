@@ -3848,18 +3848,16 @@ fn session_summary(events: &[UiEvent], quieted_patterns: usize) -> SessionSummar
         }
         if let Some(context) = event.destination_context.as_ref() {
             let destination = ui_destination_for_memory(event).unwrap_or_default();
-            match context.state.as_str() {
-                "new_for_project" => {
-                    if !destination.is_empty() {
+            if !destination.is_empty() {
+                match context.state.as_str() {
+                    "new_for_project" => {
                         project_new_destinations.insert(destination);
                     }
-                }
-                "seen_before_project" => {
-                    if !destination.is_empty() {
+                    "seen_before_project" => {
                         project_seen_destinations.insert(destination);
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
