@@ -36,21 +36,21 @@ When an agent is active but nothing has correlated yet, the app shows **0 Linked
 
 ### P0 — Make the active session legible before correlation happens
 
-1. **Lead with a live "what the agent is doing right now" strip.** The header says *"Claude Code active in sir · 40m"* but the body is dominated by empty evidence panels. Add a always-visible **activity ticker**: last N tool calls as human sentences ("Read go.mod", "Bash: curl api.github.com", "Spawned subagent: QA login flow") with live counts. Hooks are flowing constantly — surface them as the heartbeat instead of hiding them behind a tab.
+1. ✅ **Shipped (`track-b-ui`).** **Lead with a live "what the agent is doing right now" strip.** Always-visible **activity ticker**: last N tool calls as human sentences with live counts, surfacing hooks as the heartbeat. *(`#activityTicker` strip above the tabs, rendered at the top of `renderEvents()` so it survives every tab + empty paths.)*
 
-2. **Reframe "waiting" as "watching."** Replace *"no tool/network pair has linked yet / correlation waiting"* with confident, present-tense status: *"Watching 3 agents · 150 tool calls · 7 flows · no risky link so far."* "Waiting" implies broken; "watching, nothing risky yet" implies working-as-intended. (Strings at index.html ~2505, 2581–2589, 2835.)
+2. ✅ **Shipped.** **Reframe "waiting" as "watching."** Confident present-tense status instead of "waiting/correlation waiting."
 
-3. **A persistent one-line verdict banner.** At all times show the session's current risk posture in one sentence with a color: green "No sensitive context has left this machine", amber "1 new external destination, not linked to sensitive reads", red "Sensitive read → outbound flow (api.x:443)". This is the "instantly obvious" headline the product promises.
+3. ✅ **Shipped.** **A persistent one-line verdict banner** (green/amber/red), `compute_verdict`. Verified live (red banner on a real sensitive-read→egress).
 
 ### P0 — Subagent visibility (the differentiator) — make it the star
 
-4. **The Agents tab should default to the populated mental model even with one agent.** Today 3 independent `claude` sessions render as three flat "Main" cards distinguished only by PID. For non-experts, "Main · PID 69566 · direct" is opaque. Show **project/cwd and a human label** ("agentsnitch — main", "sir — main") as the primary identity; PID is secondary/diagnostic. (Data is available: cwd is tracked; `agentShortName`/`agentMethodLabel` exist.)
+4. ✅ **Shipped (`agent-grouping`).** **Agent identity by project/cwd label, not PID** (`agentProjectName`/`agentShortName`).
 
-5. **When subagents exist, make the tree unmissable.** The populated state ("Claude Code (subagents) · 1 active · 1 waiting", `Main (1)` with a named child "Trigger subagent + linked evidence") is genuinely impressive — but it's visually quiet (small chips, same weight as Main). Give the **main→subagent hierarchy real visual hierarchy**: indentation, connecting lines, a distinct subagent accent color, live "active/waiting/done" status dots, and the subagent's task description as a first-class title.
+5. ✅ **Shipped (T1–T3).** **Subagent tree visual hierarchy** — indentation, rail/elbow, loud active selection.
 
-6. **Click target & affordance.** "Click any card to inspect its events" — but the click target is ambiguous (separate "Events"/"View" buttons that are easy to miss; whole-card click is inconsistent). Make the **entire card clickable**, with an obvious hover state, and keep one consistent verb (drop the Events vs View split — see #11).
+6. ✅ **Shipped (`track-b-ui`).** **Whole-card click affordance.** The entire `.agent-tree-group` card inspects the main (`role=button`, hover + keyboard activation), guarded so inner buttons don't double-fire. *(Codex-reviewed: added Enter/Space keyboard activation.)*
 
-7. **Subagent drill-down should tell a story, not just filter events.** The detail panel currently shows filter chips (All/Attention/Linked/Hooks/Network) + a raw event feed. For a subagent, lead with a synthesized summary: "Spawned 6s ago by main(69566) · read 1 file · 1 outbound flow to api.github.com · no sensitive context." Then the feed.
+7. ✅ **Shipped (`track-b-ui`).** **Subagent drill-down leads with a story summary.** `renderAgentDetailView` opens with a synthesized one-liner ("Spawned 8s ago by agentsnitch(69566) · read 1 file · 1 outbound flow to api.github.com · no sensitive context") above the chips + feed.
 
 ### Subagent view — tuning notes (observed fully populated, live)
 
@@ -92,27 +92,23 @@ Tuning for Explain:
 
 ### P1 — Fix confusing cross-cutting behaviors
 
-8. **Agent filter persistence across tabs is a trap.** Drilling into an agent on Agents, then switching to Network, **keeps the filter silently** ("Network 0" + a small "Filtered to Main · claude · PID 69566 · Clear" chip), making Network look empty when it isn't. Either (a) scope the filter to the Agents view only, or (b) make the active filter a loud, global, dismissible banner across every tab so "0" is never mistaken for "nothing happened."
+8. ✅ **Shipped (`#11` filter-persistence fix).** **Agent filter persistence across tabs** — `setView` clears the filter on tab switch + a loud amber active-filter indicator.
 
-9. **The window repositions and resizes itself unexpectedly.** During testing the window jumped to a secondary display (negative X) and auto-resized between actions. Auto-resize-to-content is reasonable, but it should never *move* the window across displays or fight the user's placement. Pin position; only grow/shrink height within the current screen.
+9. ✅ **Shipped (`track-a-rust`).** **The window repositions/resizes itself.** Root-caused to `resize_main_window` pushing size with no position control. Pure tested `solve_window_geometry` pins width, clamps position into the *current* monitor (preserves a deliberate 2nd-display placement), and preserves minimum height by sliding the top edge up. *(Codex-reviewed: fixed a height-collapse case for a window placed low on a small display.)* macOS Spaces-follow (raw NSWindow `collectionBehavior`) noted out of scope.
 
-10. **Counts that change under you.** Tab badges (Hooks 148→151, Network 12→9) tick live, which is good, but combined with auto-resize it makes the UI feel jittery. Debounce layout changes; animate count changes subtly rather than reflowing.
+10. ✅ **Shipped (`track-a-rust`).** **Counts that change under you** — width pinned so live count changes no longer jitter the panel width.
 
 ### P1 — Tab structure & information scent
 
-11. **Six tabs is too many for "instantly obvious"; the split is blurry.** Attention/Linked/Network/All overlap heavily (All = Hooks+Network; Attention = subset of Linked+raw; Network = raw flows). Proposed restructure:
-    - **Overview** (new default): the verdict banner + live activity ticker + agent tree + any attention cards. One screen that answers "what's happening and is it fine?"
-    - **Agents**: the hierarchy + drill-down (promoted).
-    - **Evidence** (merge Linked + Attention): correlated cards, risk-sorted.
-    - **Raw** (merge Hooks + Network + All behind a filter): for when you want the firehose.
+11. ⏸ **Deferred (decision).** **Six tabs → Overview/Agents/Evidence/Raw restructure.** Explicitly deferred — it rewrites routing every other UI item builds on, and its Overview subsumes #1. Kept the 6 tabs (now 7 with Flow Trace) and added items around them instead. Revisit as a standalone effort.
 
-12. **Make "Linked/Evidence" the hero, since it's the product.** When the 5 cards exist, each should read as a mini-story card: *Sensitive read → outbound* with the tool call, the destination, the "why linked" reasons as plain-English pills, risk, and a one-click Explain. (Rendering scaffolding exists: `toggleDetails`/`Explain`, `Raw Why`, `Provenance details`.) Right now the empty state ("No linked evidence yet. Waiting…") is all most users will ever see — invest in both the empty *and* full versions.
+12. ✅ **Shipped (T4/T6 + `track-b-ui`).** **"Linked/Evidence" as the hero** — each card leads with the human one-liner headline; empty states now teach (see #15).
 
 ### P2 — Polish & affordances
 
-13. **Raw expanders are discoverable but terse.** "Raw" on a flow expands a key/value grid (remote/source/state/proto/process/category/SNI/bundle/team/out). Good for forensics; label it "Details" and group human-meaningful fields (destination, process, category) above diagnostic ones (SNI, bundle, team).
-14. **Consistent button language.** Currently: Events, View, Raw, Why, Explain, Hide, Less, Details, Collapse, Expand, Provenance details, Quiet, Quiet known, Clear. Collapse this vocabulary to a small consistent set (Inspect / Explain / Details / Quiet / Clear).
-15. **Empty-tab copy should teach.** "No events in this tab yet" appears a lot. Replace with what *would* show up here and why it matters ("Network flows from this agent's process tree will appear here").
+13. ✅ **Shipped (`track-b-ui`).** **Raw→Details + grouping** — flow expander relabeled "Details"; human fields (destination, process, category) grouped above a "Diagnostics" subheading.
+14. ✅ **Shipped (`track-b-ui`).** **Consistent button language** — collapsed to **Inspect / Explain / Details / Quiet / Clear**. Disclosure toggles keep a single static label (hints in tooltips). Documented exceptions: the `Raw Why ↔ Human` representation toggle, filter-dismiss/Back/Pause controls.
+15. ✅ **Shipped (`track-b-ui`).** **Teaching empty-tab copy** — generic empties replaced with copy that teaches what would appear and why, per tab/lane.
 16. ✅ **Shipped (`evidence-polish`).** **Color semantics.** Establish one risk scale (green/amber/red) used identically everywhere — summary pills, category chips, the verdict banner, card borders — so color always means risk, never decoration. *(The review-status chip's color is now driven by the card's risk tier (red/amber/green) so it can never contradict the card border, which uses the same scale; the chip text still carries the workflow status independently. The "low" card border moved from the purple accent to green to complete the scale. Deliberate exception: the destination **category pill stays neutral** — it names an identity (the category), not a risk level, so tinting it by risk would mislead.)*
 
 ### Known follow-ups
@@ -155,7 +151,10 @@ Tuning for Explain:
 
 ---
 
-## New feature: Live flow-trace view (Sankey)
+## New feature: Live flow-trace view (Sankey) — ✅ SHIPPED (`track-c-sankey`, PR #19)
+
+**Shipped as a 7th "Flow Trace" tab** (the 6 existing tabs untouched; #11 restructure stays deferred). d3-sankey vendored INLINE as `ui/dist/d3-sankey.js` (14.7 KB, layout math only, ISC license preserved — no CDN, no build step; the accepted architecture.md §3.4 deviation). `buildTraceGraph()` derives the Agent→Subagent→Tool/Hook→Destination graph live from `events`; known-safe categories collapse into grey aggregate sinks, and uncollapsed destinations are colored by the #16 risk tier so the **one anomaly pops hot** in a field of grey/neutral. Three view toggles: **Sankey / Node-link / List**, sharing one selection + the existing provenance (click a node/ribbon → the same evidence-card provenance, no new surface). Verified with the adversarial 100-known-safe + 1-anomaly scenario for BOTH correlated and **raw uncorrelated** network flows (Codex-reviewed: raw-flow tier now reuses `attentionReasons`, and the raw-network hop is labeled "Network", not the destination host). The detail below is the original spec.
+
 
 **Goal:** a beautiful live view that maps, in one glance, **hook/tool call → trace → PID (main or named subagent) → destination**, so you can *zoom out* over many agents and have anomalies pop. The driving scenario: 100 subagents running; normal calls to GitHub (your repos) and Anthropic (expected); then **one agent makes an egress to an unexpected IP in CN/RU** — it should jump out immediately, and clicking any part of the trace shows the provenance for *that* part.
 
