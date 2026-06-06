@@ -1961,7 +1961,7 @@
     <div id="agentFilter" class="agent-filter"></div>
 
     <div id="events" class="events">
-      <div class="empty" id="empty">No events yet.<br>Run Claude Code normally after hooks are installed.</div>
+      <div class="empty" id="empty">No events yet. Tool calls and network flows from running Claude Code agents will stream in here once hooks are installed — run Claude Code normally to see them.</div>
     </div>
 
 	    <div class="footer">
@@ -3019,7 +3019,7 @@
     function renderAgentsView() {
       const visible = visibleTeamAgents();
       if (!visible.length) {
-        return '<div class="empty" id="empty">No Claude Code agents detected yet.</div>';
+        return '<div class="empty" id="empty">No Claude Code agents detected yet. Each running session — and any subagents it spawns — appears here as a card you can inspect, with its project, tool calls, and network flows.</div>';
       }
       const groups = agentGroups();
       const subCount = visible.filter(agent => agentType(agent) === 'sub').length;
@@ -3242,11 +3242,12 @@
 
     function agentDetailEmptyText(kind, agent) {
       const name = agentShortName(agent);
-      if (kind === 'attention') return `No attention-needed events attributed to ${name} yet.`;
-      if (kind === 'linked') return `No linked tool/network evidence attributed to ${name} yet.`;
-      if (kind === 'network') return `No network events attributed to ${name} yet.`;
-      if (kind === 'hooks') return `No hook events attributed to ${name} yet.`;
-      return `No events attributed to ${name} yet.`;
+      // Teaching empty copy (P2 #15): scoped to this agent, per tab.
+      if (kind === 'attention') return `Nothing risky from ${name} so far. A new external destination or a sensitive-context read by this agent would flag here.`;
+      if (kind === 'linked') return `No linked evidence from ${name} yet. If a tool call by this agent lines up with an outbound flow, the correlated card shows here.`;
+      if (kind === 'network') return `No network flows from ${name}'s process tree yet. Outbound connections it makes — destination and category — will appear here.`;
+      if (kind === 'hooks') return `No tool calls from ${name} yet. Each Read/Bash/WebFetch/MCP call this agent makes streams in here.`;
+      return `No activity from ${name} yet. Its tool calls and network flows will appear here.`;
     }
 
     function renderAgentDetailEvent(ev, detailKind, agent) {
@@ -3342,15 +3343,19 @@
       const attentionBrief = renderAttentionBrief();
       const narrative = renderSessionNarrative(selected);
       if (!selected.length) {
+        // Teaching empty copy (P2 #15): say what WOULD appear here and why it
+        // matters, not just "nothing yet".
         const emptyText = activeView === 'attention'
-          ? (activeReasonFilter ? `No attention rows for "${activeReasonFilter}".` : 'No attention-needed evidence. Hooks and network coverage will appear in the footer.')
+          ? (activeReasonFilter
+              ? `No attention rows match "${activeReasonFilter}". Anything risky for that reason would surface here.`
+              : 'Nothing needs attention. New external destinations, sensitive-context reads, and large transfers would flag here as they happen.')
           : activeView === 'linked'
-          ? 'Watching for a tool action and a matching network flow to link — none risky so far.'
+          ? 'No linked evidence yet. When a tool action (a file read, a command) lines up with an outbound network flow, the correlated pair appears here as a story card — the product\'s core signal.'
           : activeView === 'network'
-            ? 'No network events in this view yet.'
+            ? 'No network flows observed yet. Outbound connections from the agent\'s process tree — host, destination category, and bytes — will appear here.'
             : activeView === 'hooks'
-              ? 'No hook events yet.'
-              : 'No events yet.';
+              ? 'No hook events yet. Every tool call the agent makes (Read, Bash, WebFetch, MCP…) streams in here as it happens — this is the live heartbeat.'
+              : 'No events yet. Tool calls and network flows from running Claude Code agents will appear here once hooks are installed.';
         container.innerHTML = `${narrative}${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
         scheduleAutoResize();
         return;
@@ -3434,7 +3439,7 @@
             <span>${escapeHtml(laneSummary(ev))}</span>
           </div>
         `).join('');
-        const empty = rows || '<div class="agent-lane-empty">No events in this tab yet</div>';
+        const empty = rows || `<div class="agent-lane-empty">${escapeHtml(laneEmptyText(activeView))}</div>`;
         const activeClass = activeAgentFilter === agent.id ? ' active' : '';
         return `<section class="agent-lane ${escapeHtml(type)}${activeClass}">
           <div class="agent-lane-header">
@@ -3457,6 +3462,15 @@
         ? `<div class="agent-idle-summary">No ${escapeHtml(idleLabel)} for ${idleAgents.length} sub-agents${escapeHtml(idleNames)}</div>`
         : '';
       return `<section class="agent-lanes"><div class="agent-lanes-title">Activity by agent</div>${lanes}${moreSummary}${idleSummary}</section>`;
+    }
+
+    // laneEmptyText (P2 #15): teach what this tab's per-agent lane would show.
+    function laneEmptyText(view) {
+      if (view === 'network') return 'No network flows in this tab yet';
+      if (view === 'hooks') return 'No tool calls in this tab yet';
+      if (view === 'linked') return 'No linked evidence in this tab yet';
+      if (view === 'attention') return 'Nothing needs attention in this tab yet';
+      return 'No activity in this tab yet';
     }
 
     function laneSummary(ev) {
