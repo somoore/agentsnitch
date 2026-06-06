@@ -2027,12 +2027,9 @@
 
     <div class="tabs" id="tabs">
       <button class="tab active" data-view="overview" onclick="setView('overview')">Overview</button>
-      <button class="tab" data-view="attention" onclick="setView('attention')">Attention</button>
-      <button class="tab" data-view="linked" onclick="setView('linked')">Linked</button>
       <button class="tab" data-view="agents" onclick="setView('agents')">Agents</button>
-      <button class="tab" data-view="hooks" onclick="setView('hooks')">Hooks</button>
-      <button class="tab" data-view="network" onclick="setView('network')">Network</button>
-      <button class="tab" data-view="all" onclick="setView('all')">All</button>
+      <button class="tab" data-view="evidence" onclick="setView('evidence')">Evidence</button>
+      <button class="tab" data-view="raw" onclick="setView('raw')">Raw</button>
       <button class="tab" data-view="trace" onclick="setView('trace')">Flow Trace</button>
     </div>
 
@@ -2100,6 +2097,7 @@
     let activeView = 'overview';
     let activeAgentFilter = '';
     let activeAgentDetailKind = 'all';
+    let rawKind = 'all';              // Raw tab sub-filter: 'all' | 'hooks' | 'network'
 	    let activeReasonFilter = '';
 	    let appSettings = { network_sensor_disabled: true };
 	    let draftSettings = null;
@@ -2306,9 +2304,9 @@
       renderEvents();
     }
 
-    function filterAgentEvents(agentId, view = 'hooks') {
+    function filterAgentEvents(agentId, view = 'raw') {
       activeAgentFilter = agentId || '';
-      activeView = view || 'hooks';
+      activeView = view || 'raw';
       activeReasonFilter = '';
       renderEvents();
     }
@@ -2341,7 +2339,10 @@
 
     function filterAttentionReason(reason) {
       activeReasonFilter = String(reason || '');
-      activeView = 'attention';
+      // Attention is merged into Evidence; the reason chips live there now, so
+      // keep the user on the Evidence tab (the resolver honors activeReasonFilter
+      // on the attention subset).
+      activeView = 'evidence';
       renderEvents();
     }
 
@@ -2384,10 +2385,15 @@
         if (kind === 'network') acc.network += 1;
         else acc[kind] += 1;
         if (includeAttributedNetwork && isAttributedNetworkEvent(ev)) acc.network += 1;
-        if (attentionReasons(ev).length > 0) acc.attention += 1;
+        const isAttention = attentionReasons(ev).length > 0;
+        if (isAttention) acc.attention += 1;
+        // evidence is the DEDUPED union of linked and attention — an event that is
+        // both correlated and attention-worthy counts once, matching the Evidence
+        // feed. (linked + attention would double-count the overlap.)
+        if (kind === 'linked' || isAttention) acc.evidence += 1;
         acc.all += 1;
         return acc;
-      }, { attention: 0, linked: 0, hooks: 0, network: 0, all: 0, agents: 0 });
+      }, { attention: 0, linked: 0, hooks: 0, network: 0, all: 0, agents: 0, evidence: 0 });
     }
 
     function filterEventsByKind(source, kind, reason = '', includeAttributedNetwork = false) {
@@ -2404,9 +2410,47 @@
       return source.filter(ev => eventKind(ev) === kind);
     }
 
+    // resolveViewEvents centralizes view→events so the two composite views
+    // (Evidence, Raw) resolve identically everywhere — the feed, the autosize
+    // path, counts, and the agent-detail chips. filterEventsByKind only knows the
+    // five internal kinds (attention|linked|hooks|network|all); 'evidence' and
+    // 'raw' are composite activeView values that would otherwise fall through to
+    // an empty list. Keeping the resolution in one place is what prevents a view
+    // from rendering correctly but sizing the window for zero events.
+    //   evidence = dedup(linked ∪ attention), honoring activeReasonFilter on the
+    //             attention subset (the reason chips live under Evidence now).
+    //   raw      = filterEventsByKind(scoped, rawKind) — the {All/Hooks/Network}
+    //             sub-toggle.
+    function resolveViewEvents(scoped, view, reason = '') {
+      if (view === 'evidence') {
+        const linked = filterEventsByKind(scoped, 'linked');
+        const attention = filterEventsByKind(scoped, 'attention');
+        const seen = new Set();
+        let merged = [];
+        for (const ev of [...linked, ...attention]) {
+          const id = ev?.id;
+          if (id != null) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+          }
+          merged.push(ev);
+        }
+        // A reason filter (from the attention-reason chips) narrows the WHOLE
+        // union, not just the attention subset — otherwise linked-but-safe cards
+        // leak through and the rendered count disagrees with the chip's badge
+        // (which counts only events carrying that reason).
+        if (reason) merged = merged.filter(ev => attentionReasons(ev).includes(reason));
+        return merged;
+      }
+      if (view === 'raw') {
+        return filterEventsByKind(scoped, rawKind, '', false);
+      }
+      return filterEventsByKind(scoped, view, reason);
+    }
+
     function viewEvents() {
       const scoped = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
-      return filterEventsByKind(scoped, activeView, activeReasonFilter);
+      return resolveViewEvents(scoped, activeView, activeReasonFilter);
     }
 
     function eventCountForAgent(agentId, source = events) {
@@ -2820,11 +2864,19 @@
         .map(item => item._networkGroup && Number(item._groupCount || 0) === 1 ? events.find(ev => ev.id === item.id) || item : item);
     }
 
-    function displayEvents(selected) {
-      const sorted = [...selected].sort((a, b) => b.id - a.id);
-      if (activeView === 'attention') return groupAttentionNetworkEvents(sorted);
-      if (activeView !== 'linked' && activeView !== 'all') return sorted;
+    // Risk-tier rank for the Evidence sort: hot first, low last. Reuses
+    // traceFlowTier so the ordering can't drift from the card color.
+    function evidenceTierRank(ev) {
+      const tier = traceFlowTier(ev);
+      return tier === 'hot' ? 0 : tier === 'medium' ? 1 : 2;
+    }
 
+    // collapseKnownAndDuplicate groups low-risk known-safe correlated rows into a
+    // grey category summary (the zoom-out) and dedups identical findings. Shared
+    // by the Raw feed and the Evidence feed so known-safe correlations never
+    // flood either view as individual cards. Input must already be in the desired
+    // top-level order; grouping preserves first-occurrence order.
+    function collapseKnownAndDuplicate(sorted) {
       const knownGroups = new Map();
       const groups = new Map();
       const rendered = [];
@@ -2875,6 +2927,31 @@
       return rendered;
     }
 
+    function displayEvents(selected) {
+      const sorted = [...selected].sort((a, b) => b.id - a.id);
+      // Evidence ordering (locked: risk tier descending, recency within tier)
+      // applies both to the top-level Evidence tab AND to the Evidence chip in
+      // the agent-detail drill-down (activeView is 'agents' there), since the
+      // drill-down chips now mirror the nav and make the same ordering promise.
+      // The recency sort above is the within-tier tiebreaker; a STABLE sort by
+      // tier rank preserves it. Evidence inherits BOTH the raw-network grouping
+      // (groupAttentionNetworkEvents) AND the known-safe/duplicate collapse that
+      // the old Linked/All path used, so low-risk known-safe correlations stay in
+      // the grey category summary instead of flooding the view as single cards.
+      if (activeView === 'evidence' || (activeView === 'agents' && activeAgentDetailKind === 'evidence')) {
+        const tiered = [...sorted].sort((a, b) => evidenceTierRank(a) - evidenceTierRank(b));
+        return collapseKnownAndDuplicate(groupAttentionNetworkEvents(tiered));
+      }
+      // Everything else — the Raw firehose, the agent-detail All/Raw drill-down
+      // (activeView 'agents') — renders plain recency order with NO collapsing.
+      // Raw is the complete audit stream: collapsing it would hide individual
+      // events behind Evidence-style grouping while its badge/sub-toggle counts
+      // still report the uncollapsed total. Evidence is the only curated view;
+      // Raw is the faithful record. (collapseKnownAndDuplicate is now Evidence-
+      // only — that contrast is the whole reason the two tabs are separate.)
+      return sorted;
+    }
+
     function countsByKind() {
       const source = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
       const counts = countsForEvents(source);
@@ -2899,7 +2976,14 @@
           tab.textContent = `Flow Trace ${traceFlowCount()}`;
           return;
         }
-        const label = view === 'attention' ? 'Attention' : view === 'linked' ? 'Linked' : view === 'agents' ? 'Agents' : view === 'hooks' ? 'Hooks' : view === 'network' ? 'Network' : 'All';
+        if (view === 'raw') {
+          // Raw's badge tracks the active sub-filter (All/Hooks/Network), so it
+          // matches the count shown on the sub-toggle and in the feed.
+          tab.textContent = `Raw ${counts[rawKind] || 0}`;
+          return;
+        }
+        // Evidence shows the deduped union count; Agents shows the team size.
+        const label = view === 'evidence' ? 'Evidence' : 'Agents';
         tab.textContent = `${label} ${counts[view] || 0}`;
       });
     }
@@ -3300,7 +3384,16 @@
     function renderAgentDetailView() {
       const agent = findAgent(activeAgentFilter) || { id: activeAgentFilter, name: activeAgentFilter, type: 'main' };
       const scoped = events.filter(ev => eventMatchesAgentScope(ev, activeAgentFilter));
-      const selected = filterEventsByKind(scoped, activeAgentDetailKind, '', true);
+      // The drill-down chips mirror the top-level tabs (All / Evidence / Raw)
+      // per the user's decision. resolveViewEvents understands the composite
+      // 'evidence' (deduped) and 'raw' (= all events for this agent) kinds; for
+      // 'all' it passes through. Raw in the drill-down means "all events for this
+      // agent" — no nested sub-toggle — so it resolves to the agent's full set.
+      const selected = activeAgentDetailKind === 'raw'
+        ? filterEventsByKind(scoped, 'all', '', true)
+        : activeAgentDetailKind === 'evidence'
+          ? resolveViewEvents(scoped, 'evidence', '')
+          : filterEventsByKind(scoped, 'all', '', true);
       const counts = countsForEvents(scoped, true);
       const type = agentType(agent) === 'sub' ? 'Sub-agent' : 'Main agent';
       const pid = agentPid(agent);
@@ -3314,10 +3407,12 @@
         parentLabel,
         counts.all === 1 ? '1 scoped event' : `${counts.all} scoped events`,
       ].filter(Boolean).join(' · ');
-      const filters = ['all', 'attention', 'linked', 'hooks', 'network'].map(kind => {
-        const label = kind === 'all' ? 'All' : kind[0].toUpperCase() + kind.slice(1);
+      // Drill-down chips mirror the top-level nav: All / Evidence / Raw. Raw here
+      // = the agent's full event set (counts.all); Evidence = the deduped union.
+      const filters = [['all', 'All'], ['evidence', 'Evidence'], ['raw', 'Raw']].map(([kind, label]) => {
+        const count = kind === 'raw' ? counts.all : (counts[kind] || 0);
         const active = activeAgentDetailKind === kind ? ' active' : '';
-        return `<button class="agent-detail-chip${active}" onclick="setAgentDetailKind('${kind}')"><span>${label}</span><strong>${counts[kind] || 0}</strong></button>`;
+        return `<button class="agent-detail-chip${active}" onclick="setAgentDetailKind('${kind}')"><span>${label}</span><strong>${count}</strong></button>`;
       }).join('');
       const emptyText = agentDetailEmptyText(activeAgentDetailKind, agent);
       // Lead with a synthesized human story (P0 #7), computed from the agent's
@@ -3342,16 +3437,16 @@
 
     function agentDetailEmptyText(kind, agent) {
       const name = agentShortName(agent);
-      // Teaching empty copy (P2 #15): scoped to this agent, per tab.
-      if (kind === 'attention') return `Nothing risky from ${name} so far. A new external destination or a sensitive-context read by this agent would flag here.`;
-      if (kind === 'linked') return `No linked evidence from ${name} yet. If a tool call by this agent lines up with an outbound flow, the correlated card shows here.`;
-      if (kind === 'network') return `No network flows from ${name}'s process tree yet. Outbound connections it makes — destination and category — will appear here.`;
-      if (kind === 'hooks') return `No tool calls from ${name} yet. Each Read/Bash/WebFetch/MCP call this agent makes streams in here.`;
+      // Teaching empty copy (P2 #15): scoped to this agent, per drill-down chip.
+      if (kind === 'evidence') return `Nothing needs a look from ${name} yet. A correlated tool↔flow pair, a new external destination, or a sensitive-context read by this agent would surface here.`;
       return `No activity from ${name} yet. Its tool calls and network flows will appear here.`;
     }
 
     function renderAgentDetailEvent(ev, detailKind, agent) {
-      if (detailKind === 'network' && isAttributedNetworkEvent(ev) && eventKind(ev) !== 'network') {
+      // In the Raw drill-down (all of this agent's events), an attributed network
+      // flow gets the dedicated network-provenance card rather than the generic
+      // linked card, so its host/category/bytes read at a glance.
+      if (detailKind === 'raw' && isAttributedNetworkEvent(ev) && eventKind(ev) !== 'network') {
         return renderAttributedNetworkEvent(ev, agent);
       }
       return renderEvent(ev);
@@ -3818,29 +3913,54 @@
       const agentContext = renderAgentContextCard();
       const contextGrid = renderAgentContextGrid(agentContext, lanes);
       const attentionBrief = renderAttentionBrief();
+      const rawToolbar = activeView === 'raw' ? renderRawToolbar() : '';
       const narrative = renderSessionNarrative(selected);
       if (!selected.length) {
         // Teaching empty copy (P2 #15): say what WOULD appear here and why it
         // matters, not just "nothing yet".
-        const emptyText = activeView === 'attention'
-          ? (activeReasonFilter
-              ? `No attention rows match "${activeReasonFilter}". Anything risky for that reason would surface here.`
-              : 'Nothing needs attention. New external destinations, sensitive-context reads, and large transfers would flag here as they happen.')
-          : activeView === 'linked'
-          ? 'No linked evidence yet. When a tool action (a file read, a command) lines up with an outbound network flow, the correlated pair appears here as a story card — the product\'s core signal.'
-          : activeView === 'network'
-            ? 'No network flows observed yet. Outbound connections from the agent\'s process tree — host, destination category, and bytes — will appear here.'
-            : activeView === 'hooks'
-              ? 'No hook events yet. Every tool call the agent makes (Read, Bash, WebFetch, MCP…) streams in here as it happens — this is the live heartbeat.'
-              : 'No events yet. Tool calls and network flows from running Claude Code agents will appear here once hooks are installed.';
-        container.innerHTML = `${narrative}${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
+        const emptyText = viewEmptyText();
+        container.innerHTML = `${rawToolbar}${narrative}${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
         scheduleAutoResize();
         return;
       }
 
       const feedTitle = contextGrid ? '<div class="feed-title">Chronological Feed</div>' : '';
-      container.innerHTML = `${narrative}${attentionBrief}${contextGrid}${feedTitle}${displayEvents(selected).map(renderEvent).join('')}`;
+      container.innerHTML = `${rawToolbar}${narrative}${attentionBrief}${contextGrid}${feedTitle}${displayEvents(selected).map(renderEvent).join('')}`;
       scheduleAutoResize();
+    }
+
+    // viewEmptyText (P2 #15): teach what WOULD appear in this view and why it
+    // matters. Evidence = the dedup(linked ∪ attention) story view; Raw = the
+    // unfiltered firehose with a sub-toggle.
+    function viewEmptyText() {
+      if (activeView === 'evidence') {
+        return activeReasonFilter
+          ? `No evidence rows match "${activeReasonFilter}". Anything risky for that reason — a correlated pair or a flagged read/flow — would surface here.`
+          : 'No evidence yet. This is the product\'s core signal: correlated tool↔network pairs and anything that needs a look (new external destinations, sensitive-context reads, large transfers) — deduped into one story view.';
+      }
+      if (activeView === 'raw') {
+        if (rawKind === 'hooks') return 'No hook events yet. Every tool call the agent makes (Read, Bash, WebFetch, MCP…) streams in here as it happens — the live heartbeat.';
+        if (rawKind === 'network') return 'No network flows observed yet. Outbound connections from the agent\'s process tree — host, destination category, and bytes — will appear here.';
+        return 'No events yet. Every tool call and network flow from running Claude Code agents streams in here once hooks are installed — the unfiltered firehose.';
+      }
+      return 'No events yet. Tool calls and network flows from running Claude Code agents will appear here once hooks are installed.';
+    }
+
+    // renderRawToolbar: the {All/Hooks/Network} sub-filter for the Raw tab,
+    // reusing the Flow-Trace mode-toggle visual pattern.
+    function renderRawToolbar() {
+      const scoped = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
+      const counts = countsForEvents(scoped);
+      const modes = [['all', 'All', counts.all], ['hooks', 'Hooks', counts.hooks], ['network', 'Network', counts.network]];
+      const buttons = modes.map(([m, label, n]) =>
+        `<button class="trace-mode-btn${rawKind === m ? ' active' : ''}" onclick="setRawKind('${m}')">${label} ${n || 0}</button>`
+      ).join('');
+      return `<div class="trace-toolbar"><div class="trace-modes">${buttons}</div><span class="trace-hint">Unfiltered stream — every tool call and network flow as it happens.</span></div>`;
+    }
+
+    function setRawKind(kind) {
+      rawKind = kind || 'all';
+      renderEvents();
     }
 
     function attentionBaseEvents() {
@@ -3849,7 +3969,8 @@
     }
 
     function renderAttentionBrief() {
-      if (activeView !== 'attention') return '';
+      // The attention-reason chips now live under Evidence (Attention is merged in).
+      if (activeView !== 'evidence') return '';
       const base = attentionBaseEvents();
       if (!base.length) return '';
       const reasonCounts = new Map();
@@ -3887,7 +4008,8 @@
     }
 
     function renderAgentLanes(selected) {
-      if (activeView === 'linked') return '';
+      // Evidence shows story cards (linked + attention), not per-agent lanes.
+      if (activeView === 'linked' || activeView === 'evidence') return '';
       if (activeAgentFilter) return '';
       const visible = visibleTeamAgents();
       if (visible.length <= 1) return '';
@@ -3930,7 +4052,7 @@
         </section>`;
       }).filter(Boolean).join('');
       if (!lanes) return '';
-      const idleLabel = activeView === 'all' ? 'visible rows' : `${activeView} rows`;
+      const idleLabel = (activeView === 'all' || activeView === 'raw') ? 'visible rows' : `${activeView} rows`;
       const moreSummary = moreActive.length
         ? `<div class="agent-more-summary">+${moreActive.length} active agents with ${escapeHtml(idleLabel)}: ${escapeHtml(moreActive.slice(0, 8).map(agentShortName).join(', '))}${moreActive.length > 8 ? '...' : ''}</div>`
         : '';
@@ -4923,7 +5045,7 @@
         }
       });
 
-	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setView, refresh: refreshFromBackend, invoke };
+	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setRawKind, setView, refresh: refreshFromBackend, invoke };
       console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
     }
 
