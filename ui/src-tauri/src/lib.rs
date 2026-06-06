@@ -3906,12 +3906,19 @@ fn solve_window_geometry(
     // dragged off / pushed onto a secondary display).
     let max_x = frame_x + frame_w - width;
     let x = pos_x.clamp(frame_x, max_x.max(frame_x));
-    let max_y = frame_y + frame_h; // upper bound before height is known
-    let y = pos_y.clamp(frame_y, max_y.max(frame_y) - 1);
 
-    // Height: requested, but never taller than what fits below the (clamped) top.
-    let available_h = (frame_y + frame_h - y).max(1);
-    let height = requested_h.clamp(1, available_h);
+    // Height: keep the requested height, capped only by the monitor's own visible
+    // height (never taller than the screen). The window can be at most this tall.
+    let height = requested_h.clamp(1, frame_h);
+
+    // Now place the top edge. Prefer the window's current top, but if the
+    // requested height wouldn't fit below it, move the top edge UP so the full
+    // height is preserved — rather than collapsing the window to whatever sliver
+    // happens to sit below a low starting position (the bug Codex caught: a
+    // window placed low on a small display would otherwise shrink to a few px on
+    // the next auto-resize instead of sliding up to keep its minimum height).
+    let lowest_top = frame_y + frame_h - height; // top that still fits `height`
+    let y = pos_y.clamp(frame_y, lowest_top.max(frame_y));
 
     (width as u32, height as u32, x, y)
 }
@@ -6513,12 +6520,28 @@ mod tests {
 
     #[test]
     fn solve_window_geometry_caps_height_to_fit_below_top() {
-        // A short monitor: a tall requested height must be clamped so the bottom
-        // edge stays inside the visible frame (the cross-display relocation
-        // trigger we are avoiding).
+        // A short monitor: a requested height taller than the screen is capped to
+        // the visible frame height, and the bottom edge stays inside the frame.
         let (_w, h, _x, y) = solve_window_geometry(0, 600, 700, 900, 0, 0, 1280, 800, 12);
-        // Frame bottom = 0 + (800 - 12) = 788; top y clamped to <= 787.
+        // Visible frame: top=12, height=800-2*12=776, bottom=12+776=788.
+        assert!(h as i32 <= 776, "height capped to the visible frame: h={h}");
         assert!(y + (h as i32) <= 788, "window bottom must fit: y={y} h={h}");
+    }
+
+    #[test]
+    fn solve_window_geometry_slides_up_to_preserve_height() {
+        // Codex P2: a window placed LOW on a small display must keep its requested
+        // height by sliding the top edge UP, not collapse to whatever sliver sits
+        // below the low starting position.
+        // Monitor 1280x800; window dragged to y=700 (near the bottom); request 500.
+        let (_w, h, _x, y) = solve_window_geometry(0, 700, 700, 500, 0, 0, 1280, 800, 12);
+        assert_eq!(h, 500, "requested height must be preserved, not collapsed");
+        // Frame bottom = 12 + (800 - 24) = 788; top must move up so 500 fits.
+        assert!(
+            y + (h as i32) <= 788,
+            "bottom still inside the frame: y={y} h={h}"
+        );
+        assert!(y < 700, "top edge slid up from the low starting y: y={y}");
     }
 
     #[test]
