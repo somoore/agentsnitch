@@ -1375,13 +1375,7 @@ fn evidence_severity(
     // risk. The escalation below still fires for sensitive reads to *unknown*
     // destinations, preserving the timing/exfil safety net.
     if flow.map(known_safe_destination).unwrap_or(false)
-        || matches!(
-            destination_category,
-            "known Claude service"
-                | "Playwright bridge traffic"
-                | "telemetry/logging"
-                | "package registry"
-        )
+        || known_safe_category(destination_category)
     {
         return "low";
     }
@@ -5397,6 +5391,20 @@ mod tests {
                 ),
                 "low",
                 "sensitive read → {cat} (loopback) must reconcile to low, not red"
+            );
+            // Severity must ALSO be low (not "hot") — otherwise highSignalEvidence /
+            // compute_verdict / linked_event_breaks_quiet would still treat the card
+            // as high-signal despite the low risk. evidence_severity routes through
+            // the same known_safe_category helper, so the two can't drift.
+            assert_eq!(
+                evidence_severity(
+                    None,
+                    &["after_sensitive_read".into(), "within_10s".into()],
+                    None,
+                    cat,
+                ),
+                "low",
+                "sensitive read → {cat} (loopback) severity must be low, not hot"
             );
             // And the review status must not be "Needs Review" for loopback.
             let status = evidence_review_status(
