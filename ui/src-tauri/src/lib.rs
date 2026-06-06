@@ -419,12 +419,30 @@ fn compute_verdict(active: bool, summary: &SessionSummary, recent: &[UiEvent]) -
         } else {
             ev.destination.clone()
         };
-        return Verdict {
-            level: "amber".into(),
-            text: format!(
+        // F1: the high_signal card MAY itself carry a sensitive-read link — this
+        // is the pre-existing-connection case (after_sensitive_read +
+        // existing_connection_active, no within_10s), which is correctly amber
+        // (not red, because the flow predates the read) but IS linked. Claiming
+        // "not linked to sensitive reads" there is a flat-out lie. Only say that
+        // when the card genuinely carries no sensitive link.
+        let linked_to_sensitive = ev
+            .why
+            .iter()
+            .any(|r| r == "after_sensitive_read" || r == "credential_context");
+        let text = if linked_to_sensitive {
+            format!(
+                "High-signal activity to {} after a sensitive read — review (connection predates the read).",
+                dest
+            )
+        } else {
+            format!(
                 "High-signal activity to {} — review (not linked to sensitive reads).",
                 dest
-            ),
+            )
+        };
+        return Verdict {
+            level: "amber".into(),
+            text,
         };
     }
 
@@ -4613,6 +4631,15 @@ mod tests {
         };
         let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
         assert_eq!(verdict.level, "amber");
+        // F1: this card IS linked to a sensitive read, so the banner must not
+        // claim otherwise. It should acknowledge the link and that the
+        // connection predates the read.
+        assert!(
+            !verdict.text.contains("not linked to sensitive reads"),
+            "pre-existing-connection card is linked to a sensitive read; banner must not deny it: {}",
+            verdict.text
+        );
+        assert!(verdict.text.contains("predates the read"));
     }
 
     #[test]
@@ -4627,6 +4654,14 @@ mod tests {
         };
         let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
         assert_eq!(verdict.level, "amber");
+        // F1 regression guard: a genuinely non-sensitive high-signal card MUST
+        // still say "not linked to sensitive reads" — the fix must not delete the
+        // phrase everywhere, only where it would be false.
+        assert!(
+            verdict.text.contains("not linked to sensitive reads"),
+            "non-sensitive high-signal card should still state it is not linked: {}",
+            verdict.text
+        );
     }
 
     #[test]
