@@ -2942,12 +2942,14 @@
         const tiered = [...sorted].sort((a, b) => evidenceTierRank(a) - evidenceTierRank(b));
         return collapseKnownAndDuplicate(groupAttentionNetworkEvents(tiered));
       }
-      // Only the Raw feed falls through to the known-group collapsing below
-      // (for raw:hooks it's a harmless no-op — no network rows to collapse).
-      // Every other caller (the agent-detail drill-down, where activeView is
-      // 'agents') gets the plain recency sort.
-      if (activeView !== 'raw') return sorted;
-      return collapseKnownAndDuplicate(sorted);
+      // Everything else — the Raw firehose, the agent-detail All/Raw drill-down
+      // (activeView 'agents') — renders plain recency order with NO collapsing.
+      // Raw is the complete audit stream: collapsing it would hide individual
+      // events behind Evidence-style grouping while its badge/sub-toggle counts
+      // still report the uncollapsed total. Evidence is the only curated view;
+      // Raw is the faithful record. (collapseKnownAndDuplicate is now Evidence-
+      // only — that contrast is the whole reason the two tabs are separate.)
+      return sorted;
     }
 
     function countsByKind() {
