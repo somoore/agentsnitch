@@ -378,7 +378,14 @@ fn compute_verdict(active: bool, summary: &SessionSummary, recent: &[UiEvent]) -
         let Some(ev) = ui.evidence.as_ref() else {
             continue;
         };
-        let is_high = ev.severity == "hot" || ev.risk == "high";
+        // Trust the reconciled risk: evidence_risk already folds in both the
+        // destination-category and SNI/flow known-safe paths, so a risk of "low"
+        // means "reconciled safe" regardless of raw severity (T5). Traffic to
+        // Claude's API after a sensitive read is "hot" at the mechanism level but
+        // reconciled to low risk, so it must not drive the verdict red or
+        // amber-high-signal. Re-deriving from category here would miss the
+        // SNI/flow path; reading risk catches both.
+        let is_high = ev.risk != "low" && (ev.severity == "hot" || ev.risk == "high");
         let has_reason = |name: &str| ev.why.iter().any(|r| r == name);
         let after_sensitive =
             has_reason("after_sensitive_read") || has_reason("credential_context");
@@ -1168,6 +1175,7 @@ fn linked_evidence(
         title = "Claude service traffic while agent active".into();
     }
     let risk = evidence_risk(semantic, reasons, flow, &destination_category);
+    let severity = evidence_severity(semantic, reasons, flow, &destination_category);
     let review_status =
         evidence_review_status(semantic, reasons, flow, &destination_category, &risk);
     let review_subtitle = evidence_review_subtitle(reasons, confidence);
@@ -1185,7 +1193,7 @@ fn linked_evidence(
         destination,
         destination_provenance: destination_provenance(semantic, flow, &destination_category),
         destination_category,
-        severity: evidence_severity(semantic, reasons).into(),
+        severity: severity.into(),
         risk,
         review_status,
         review_subtitle,
@@ -1324,8 +1332,32 @@ fn sensitive_target_label(ev: &SemanticEvent) -> Option<String> {
     )
 }
 
-fn evidence_severity(semantic: Option<&SemanticEvent>, reasons: &[String]) -> &'static str {
+fn evidence_severity(
+    semantic: Option<&SemanticEvent>,
+    reasons: &[String],
+    flow: Option<&NetworkFlowEvent>,
+    destination_category: &str,
+) -> &'static str {
     let tags = semantic.and_then(|ev| ev.tags.clone()).unwrap_or_default();
+    // Known-safe destinations are reconciled FIRST, mirroring evidence_risk (T5).
+    // A sensitive read followed by traffic to Claude's own API (or a package
+    // registry, telemetry endpoint, Playwright bridge) is ordinary tool
+    // operation, so it must not be marked "hot" — otherwise compute_verdict
+    // would still drive the session banner red and linked_event_breaks_quiet
+    // would still break quiet mode, contradicting the card's reconciled low
+    // risk. The escalation below still fires for sensitive reads to *unknown*
+    // destinations, preserving the timing/exfil safety net.
+    if flow.map(known_safe_destination).unwrap_or(false)
+        || matches!(
+            destination_category,
+            "known Claude service"
+                | "Playwright bridge traffic"
+                | "telemetry/logging"
+                | "package registry"
+        )
+    {
+        return "low";
+    }
     if tags
         .iter()
         .any(|tag| tag == "sensitive_read" || tag.contains("credential"))
@@ -1343,6 +1375,23 @@ fn evidence_severity(semantic: Option<&SemanticEvent>, reasons: &[String]) -> &'
     "low"
 }
 
+/// A destination category that is ordinary, expected agent traffic — Claude's
+/// own API, a package registry, a telemetry endpoint, or the Playwright bridge.
+/// Traffic to these is normal tool operation even right after a sensitive read,
+/// so it must not drive a card to full-red high risk, nor escalate the session
+/// verdict to red, nor break quiet mode (T5). This is the single source of truth
+/// for that judgement; `evidence_risk`, `compute_verdict`, and
+/// `linked_event_breaks_quiet` all consult it so the three signals can't drift.
+fn known_safe_category(destination_category: &str) -> bool {
+    matches!(
+        destination_category,
+        "known Claude service"
+            | "Playwright bridge traffic"
+            | "telemetry/logging"
+            | "package registry"
+    )
+}
+
 fn evidence_risk(
     semantic: Option<&SemanticEvent>,
     reasons: &[String],
@@ -1350,6 +1399,17 @@ fn evidence_risk(
     destination_category: &str,
 ) -> String {
     let tags = semantic.and_then(|ev| ev.tags.clone()).unwrap_or_default();
+    // Known-safe destinations are reconciled FIRST, before the sensitive-read
+    // escalation. A file read followed by traffic to Claude's own API (or a
+    // package registry, telemetry endpoint, Playwright bridge) is ordinary tool
+    // operation and must not read as full-red high (T5). The escalation below
+    // still fires for sensitive reads to *unknown* destinations — the
+    // timing/exfil case that compute_verdict keeps surfacing as amber.
+    if flow.map(known_safe_destination).unwrap_or(false)
+        || known_safe_category(destination_category)
+    {
+        return "low".into();
+    }
     if tags
         .iter()
         .any(|tag| tag == "sensitive_read" || tag.contains("credential"))
@@ -1358,17 +1418,6 @@ fn evidence_risk(
             .any(|reason| reason == "after_sensitive_read")
     {
         return "high".into();
-    }
-    if flow.map(known_safe_destination).unwrap_or(false)
-        || matches!(
-            destination_category,
-            "known Claude service"
-                | "Playwright bridge traffic"
-                | "telemetry/logging"
-                | "package registry"
-        )
-    {
-        return "low".into();
     }
     if reasons.iter().any(|reason| reason == "high_bytes") {
         if semantic
@@ -2685,6 +2734,14 @@ fn linked_event_breaks_quiet(ui: &UiEvent) -> bool {
     let Some(evidence) = &ui.evidence else {
         return false;
     };
+    // Trust the reconciled risk (T5): evidence_risk reports "low" for known-safe
+    // destinations via both the category and SNI/flow paths. Such a card is
+    // hot/high-confidence at the mechanism level but is not a reason to
+    // re-surface a quieted session. The exfil case — sensitive read to an
+    // unknown destination — reconciles to risk "high" and still breaks quiet.
+    if evidence.risk == "low" {
+        return false;
+    }
     evidence.severity == "hot" || evidence.risk == "high" || evidence.confidence == "high"
 }
 
@@ -5108,6 +5165,103 @@ mod tests {
     }
 
     #[test]
+    fn evidence_risk_reconciles_sensitive_read_with_destination_category() {
+        // T5: a sensitive read followed by traffic to a KNOWN-SAFE destination
+        // (Claude's own API, package registry, telemetry, Playwright bridge) is
+        // ordinary tool operation and must NOT read as full-red high. The
+        // known-safe reconciliation is applied before the after_sensitive_read
+        // escalation, so this resolves to "low".
+        assert_eq!(
+            evidence_risk(
+                None,
+                &["after_sensitive_read".into(), "within_10s".into()],
+                None,
+                "known Claude service",
+            ),
+            "low",
+            "sensitive read → known Claude service should reconcile to low, not full-red high"
+        );
+
+        // Regression guard (the green→amber-preserving invariant): the SAME
+        // sensitive-read escalation must still fire for an UNKNOWN destination.
+        // This is the timing/exfil case the verdict banner keeps surfacing as
+        // amber — the category fix must not bleed into it and silence the safety
+        // net (it also feeds linked_event_breaks_quiet).
+        assert_eq!(
+            evidence_risk(
+                None,
+                &[
+                    "after_sensitive_read".into(),
+                    "existing_connection_active".into(),
+                ],
+                None,
+                "unknown external",
+            ),
+            "high",
+            "sensitive read → unknown external must stay high so it surfaces for review"
+        );
+    }
+
+    #[test]
+    fn evidence_severity_reconciles_sensitive_read_with_known_safe_destination() {
+        // T5 completeness: evidence_risk reconciled the card to "low" for a
+        // sensitive read followed by a KNOWN-SAFE destination, but severity was
+        // left "hot". A hot card still drives compute_verdict to red and breaks
+        // quiet mode via linked_event_breaks_quiet, contradicting the reconciled
+        // risk. Severity must mirror the same known-safe reconciliation.
+        assert_eq!(
+            evidence_severity(
+                None,
+                &["after_sensitive_read".into(), "within_10s".into()],
+                None,
+                "known Claude service",
+            ),
+            "low",
+            "sensitive read → known Claude service should reconcile to low, not hot"
+        );
+
+        // Defended invariant (the safety net): an UNKNOWN destination after a
+        // sensitive read must still be "hot" so it keeps surfacing as amber and
+        // breaking quiet. The known-safe reconciliation must not bleed into it.
+        assert_eq!(
+            evidence_severity(
+                None,
+                &[
+                    "after_sensitive_read".into(),
+                    "existing_connection_active".into(),
+                ],
+                None,
+                "unknown external",
+            ),
+            "hot",
+            "sensitive read → unknown external must stay hot so it surfaces for review"
+        );
+    }
+
+    #[test]
+    fn verdict_not_red_for_known_safe_destination_after_sensitive_read() {
+        // T5 completeness end-to-end: a sensitive read followed by within_10s
+        // traffic to a KNOWN-SAFE destination is reconciled to low risk / low
+        // severity, so the session banner must NOT go red (and, lacking any
+        // high-signal card or new destination, settles green). This is the
+        // common "read a file, hit Claude's own API within 10s" case that
+        // previously rendered a full-red false positive.
+        let mut ev = linked_fixture("Sensitive read ↔ Claude API", "api.anthropic.com", "low");
+        ev.destination_category = "known Claude service".into();
+        ev.risk = "low".into();
+        ev.why = vec!["within_10s".into(), "after_sensitive_read".into()];
+        // Reconciled card must not break quiet either.
+        assert!(!linked_event_breaks_quiet(&ui_with_evidence(1, ev.clone())));
+        let summary = SessionSummary {
+            linked: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev)]);
+        assert_ne!(verdict.level, "red");
+        assert_eq!(verdict.level, "green");
+    }
+
+    #[test]
     fn session_summary_counts_known_safe_and_new_destinations() {
         let mut claude = linked_fixture(
             "Tool call → outbound connection",
@@ -5939,8 +6093,14 @@ mod tests {
         }
         assert!(should_suppress_quieted_pattern(&sibling, &quieted));
 
+        // A genuine hot breakthrough re-surfaces a quieted session — but only
+        // when the destination is NOT known-safe. Traffic to Claude's own API is
+        // hot at the mechanism level yet must stay quiet (T5), so the breakthrough
+        // vehicle here is an unknown external destination.
         let evidence = event.evidence.as_mut().unwrap();
         evidence.title = "Sensitive read → outbound connection".into();
+        evidence.destination = "evil.example.invalid".into();
+        evidence.destination_category = "unknown external".into();
         evidence.severity = "hot".into();
         evidence.risk = "high".into();
         evidence.confidence = "high".into();
@@ -5950,6 +6110,98 @@ mod tests {
         }
 
         assert!(!should_suppress_quieted_pattern(&event, &quieted));
+    }
+
+    #[test]
+    fn known_safe_card_after_sensitive_read_stays_quiet_and_amber_free() {
+        // T5 completion (Codex P2): a known-safe destination following a
+        // sensitive read with forward timing is hot/high at the mechanism level
+        // but must NOT drive the verdict red/amber-high-signal, and must NOT
+        // break quiet — the card-risk says low, so the session signals must agree.
+        let mut ev = linked_fixture(
+            "Sensitive read → outbound connection",
+            "api.anthropic.com",
+            "hot",
+        );
+        ev.destination_category = "known Claude service".into();
+        ev.risk = "low".into();
+        ev.confidence = "high".into();
+        ev.why = vec!["after_sensitive_read".into(), "within_10s".into()];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev.clone())]);
+        assert_ne!(
+            verdict.level, "red",
+            "known-safe destination after sensitive read must not be red"
+        );
+        assert_ne!(
+            verdict.level, "amber",
+            "known-safe destination must not be amber-high-signal either"
+        );
+        assert!(
+            !linked_event_breaks_quiet(&ui_with_evidence(1, ev)),
+            "known-safe destination must not break quiet despite hot severity / high confidence"
+        );
+    }
+
+    #[test]
+    fn reconciled_low_risk_is_honored_even_when_category_is_not_known_safe() {
+        // Defends the SNI/flow known-safe path. evidence_risk lowers risk to
+        // "low" when EITHER the destination_category is known-safe OR the flow's
+        // host matches a known-safe service — and those two can diverge (e.g. a
+        // Claude-IP host whose semantic intent resolves the category to a local
+        // bridge). The consumer guards therefore key on the reconciled `risk`,
+        // not the category, so a low-risk card is honored as safe regardless of
+        // its category label.
+        let mut ev = linked_fixture(
+            "Sensitive read → outbound connection",
+            "api.anthropic.com",
+            "hot",
+        );
+        // Risk reconciled low via the flow/SNI path, but category did NOT land in
+        // the known-safe set — the exact divergence the category-only guard missed.
+        ev.risk = "low".into();
+        ev.destination_category = "local dev server bridge".into();
+        ev.confidence = "high".into();
+        ev.why = vec!["after_sensitive_read".into(), "within_10s".into()];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev.clone())]);
+        assert_ne!(verdict.level, "red");
+        assert_ne!(verdict.level, "amber");
+        assert!(
+            !linked_event_breaks_quiet(&ui_with_evidence(1, ev)),
+            "a reconciled-low-risk card must not break quiet even with a non-known-safe category"
+        );
+    }
+
+    #[test]
+    fn unknown_dest_after_sensitive_read_still_breaks_quiet_and_goes_red() {
+        // Regression guard: the genuine exfil case — sensitive read to an UNKNOWN
+        // destination with forward timing — must stay loud (red verdict, breaks
+        // quiet). The known-safe carve-out must not bleed into it.
+        let mut ev = linked_fixture(
+            "Sensitive read → outbound connection",
+            "evil.example.invalid",
+            "hot",
+        );
+        ev.destination_category = "unknown external".into();
+        ev.risk = "high".into();
+        ev.why = vec!["after_sensitive_read".into(), "within_10s".into()];
+        let summary = SessionSummary {
+            linked: 1,
+            high_signal: 1,
+            ..SessionSummary::default()
+        };
+        let verdict = compute_verdict(true, &summary, &[ui_with_evidence(1, ev.clone())]);
+        assert_eq!(verdict.level, "red");
+        assert!(linked_event_breaks_quiet(&ui_with_evidence(1, ev)));
     }
 
     #[test]
