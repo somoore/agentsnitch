@@ -3364,19 +3364,25 @@
 
     // Risk tier for a flow, reusing the existing card scale. Hot = breakout.
     function traceFlowTier(ev) {
-      const evidence = ev.evidence || {};
-      const category = evidence.destination_category || networkCategory(ev) || '';
+      const evidence = ev.evidence || null;
+      const category = (evidence && evidence.destination_category) || networkCategory(ev) || '';
       // Known-safe categories are always grey, regardless of an incidental risk
       // field — that's the deliberate desaturation that clears the field.
       if (knownQuietCategory(category) || collapsedKnownCategory(category)) return 'low';
-      // For an uncollapsed destination the color is driven by the daemon's risk
-      // score on the existing #16 scale (hot/red = risk high, medium/orange =
-      // medium, low = neutral). This keeps "hot-breakout = the red/risk-high
-      // color" honest: an expected-but-uncollapsed destination (e.g. a
-      // "cloud provider" flow, quiet_by_default:false, scored low) renders
-      // NEUTRAL, not the same red as a genuine CN/RU egress scored high — so the
-      // one true anomaly still pops as the lone red in a field of grey/neutral.
-      return cardRiskTier(evidence.risk || evidence.severity || '');
+      // For a CORRELATED flow the color is driven by the daemon's risk score on
+      // the existing #16 scale (hot/red = risk high, medium/orange = medium, low
+      // = neutral). This keeps "hot-breakout = the red/risk-high color" honest:
+      // an expected-but-uncollapsed destination (e.g. a "cloud provider" flow,
+      // quiet_by_default:false, scored low) renders NEUTRAL, not the same red as
+      // a genuine CN/RU egress scored high.
+      if (evidence) return cardRiskTier(evidence.risk || evidence.severity || '');
+      // For a RAW (uncorrelated) network row there is no evidence.risk — deriving
+      // the tier from an absent field would render even an unknown-external /
+      // high-byte / raw-IP egress as low, hiding the exact unlinked anomaly this
+      // view exists to surface. Reuse the same attention classifier the Attention
+      // view uses for raw rows: any attention reason on an uncollapsed
+      // destination is the breakout signal.
+      return attentionReasons(ev).length > 0 ? 'hot' : 'low';
     }
 
     // Build the node/edge graph from the flow events. Four columns:
@@ -3421,8 +3427,13 @@
         // Subagent column. Real named sub, or synthetic "(direct)" for main-direct.
         const subLabel = isSub ? agentShortName(agent) : '(direct)';
         const subKey = isSub ? `sub:${project}:${agent.id || subLabel}` : `sub:${project}:(direct)`;
-        // Tool/hook column.
-        const toolRaw = (ev.evidence && evidenceHookTool(ev.evidence)) || laneSummary(ev).split(/\s+/)[0] || (eventKind(ev) === 'network' ? 'Network' : 'tool');
+        // Tool/hook column. For a raw (uncorrelated) network row the hop IS the
+        // network egress, so label it "Network" — do NOT fall through to
+        // laneSummary(), whose first token for a "Network -> host" summary is the
+        // destination host, which would duplicate the Destination node and read
+        // as a misleading "(direct) -> host -> host" path.
+        const toolRaw = (ev.evidence && evidenceHookTool(ev.evidence))
+          || (eventKind(ev) === 'network' ? 'Network' : (laneSummary(ev).split(/\s+/)[0] || 'tool'));
         const tool = String(toolRaw).slice(0, 28) || 'tool';
         const toolKey = `tool:${tool}`;
         // Destination column.
