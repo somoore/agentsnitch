@@ -29,7 +29,15 @@ use tauri::{
     State,
 };
 
-const MAX_UI_EVENTS: usize = 160;
+// Upper bound on retained UI events (ring buffer). Sized for the live
+// flow-trace use case: a ~100-subagent trace where each subagent emits dozens
+// of hook/network events. 100 subagents x ~40 events ≈ 4000, so 4000 keeps a
+// full multi-subagent trace meaningful while staying bounded (a UiEvent is on
+// the order of a few hundred bytes, so the buffer is low-single-digit MiB at
+// worst — safe for a desktop tray app). `trim_ui_events` still evicts routine
+// (uncorrelated) hooks before linked-evidence events, so raising the cap only
+// extends history; it does not change the linked-evidence prioritization.
+const MAX_UI_EVENTS: usize = 4000;
 // Upper bound on a single UI-socket connection read. The daemon caps every
 // upstream payload (NE/XPC at 32 KiB); this keeps the UI's one ingestion point
 // symmetric so a misbehaving local daemon cannot drive unbounded allocation.
@@ -6424,6 +6432,63 @@ mod tests {
 
         assert_eq!(events.len(), MAX_UI_EVENTS);
         assert!(events.iter().any(|ev| ev.id == 1 && ev.correlated));
+    }
+
+    #[test]
+    fn trim_ui_events_retains_enough_for_a_large_subagent_trace() {
+        // Simulate a ~100-subagent live trace: lots of routine hooks plus a
+        // scattering of linked-evidence events. The new cap must retain enough
+        // events for the trace to be meaningful (far more than the old 160) and
+        // must still preserve every linked-evidence event over routine hooks
+        // even when the buffer is flooded well past the cap.
+        let linked_ids: Vec<u64> = (0..100).map(|i| i * 50 + 1).collect();
+        let linked: std::collections::HashSet<u64> = linked_ids.iter().copied().collect();
+
+        let total = MAX_UI_EVENTS as u64 * 2; // flood to 2x the cap
+        let mut events = Vec::new();
+        for id in 1..=total {
+            let correlated = linked.contains(&id);
+            events.push(UiEvent {
+                id,
+                ts: "00:00:01".into(),
+                summary: if correlated {
+                    "Linked evidence".into()
+                } else {
+                    "Routine hook".into()
+                },
+                tags: if correlated {
+                    vec!["correlated".into()]
+                } else {
+                    vec![]
+                },
+                detail: None,
+                destination: None,
+                destination_context: None,
+                correlated,
+                evidence: None,
+                agent: None,
+            });
+        }
+
+        trim_ui_events(&mut events);
+
+        // The cap is honored and is large enough to keep a real trace.
+        assert_eq!(events.len(), MAX_UI_EVENTS);
+        assert!(
+            MAX_UI_EVENTS >= 2000,
+            "cap must support a 100-subagent trace"
+        );
+
+        // Every linked-evidence event survives the flood (prioritized over
+        // routine hooks), and routine hooks still fill out the remaining budget.
+        for id in &linked_ids {
+            assert!(
+                events.iter().any(|ev| ev.id == *id && ev.correlated),
+                "linked evidence event {id} was evicted"
+            );
+        }
+        let routine_kept = events.iter().filter(|ev| !ev.correlated).count();
+        assert_eq!(routine_kept, MAX_UI_EVENTS - linked_ids.len());
     }
 
     #[test]
