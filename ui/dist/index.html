@@ -450,7 +450,20 @@
       border: 1px solid var(--border);
       border-radius: 6px;
       background: #19191b;
+      cursor: pointer;
+      transition: border-color 0.12s ease, background 0.12s ease;
     }
+    /* Whole-card click affordance (P0 #6): make the entire card read as clickable. */
+    .agent-tree-group:hover {
+      border-color: var(--accent);
+      background: #1f1f22;
+    }
+    .agent-tree-group:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    /* Inner buttons keep their own hit area and don't inherit the card cursor. */
+    .agent-tree-group .mini-button { cursor: pointer; }
     .agent-tree-main {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -3057,7 +3070,12 @@
           header = `<div class="agent-project-header" title="${escapeHtml(projectKey)}">${escapeHtml(project)}</div>`;
         }
 
-        return `${header}<section class="agent-tree-group">
+        // Whole-card click affordance (P0 #6): clicking anywhere on the card body
+        // inspects this main. The guard bails when the click lands on any inner
+        // <button> (Inspect, or a child subagent row) so those keep their own
+        // action — event.target.closest('button') catches them before the card
+        // handler runs, preventing a double-fire.
+        return `${header}<section class="agent-tree-group" role="button" tabindex="0" data-card-main="${escapeHtml(main.id)}" title="Inspect ${escapeHtml(baseLabel)}" onclick="if (!event.target.closest('button')) showAgentDetail('${escapeHtml(main.id)}')">
           <div class="agent-tree-main">
             <div>
               <strong title="${escapeHtml(String(main.cwd || ''))}">${escapeHtml(mainLabel)}</strong>
