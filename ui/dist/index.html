@@ -426,6 +426,34 @@
       display: grid;
       gap: 8px;
     }
+    /* Overview tab (P1 #11): composes existing pieces into one screen. */
+    .overview-view { display: grid; gap: 10px; }
+    .overview-section { display: grid; gap: 6px; }
+    .overview-section-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .overview-count {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      padding: 0 6px;
+    }
+    .overview-empty {
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 8px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+    }
     .agents-view-head {
       display: grid;
       gap: 3px;
@@ -1998,7 +2026,8 @@
     </div>
 
     <div class="tabs" id="tabs">
-      <button class="tab active" data-view="attention" onclick="setView('attention')">Attention</button>
+      <button class="tab active" data-view="overview" onclick="setView('overview')">Overview</button>
+      <button class="tab" data-view="attention" onclick="setView('attention')">Attention</button>
       <button class="tab" data-view="linked" onclick="setView('linked')">Linked</button>
       <button class="tab" data-view="agents" onclick="setView('agents')">Agents</button>
       <button class="tab" data-view="hooks" onclick="setView('hooks')">Hooks</button>
@@ -2068,7 +2097,7 @@
     let events = [];
     let teamAgents = [];
     let pollTimer = null;
-    let activeView = 'attention';
+    let activeView = 'overview';
     let activeAgentFilter = '';
     let activeAgentDetailKind = 'all';
 	    let activeReasonFilter = '';
@@ -2858,6 +2887,12 @@
       document.querySelectorAll('.tab').forEach(tab => {
         const view = tab.dataset.view;
         tab.classList.toggle('active', view === activeView);
+        if (view === 'overview') {
+          // Overview is a composite (verdict + agents + attention), not a
+          // filtered event list, so a count badge would be meaningless.
+          tab.textContent = 'Overview';
+          return;
+        }
         if (view === 'trace') {
           // The trace tab counts the flows it can draw (network + attributed),
           // not raw hook events, so its badge tracks what the Sankey shows.
@@ -3706,12 +3741,68 @@
       countsEl.innerHTML = parts.join(' · ');
     }
 
+    // renderOverview (P1 #11, Overview-tab-only variant): one screen that answers
+    // "what's happening and is it fine?" It COMPOSES existing pieces — the verdict
+    // banner and activity ticker are already always-on in the header; here we add
+    // the session narrative, the agent tree, and any attention cards. Nothing is
+    // rebuilt: it calls the same renderAgentHierarchy / attention / renderEvent
+    // paths the dedicated tabs use, so it can never drift from them. The other
+    // tabs (Attention/Linked/Hooks/Network/All/Agents/Flow Trace) are unchanged.
+    function renderOverview() {
+      const sections = [];
+
+      // Session narrative (reused as-is).
+      sections.push(renderSessionNarrative(viewEventsForKind('all')));
+
+      // Agent tree — the differentiator. Reuse the exact hierarchy the Agents tab
+      // renders; if none yet, a teaching line.
+      const visible = visibleTeamAgents();
+      if (visible.length) {
+        const groups = agentGroups();
+        const subCount = visible.filter(a => agentType(a) === 'sub').length;
+        const title = subCount ? 'Agents & subagents' : 'Agents';
+        sections.push(`<section class="overview-section">
+          <div class="overview-section-title">${escapeHtml(title)}</div>
+          ${renderAgentHierarchy(groups)}
+        </section>`);
+      } else {
+        sections.push('<section class="overview-section"><div class="overview-section-title">Agents</div><div class="overview-empty">No Claude Code agents detected yet — running sessions and their subagents will appear here.</div></section>');
+      }
+
+      // Attention cards — what (if anything) needs a look. Reuse attentionBaseEvents
+      // + renderEvent so these are the same cards the Attention tab shows.
+      const attention = attentionBaseEvents();
+      if (attention.length) {
+        const sorted = displayEvents(groupAttentionNetworkEvents([...attention].sort((a, b) => (b.id || 0) - (a.id || 0))));
+        sections.push(`<section class="overview-section">
+          <div class="overview-section-title">Needs attention <span class="overview-count">${attention.length}</span></div>
+          ${sorted.map(renderEvent).join('')}
+        </section>`);
+      } else {
+        sections.push('<section class="overview-section"><div class="overview-section-title">Needs attention</div><div class="overview-empty">Nothing needs attention. New external destinations, sensitive-context reads, and large transfers would surface here.</div></section>');
+      }
+
+      return `<div class="overview-view">${sections.join('')}</div>`;
+    }
+
+    // Helper: events for a given kind without mutating activeView (Overview needs
+    // the unscoped "all" set for the narrative regardless of the active tab).
+    function viewEventsForKind(kind) {
+      const scoped = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
+      return filterEventsByKind(scoped, kind, '');
+    }
+
     function renderEvents() {
       const container = document.getElementById('events');
       const empty = document.getElementById('empty');
       renderTicker();
       renderTabs();
       renderAgentTeam(teamAgents);
+      if (activeView === 'overview') {
+        container.innerHTML = renderOverview();
+        scheduleAutoResize();
+        return;
+      }
       if (activeView === 'agents') {
         container.innerHTML = renderAgentsView();
         scheduleAutoResize();
