@@ -25,10 +25,19 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, RunEvent, Size, State,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, Size,
+    State,
 };
 
-const MAX_UI_EVENTS: usize = 160;
+// Upper bound on retained UI events (ring buffer). Sized for the live
+// flow-trace use case: a ~100-subagent trace where each subagent emits dozens
+// of hook/network events. 100 subagents x ~40 events ≈ 4000, so 4000 keeps a
+// full multi-subagent trace meaningful while staying bounded (a UiEvent is on
+// the order of a few hundred bytes, so the buffer is low-single-digit MiB at
+// worst — safe for a desktop tray app). `trim_ui_events` still evicts routine
+// (uncorrelated) hooks before linked-evidence events, so raising the cap only
+// extends history; it does not change the linked-evidence prioritization.
+const MAX_UI_EVENTS: usize = 4000;
 // Upper bound on a single UI-socket connection read. The daemon caps every
 // upstream payload (NE/XPC at 32 KiB); this keeps the UI's one ingestion point
 // symmetric so a misbehaving local daemon cannot drive unbounded allocation.
@@ -3847,15 +3856,133 @@ fn set_macos_network_sensor_disabled(_disabled: bool) -> Result<String, String> 
     Ok("network sensor setting saved; Network Extension is macOS-only".into())
 }
 
+/// Conservative margin (logical px, scaled by the display's factor below) kept
+/// between the window and the edges of the monitor's visible frame. Covers the
+/// menu bar / Dock so a grown window never has its title bar or bottom pushed
+/// off-screen — the most likely trigger for macOS to relocate the window.
+const WINDOW_EDGE_MARGIN_LOGICAL: f64 = 12.0;
+
+/// Pure geometry solver for the auto-resize path, extracted so it can be unit
+/// tested without a live window/window-manager (the actual `set_size` /
+/// `set_position` calls are not testable here).
+///
+/// All inputs/outputs are in **physical** pixels — the space `outer_position`,
+/// `Monitor::position`, and `Monitor::size` all report in. Mixing logical and
+/// physical here is the classic bug on non-1.0-scale (e.g. secondary) displays,
+/// so the caller converts the JS-supplied logical request to physical first.
+///
+/// Policy (UI/UX plan P1 #9/#10):
+/// - **Width is pinned** to the window's current width. The JS auto-resize asks
+///   for both width and height; we deliberately ignore the requested width so
+///   live tab-count changes can only grow/shrink height, never jitter width.
+///   (Accepted tradeoff: the agents-view auto-widening is disabled.)
+/// - **Height** is the only thing that tracks content, clamped so the window
+///   still fits within the monitor's visible frame at its current top edge.
+/// - **Position is clamped into the current monitor**, never moved across
+///   displays. If the window already sits partly off this monitor we nudge it
+///   back in, but we never recentre or otherwise fight a user-chosen spot.
+#[allow(clippy::too_many_arguments)]
+fn solve_window_geometry(
+    pos_x: i32,
+    pos_y: i32,
+    current_w: i32,
+    requested_h: i32,
+    mon_x: i32,
+    mon_y: i32,
+    mon_w: i32,
+    mon_h: i32,
+    margin: i32,
+) -> (u32, u32, i32, i32) {
+    // Visible frame inset by the edge margin on all sides.
+    let frame_x = mon_x + margin;
+    let frame_y = mon_y + margin;
+    let frame_w = (mon_w - 2 * margin).max(1);
+    let frame_h = (mon_h - 2 * margin).max(1);
+
+    // Width: pinned to current, but never wider than the visible frame.
+    let width = current_w.clamp(1, frame_w);
+
+    // Clamp the top-left into the visible frame first (handles a window already
+    // dragged off / pushed onto a secondary display).
+    let max_x = frame_x + frame_w - width;
+    let x = pos_x.clamp(frame_x, max_x.max(frame_x));
+
+    // Height: keep the requested height, capped only by the monitor's own visible
+    // height (never taller than the screen). The window can be at most this tall.
+    let height = requested_h.clamp(1, frame_h);
+
+    // Now place the top edge. Prefer the window's current top, but if the
+    // requested height wouldn't fit below it, move the top edge UP so the full
+    // height is preserved — rather than collapsing the window to whatever sliver
+    // happens to sit below a low starting position (the bug Codex caught: a
+    // window placed low on a small display would otherwise shrink to a few px on
+    // the next auto-resize instead of sliding up to keep its minimum height).
+    let lowest_top = frame_y + frame_h - height; // top that still fits `height`
+    let y = pos_y.clamp(frame_y, lowest_top.max(frame_y));
+
+    (width as u32, height as u32, x, y)
+}
+
 #[tauri::command]
 fn resize_main_window(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
     let win = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
-    let width = width.clamp(520.0, 1180.0);
-    let height = height.clamp(420.0, 920.0);
-    win.set_size(Size::Logical(LogicalSize { width, height }))
-        .map_err(|e| e.to_string())
+
+    // Keep the JS request inside sane logical bounds first. Width is only used
+    // for the rare no-monitor fallback below; the normal path pins the width to
+    // the window's current width (see `solve_window_geometry`).
+    let requested_width = width.clamp(520.0, 1180.0);
+    let requested_height = height.clamp(420.0, 920.0);
+
+    // Resolve the current monitor; if we can't (rare), fall back to the legacy
+    // logical resize so the window still tracks content rather than freezing.
+    let monitor = match win.current_monitor() {
+        Ok(Some(m)) => m,
+        _ => {
+            return win
+                .set_size(Size::Logical(LogicalSize {
+                    width: requested_width,
+                    height: requested_height,
+                }))
+                .map_err(|e| e.to_string());
+        }
+    };
+
+    let scale = monitor.scale_factor();
+    let mon_pos = monitor.position();
+    let mon_size = monitor.size();
+    let cur_pos = win.outer_position().map_err(|e| e.to_string())?;
+    let cur_size = win.outer_size().map_err(|e| e.to_string())?;
+
+    // JS speaks logical px; everything below is physical. Convert the request.
+    let requested_h_phys = (requested_height * scale).round() as i32;
+    let margin_phys = (WINDOW_EDGE_MARGIN_LOGICAL * scale).round() as i32;
+
+    let (w, h, x, y) = solve_window_geometry(
+        cur_pos.x,
+        cur_pos.y,
+        cur_size.width as i32,
+        requested_h_phys,
+        mon_pos.x,
+        mon_pos.y,
+        mon_size.width as i32,
+        mon_size.height as i32,
+        margin_phys,
+    );
+
+    // Apply size first, then re-assert position. The set_position is what
+    // actually pins the window: macOS may try to relocate a window whose new
+    // size no longer fits its old origin (the observed cross-display jump), and
+    // re-asserting the clamped origin overrides that.
+    win.set_size(Size::Physical(PhysicalSize {
+        width: w,
+        height: h,
+    }))
+    .map_err(|e| e.to_string())?;
+    win.set_position(tauri::Position::Physical(PhysicalPosition { x, y }))
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -6312,6 +6439,109 @@ mod tests {
 
         assert_eq!(events.len(), MAX_UI_EVENTS);
         assert!(events.iter().any(|ev| ev.id == 1 && ev.correlated));
+    }
+
+    #[test]
+    fn trim_ui_events_retains_enough_for_a_large_subagent_trace() {
+        // Simulate a ~100-subagent live trace: lots of routine hooks plus a
+        // scattering of linked-evidence events. The new cap must retain enough
+        // events for the trace to be meaningful (far more than the old 160) and
+        // must still preserve every linked-evidence event over routine hooks
+        // even when the buffer is flooded well past the cap.
+        let linked_ids: Vec<u64> = (0..100).map(|i| i * 50 + 1).collect();
+        let linked: std::collections::HashSet<u64> = linked_ids.iter().copied().collect();
+
+        let total = MAX_UI_EVENTS as u64 * 2; // flood to 2x the cap
+        let mut events = Vec::new();
+        for id in 1..=total {
+            let correlated = linked.contains(&id);
+            events.push(UiEvent {
+                id,
+                ts: "00:00:01".into(),
+                summary: if correlated {
+                    "Linked evidence".into()
+                } else {
+                    "Routine hook".into()
+                },
+                tags: if correlated {
+                    vec!["correlated".into()]
+                } else {
+                    vec![]
+                },
+                detail: None,
+                destination: None,
+                destination_context: None,
+                correlated,
+                evidence: None,
+                agent: None,
+            });
+        }
+
+        trim_ui_events(&mut events);
+
+        // The cap is honored and is large enough to keep a real trace.
+        assert_eq!(events.len(), MAX_UI_EVENTS);
+        assert!(
+            MAX_UI_EVENTS >= 2000,
+            "cap must support a 100-subagent trace"
+        );
+
+        // Every linked-evidence event survives the flood (prioritized over
+        // routine hooks), and routine hooks still fill out the remaining budget.
+        for id in &linked_ids {
+            assert!(
+                events.iter().any(|ev| ev.id == *id && ev.correlated),
+                "linked evidence event {id} was evicted"
+            );
+        }
+        let routine_kept = events.iter().filter(|ev| !ev.correlated).count();
+        assert_eq!(routine_kept, MAX_UI_EVENTS - linked_ids.len());
+    }
+
+    #[test]
+    fn solve_window_geometry_pins_width_and_only_changes_height() {
+        // Window at (200, 100), 700x500 on a 1920x1080 monitor at origin.
+        // Request a taller height; width must stay 700, position unchanged.
+        let (w, h, x, y) = solve_window_geometry(200, 100, 700, 760, 0, 0, 1920, 1080, 12);
+        assert_eq!(w, 700, "width must be pinned to current");
+        assert_eq!(h, 760, "height tracks the request when it fits");
+        assert_eq!((x, y), (200, 100), "position must not move");
+    }
+
+    #[test]
+    fn solve_window_geometry_never_moves_across_displays() {
+        // Window reported at a negative-X origin (already on/near a secondary
+        // display). It must be clamped back onto the current monitor's frame,
+        // never left at a negative X.
+        let (_w, _h, x, y) = solve_window_geometry(-1500, 50, 700, 500, 0, 0, 1920, 1080, 12);
+        assert!(x >= 12, "x must be clamped into the monitor frame, got {x}");
+        assert!(y >= 12, "y must be clamped into the monitor frame, got {y}");
+    }
+
+    #[test]
+    fn solve_window_geometry_caps_height_to_fit_below_top() {
+        // A short monitor: a requested height taller than the screen is capped to
+        // the visible frame height, and the bottom edge stays inside the frame.
+        let (_w, h, _x, y) = solve_window_geometry(0, 600, 700, 900, 0, 0, 1280, 800, 12);
+        // Visible frame: top=12, height=800-2*12=776, bottom=12+776=788.
+        assert!(h as i32 <= 776, "height capped to the visible frame: h={h}");
+        assert!(y + (h as i32) <= 788, "window bottom must fit: y={y} h={h}");
+    }
+
+    #[test]
+    fn solve_window_geometry_slides_up_to_preserve_height() {
+        // Codex P2: a window placed LOW on a small display must keep its requested
+        // height by sliding the top edge UP, not collapse to whatever sliver sits
+        // below the low starting position.
+        // Monitor 1280x800; window dragged to y=700 (near the bottom); request 500.
+        let (_w, h, _x, y) = solve_window_geometry(0, 700, 700, 500, 0, 0, 1280, 800, 12);
+        assert_eq!(h, 500, "requested height must be preserved, not collapsed");
+        // Frame bottom = 12 + (800 - 24) = 788; top must move up so 500 fits.
+        assert!(
+            y + (h as i32) <= 788,
+            "bottom still inside the frame: y={y} h={h}"
+        );
+        assert!(y < 700, "top edge slid up from the low starting y: y={y}");
     }
 
     #[test]
