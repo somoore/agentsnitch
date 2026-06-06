@@ -1918,6 +1918,62 @@
       position: absolute; bottom: 44px; right: 8px;
       font-size: 9px; color: var(--text-dim); opacity: 0.5; pointer-events: none;
     }
+
+    /* ---- Live flow-trace (Sankey) view ---- */
+    .trace-view { display: flex; flex-direction: column; gap: 8px; }
+    .trace-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; flex-wrap: wrap;
+      padding: 6px 8px; background: var(--bg-elev);
+      border: 1px solid var(--border); border-radius: 6px;
+    }
+    .trace-modes { display: flex; gap: 4px; }
+    .trace-mode-btn {
+      background: transparent; color: var(--text-dim);
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 3px 9px; font-size: 11px; cursor: pointer;
+    }
+    .trace-mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .trace-hint { color: var(--text-dim); font-size: 11px; }
+    .trace-selection { font-size: 11px; color: var(--text); }
+    .trace-selection strong { color: var(--accent); }
+    .trace-svg-wrap {
+      background: #161618; border: 1px solid var(--border);
+      border-radius: 8px; padding: 4px; overflow-x: auto;
+    }
+    .trace-svg { display: block; }
+    .trace-col-title { fill: var(--text-dim); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    .trace-label { fill: var(--text-dim); font-size: 10px; }
+    .trace-label.hot { fill: var(--red); font-weight: 700; }
+    .trace-label.medium { fill: var(--orange); }
+    .trace-ribbon { cursor: pointer; transition: stroke-opacity 0.12s; }
+    .trace-ribbon:hover { stroke-opacity: 0.95 !important; }
+    .trace-ribbon.selected { stroke-opacity: 0.98 !important; }
+    .trace-node { cursor: pointer; }
+    .trace-node rect:hover { stroke: #fff; stroke-width: 1; }
+    .trace-node.selected rect { stroke: var(--accent); stroke-width: 1.5; }
+
+    /* Node-link alternate (single-outlier emphasis) */
+    .trace-nodelink { display: flex; flex-direction: column; gap: 10px; }
+    .trace-nl-section {
+      background: var(--bg-elev); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 10px;
+    }
+    .trace-nl-section.hot { border-color: var(--red); background: #2a1a1a; }
+    .trace-nl-title { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; font-weight: 600; }
+    .trace-nl-section.hot .trace-nl-title { color: var(--red); }
+    .trace-nl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .trace-nl-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #232325; border: 1px solid var(--border); border-radius: 14px;
+      padding: 4px 10px; font-size: 11px; color: var(--text); cursor: pointer;
+    }
+    .trace-nl-chip .trace-nl-dot { width: 8px; height: 8px; border-radius: 50%; background: #48484a; }
+    .trace-nl-chip.hot { border-color: var(--red); background: #3a2323; color: #fff; font-weight: 600; }
+    .trace-nl-chip.hot .trace-nl-dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
+    .trace-nl-chip.selected { outline: 2px solid var(--accent); }
+    .trace-nl-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+    .trace-nl-chip.hot .trace-nl-count { color: #ffd0cc; }
   </style>
 </head>
 <body>
@@ -1948,6 +2004,7 @@
       <button class="tab" data-view="hooks" onclick="setView('hooks')">Hooks</button>
       <button class="tab" data-view="network" onclick="setView('network')">Network</button>
       <button class="tab" data-view="all" onclick="setView('all')">All</button>
+      <button class="tab" data-view="trace" onclick="setView('trace')">Flow Trace</button>
     </div>
 
     <div id="pausedBanner" class="paused-banner" hidden>
@@ -2001,6 +2058,8 @@
 	    </div>
 	  </div>
 
+  <!-- Vendored d3-sankey layout (relative, offline; see file header for license). -->
+  <script src="d3-sankey.js"></script>
   <script>
     // Minimal vanilla frontend for AgentSnitch panel (no build, no external deps at runtime)
     // Uses Tauri's global API (enabled via withGlobalTauri) for invoke + listen.
@@ -2799,6 +2858,12 @@
       document.querySelectorAll('.tab').forEach(tab => {
         const view = tab.dataset.view;
         tab.classList.toggle('active', view === activeView);
+        if (view === 'trace') {
+          // The trace tab counts the flows it can draw (network + attributed),
+          // not raw hook events, so its badge tracks what the Sankey shows.
+          tab.textContent = `Flow Trace ${traceFlowCount()}`;
+          return;
+        }
         const label = view === 'attention' ? 'Attention' : view === 'linked' ? 'Linked' : view === 'agents' ? 'Agents' : view === 'hooks' ? 'Hooks' : view === 'network' ? 'Network' : 'All';
         tab.textContent = `${label} ${counts[view] || 0}`;
       });
@@ -3257,6 +3322,310 @@
       return renderEvent(ev);
     }
 
+    // =========================================================================
+    // Live flow-trace view (Sankey) — Track C.
+    // Maps hook/tool call -> trace -> PID (main/named subagent) -> destination in
+    // one glance. Known-safe destinations collapse into desaturated grey category
+    // sinks (the zoom-out); unknown-external / new-destination / sensitive-linked
+    // break out HOT (var(--red)) with a minimum width floor so a single anomaly
+    // among hundreds of safe flows is never lost in a sub-pixel ribbon. Clicking
+    // any node/edge scopes `traceSelection` and re-renders the SAME existing
+    // provenance cards (renderEvent -> renderEvidenceEvent/renderNetworkEvent,
+    // whose Explain button drives toggleDetails) — no new detail surface.
+    // =========================================================================
+
+    // Module-scope so it survives the renderEvents() re-render that toggleDetails
+    // triggers: a node/edge id-set + a label describing the current scope.
+    let traceSelection = null;        // { kind:'node'|'edge', key, label, eventIds:Set }
+    let traceMode = 'sankey';         // 'sankey' | 'nodelink' | 'list'
+
+    // A flow-trace event is any event that has a destination we can place in the
+    // Destination column: a raw network egress or a linked/attributed flow.
+    function traceFlowEvents() {
+      return events.filter(ev => eventKind(ev) === 'network' || isAttributedNetworkEvent(ev));
+    }
+
+    function traceFlowCount() {
+      return traceFlowEvents().length;
+    }
+
+    // The destination column groups by category. Known-safe categories collapse
+    // into ONE desaturated grey sink per category (the zoom-out). Hot flows keep
+    // their real host so the anomaly is identifiable.
+    function traceDestNode(ev) {
+      const evidence = ev.evidence || {};
+      const category = evidence.destination_category || networkCategory(ev) || 'unknown external';
+      if (knownQuietCategory(category) || collapsedKnownCategory(category)) {
+        return { key: `dest:cat:${category}`, label: category, category, host: '', collapsed: true };
+      }
+      const host = (evidence.destination || networkDisplayDestination(ev) || summaryDestination(ev) || 'unknown destination');
+      return { key: `dest:host:${host}`, label: host, category, host, collapsed: false };
+    }
+
+    // Risk tier for a flow, reusing the existing card scale. Hot = breakout.
+    function traceFlowTier(ev) {
+      const evidence = ev.evidence || {};
+      const category = evidence.destination_category || networkCategory(ev) || '';
+      // Known-safe categories are always grey, regardless of an incidental risk
+      // field — that's the deliberate desaturation that clears the field.
+      if (knownQuietCategory(category) || collapsedKnownCategory(category)) return 'low';
+      // Any destination NOT in a known-safe category is a breakout — the whole
+      // point is that "not known-safe" pops hot regardless of whether the daemon
+      // has scored it high yet (a brand-new unexpected egress may still read
+      // low/medium). cardRiskTier is consulted only to keep the hot color in sync
+      // with the existing #16 scale; the floor here is always hot for uncollapsed.
+      cardRiskTier(evidence.risk || evidence.severity || '');
+      return 'hot';
+    }
+
+    // Build the node/edge graph from the flow events. Four columns:
+    //   agent (main, by project) -> subagent (named; synthetic "(direct)" when a
+    //   main calls a tool with no subagent so every path traverses all 4 columns
+    //   and d3-sankey's depth math stays aligned) -> tool/hook -> destination.
+    // Node ids are namespaced by column so a tool and a destination sharing a
+    // string can never collide or form a cycle.
+    function buildTraceGraph() {
+      const flows = traceFlowEvents();
+      const nodeMap = new Map();   // key -> node
+      const edgeMap = new Map();   // key -> edge
+      function node(key, label, col, extra) {
+        let n = nodeMap.get(key);
+        if (!n) {
+          n = { id: key, label, col, value: 0, tier: 'low', eventIds: new Set(), ...(extra || {}) };
+          nodeMap.set(key, n);
+        }
+        return n;
+      }
+      function edge(srcKey, dstKey, ev, tier) {
+        const key = `${srcKey}->${dstKey}`;
+        let e = edgeMap.get(key);
+        if (!e) {
+          e = { id: key, source: srcKey, target: dstKey, value: 0, tier: 'low', eventIds: new Set() };
+          edgeMap.set(key, e);
+        }
+        e.value += 1;
+        e.eventIds.add(ev.id);
+        if (tier === 'hot') e.tier = 'hot';
+        else if (tier === 'medium' && e.tier !== 'hot') e.tier = 'medium';
+        return e;
+      }
+
+      for (const ev of flows) {
+        const agent = ev.agent || {};
+        const isSub = agentType(agent) === 'sub';
+        const project = agentProjectName(agent) || 'unknown project';
+        // Agent column = the project's main. Subs inherit their project.
+        const agentKey = `agent:${project}`;
+        const agentLabelText = `${project} — main`;
+        // Subagent column. Real named sub, or synthetic "(direct)" for main-direct.
+        const subLabel = isSub ? agentShortName(agent) : '(direct)';
+        const subKey = isSub ? `sub:${project}:${agent.id || subLabel}` : `sub:${project}:(direct)`;
+        // Tool/hook column.
+        const toolRaw = (ev.evidence && evidenceHookTool(ev.evidence)) || laneSummary(ev).split(/\s+/)[0] || (eventKind(ev) === 'network' ? 'Network' : 'tool');
+        const tool = String(toolRaw).slice(0, 28) || 'tool';
+        const toolKey = `tool:${tool}`;
+        // Destination column.
+        const dest = traceDestNode(ev);
+        const tier = traceFlowTier(ev);
+
+        const aN = node(agentKey, agentLabelText, 0, { project });
+        const sN = node(subKey, subLabel, 1, { project, synthetic: !isSub });
+        const tN = node(toolKey, tool, 2);
+        const dN = node(dest.key, dest.label, 3, { category: dest.category, host: dest.host, collapsed: dest.collapsed });
+
+        for (const n of [aN, sN, tN, dN]) {
+          n.value += 1;
+          n.eventIds.add(ev.id);
+          if (tier === 'hot') n.tier = 'hot';
+          else if (tier === 'medium' && n.tier !== 'hot') n.tier = 'medium';
+        }
+
+        edge(agentKey, subKey, ev, tier);
+        edge(subKey, toolKey, ev, tier);
+        edge(toolKey, dest.key, ev, tier);
+      }
+
+      return { nodes: [...nodeMap.values()], links: [...edgeMap.values()] };
+    }
+
+    // Map a trace node/edge key to the underlying events for provenance reuse.
+    function traceEventsForKey(graph, key) {
+      const ids = new Set();
+      const n = graph.nodes.find(x => x.id === key);
+      if (n) { for (const id of n.eventIds) ids.add(id); }
+      const e = graph.links.find(x => x.id === key);
+      if (e) { for (const id of e.eventIds) ids.add(id); }
+      return events.filter(ev => ids.has(ev.id));
+    }
+
+    function selectTrace(kind, key) {
+      const graph = buildTraceGraph();
+      const node = graph.nodes.find(x => x.id === key);
+      const edge = graph.links.find(x => x.id === key);
+      const label = node ? node.label
+        : edge ? `${(graph.nodes.find(n => n.id === edge.source) || {}).label || ''} → ${(graph.nodes.find(n => n.id === edge.target) || {}).label || ''}`
+        : key;
+      const evs = traceEventsForKey(graph, key);
+      if (traceSelection && traceSelection.key === key) {
+        traceSelection = null; // toggle off
+      } else {
+        traceSelection = { kind, key, label, eventIds: new Set(evs.map(ev => ev.id)) };
+      }
+      renderEvents();
+    }
+
+    function clearTraceSelection() {
+      traceSelection = null;
+      renderEvents();
+    }
+
+    function setTraceMode(mode) {
+      traceMode = mode;
+      renderEvents();
+    }
+
+    // Hand-rolled horizontal cubic Bézier ribbon between two link endpoints (we
+    // did not vendor d3-shape's sankeyLinkHorizontal).
+    function sankeyLinkPath(link) {
+      const x0 = link.source.x1, x1 = link.target.x0;
+      const xm = (x0 + x1) / 2;
+      const y0 = link.y0, y1 = link.y1;
+      return `M${x0},${y0}C${xm},${y0} ${xm},${y1} ${x1},${y1}`;
+    }
+
+    function renderTraceToolbar() {
+      const modes = [['sankey', 'Sankey'], ['nodelink', 'Node-link'], ['list', 'List']];
+      const buttons = modes.map(([m, label]) =>
+        `<button class="trace-mode-btn${traceMode === m ? ' active' : ''}" onclick="setTraceMode('${m}')">${label}</button>`
+      ).join('');
+      const sel = traceSelection
+        ? `<span class="trace-selection">Scoped to <strong>${escapeHtml(traceSelection.label)}</strong> · ${traceSelection.eventIds.size} ${pluralize(traceSelection.eventIds.size, 'event')} <button class="mini-button" onclick="clearTraceSelection()">Clear</button></span>`
+        : `<span class="trace-hint">Click any node or ribbon to see its provenance.</span>`;
+      return `<div class="trace-toolbar"><div class="trace-modes">${buttons}</div>${sel}</div>`;
+    }
+
+    function traceColorForTier(tier) {
+      if (tier === 'hot') return 'var(--red)';
+      if (tier === 'medium') return 'var(--orange)';
+      return '#48484a'; // desaturated grey for known-safe / aggregate sinks
+    }
+
+    function renderTraceSankey(graph) {
+      if (!window.d3Sankey || !graph.nodes.length) {
+        return '<div class="empty">No flows to trace yet. Outbound flows (network egress and attributed tool→destination links) will map here as agents run.</div>';
+      }
+      const width = 920, height = Math.max(320, Math.min(900, 90 + graph.nodes.filter(n => n.col === 3).length * 26 + graph.nodes.filter(n => n.col === 1).length * 18));
+      let layout;
+      try {
+        const s = window.d3Sankey.sankey()
+          .nodeId(d => d.id)
+          .nodeAlign(window.d3Sankey.sankeyLeft)  // force columns by depth, not justify
+          .nodeWidth(14)
+          .nodePadding(10)
+          .extent([[8, 12], [width - 8, height - 12]]);
+        // Pin each node to its logical column via nodeAlign override on depth:
+        layout = s({ nodes: graph.nodes.map(n => ({ ...n })), links: graph.links.map(l => ({ ...l })) });
+      } catch (e) {
+        return `<div class="empty">Flow trace could not be laid out (${escapeHtml(String(e.message || e))}). Try the List view.</div>`;
+      }
+
+      const HOT_MIN_WIDTH = 6; // visibility floor so a single anomaly never vanishes
+      const selKey = traceSelection ? traceSelection.key : '';
+
+      const links = layout.links.map(l => {
+        const w = l.tier === 'hot' ? Math.max(HOT_MIN_WIDTH, l.width) : Math.max(1, l.width);
+        const color = traceColorForTier(l.tier);
+        const isSel = selKey === l.id;
+        const opacity = selKey ? (isSel ? 0.95 : (l.tier === 'hot' ? 0.7 : 0.18)) : (l.tier === 'hot' ? 0.85 : 0.42);
+        const stroke = l.tier === 'hot' ? `stroke="#fff" stroke-width="1"` : '';
+        return `<path class="trace-ribbon${isSel ? ' selected' : ''}" d="${sankeyLinkPath(l)}" fill="none"
+          stroke="${color}" stroke-opacity="${opacity}" stroke-width="${w}" ${stroke}
+          data-key="${escapeHtml(l.id)}" onclick="selectTrace('edge', this.getAttribute('data-key'))">
+          <title>${escapeHtml(`${l.source.label} → ${l.target.label} · ${l.value} ${pluralize(l.value, 'event')}${l.tier === 'hot' ? ' · BREAKOUT' : ''}`)}</title>
+        </path>`;
+      }).join('');
+
+      const colTitles = ['Agent', 'Subagent', 'Tool / Hook', 'Destination'];
+      const nodes = layout.nodes.map(n => {
+        const x = n.x0, y = n.y0, w = Math.max(2, n.x1 - n.x0), h = Math.max(2, n.y1 - n.y0);
+        const fill = traceColorForTier(n.tier);
+        const isSel = selKey === n.id;
+        const labelX = n.col >= 3 ? x - 6 : x + w + 6;
+        const anchor = n.col >= 3 ? 'end' : 'start';
+        const labelCls = n.tier === 'hot' ? 'trace-label hot' : (n.tier === 'medium' ? 'trace-label medium' : 'trace-label');
+        return `<g class="trace-node${isSel ? ' selected' : ''}" data-key="${escapeHtml(n.id)}" onclick="selectTrace('node', this.getAttribute('data-key'))">
+          <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" rx="2" ${n.tier === 'hot' ? 'stroke="#fff" stroke-width="1"' : ''}>
+            <title>${escapeHtml(`${n.label} · ${n.value} ${pluralize(n.value, 'event')}`)}</title>
+          </rect>
+          <text class="${labelCls}" x="${labelX}" y="${y + h / 2}" text-anchor="${anchor}" dominant-baseline="middle">${escapeHtml(n.label.length > 30 ? n.label.slice(0, 29) + '…' : n.label)}</text>
+        </g>`;
+      }).join('');
+
+      const headers = colTitles.map((t, i) => {
+        const xs = layout.nodes.filter(n => n.col === i).map(n => n.x0);
+        if (!xs.length) return '';
+        const cx = xs.reduce((a, b) => a + b, 0) / xs.length;
+        return `<text class="trace-col-title" x="${cx}" y="9" text-anchor="middle">${t}</text>`;
+      }).join('');
+
+      return `<div class="trace-svg-wrap"><svg class="trace-svg" viewBox="0 0 ${width} ${height}" width="100%" preserveAspectRatio="xMidYMid meet">
+        ${headers}${links}${nodes}
+      </svg></div>`;
+    }
+
+    // Node-link alternate: emphasizes a single outlier by laying destinations out
+    // radially and drawing only host→breakout edges large, so one hot egress is
+    // unmistakable even when its event volume is tiny. Reuses the same selection.
+    function renderTraceNodeLink(graph) {
+      const dests = graph.nodes.filter(n => n.col === 3);
+      if (!dests.length) return '<div class="empty">No destinations to trace yet.</div>';
+      const hot = dests.filter(n => n.tier === 'hot');
+      const safe = dests.filter(n => n.tier !== 'hot');
+      const selKey = traceSelection ? traceSelection.key : '';
+      function chip(n) {
+        const isSel = selKey === n.id;
+        const cls = n.tier === 'hot' ? 'trace-nl-chip hot' : 'trace-nl-chip safe';
+        return `<button class="${cls}${isSel ? ' selected' : ''}" data-key="${escapeHtml(n.id)}" onclick="selectTrace('node', this.getAttribute('data-key'))">
+          <span class="trace-nl-dot"></span>
+          <span class="trace-nl-host">${escapeHtml(n.label)}</span>
+          <span class="trace-nl-count">${n.value}</span>
+        </button>`;
+      }
+      const hotBlock = hot.length
+        ? `<div class="trace-nl-section hot"><div class="trace-nl-title">Breakout — unknown / unexpected destinations</div><div class="trace-nl-row">${hot.map(chip).join('')}</div></div>`
+        : `<div class="trace-nl-section"><div class="trace-nl-title">No breakout destinations — all flows are to known-safe categories.</div></div>`;
+      const safeBlock = `<div class="trace-nl-section"><div class="trace-nl-title">Known-safe aggregate (${safe.length} ${pluralize(safe.length, 'sink')})</div><div class="trace-nl-row">${safe.map(chip).join('')}</div></div>`;
+      return `<div class="trace-nodelink">${hotBlock}${safeBlock}</div>`;
+    }
+
+    function renderTraceView() {
+      const graph = buildTraceGraph();
+      const toolbar = renderTraceToolbar();
+      let body;
+      if (traceMode === 'list') {
+        body = '';
+      } else if (traceMode === 'nodelink') {
+        body = renderTraceNodeLink(graph);
+      } else {
+        body = renderTraceSankey(graph);
+      }
+      // Scoped provenance: reuse the EXISTING event cards (renderEvent dispatches
+      // to renderEvidenceEvent/renderNetworkEvent; their Explain → toggleDetails
+      // re-expands here because traceSelection is module-scope).
+      let provenance = '';
+      if (traceSelection && traceSelection.eventIds.size) {
+        const scoped = events.filter(ev => traceSelection.eventIds.has(ev.id));
+        provenance = `<div class="feed-title">Provenance · ${escapeHtml(traceSelection.label)}</div>` +
+          scoped.map(renderEvent).join('');
+      } else if (traceMode === 'list') {
+        const flows = traceFlowEvents();
+        provenance = flows.length
+          ? `<div class="feed-title">All traced flows</div>` + flows.map(renderEvent).join('')
+          : '<div class="empty">No traced flows yet.</div>';
+      }
+      return `<div class="trace-view">${toolbar}${body}${provenance}</div>`;
+    }
+
     function setView(view) {
       // Clicking a tab clears any active agent scope. Otherwise an agent filter
       // set in the Agents drill-down would silently persist onto the new tab,
@@ -3333,6 +3702,11 @@
       renderAgentTeam(teamAgents);
       if (activeView === 'agents') {
         container.innerHTML = renderAgentsView();
+        scheduleAutoResize();
+        return;
+      }
+      if (activeView === 'trace') {
+        container.innerHTML = renderTraceView();
         scheduleAutoResize();
         return;
       }
@@ -4446,7 +4820,7 @@
         }
       });
 
-	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, refresh: refreshFromBackend, invoke };
+	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setView, refresh: refreshFromBackend, invoke };
       console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
     }
 
