@@ -109,6 +109,11 @@ Tuning for Explain:
 15. **Empty-tab copy should teach.** "No events in this tab yet" appears a lot. Replace with what *would* show up here and why it matters ("Network flows from this agent's process tree will appear here").
 16. **Color semantics.** Establish one risk scale (green/amber/red) used identically everywhere — summary pills, category chips, the verdict banner, card borders — so color always means risk, never decoration.
 
+### Known follow-ups (deferred from the T4–T9 evidence-card work, PR #13)
+
+- **F1. Verdict banner text can misstate linkage.** `compute_verdict`'s amber `high_signal` path hardcodes `"...not linked to sensitive reads."` (`ui/src-tauri/src/lib.rs`, the `high_signal` arm) even when the surfaced card carries `after_sensitive_read` — e.g. the pre-existing-connection case (`existing_connection_active`, no `within_10s`), which is correctly amber (not red) but *is* linked to a sensitive read. The banner text should reflect "linked to a sensitive read, but the connection predates it" rather than denying the link. Real bug; deliberately scoped out of the T5 fix.
+- **F2. Destination-category downgrade taxonomy.** The T5 reconciliation only carves out the four *known-safe* categories (Claude service / Playwright bridge / telemetry / package registry) from full-red. Whether any *other* category (e.g. local dev tunnel, cloud provider) should also downgrade a sensitive-read escalation is an open taxonomy question, not yet decided.
+
 ---
 
 ## New feature: Pause / Live toggle (true daemon halt)
