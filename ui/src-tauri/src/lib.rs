@@ -25,7 +25,8 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, RunEvent, Size, State,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, Size,
+    State,
 };
 
 const MAX_UI_EVENTS: usize = 160;
@@ -3847,15 +3848,126 @@ fn set_macos_network_sensor_disabled(_disabled: bool) -> Result<String, String> 
     Ok("network sensor setting saved; Network Extension is macOS-only".into())
 }
 
+/// Conservative margin (logical px, scaled by the display's factor below) kept
+/// between the window and the edges of the monitor's visible frame. Covers the
+/// menu bar / Dock so a grown window never has its title bar or bottom pushed
+/// off-screen — the most likely trigger for macOS to relocate the window.
+const WINDOW_EDGE_MARGIN_LOGICAL: f64 = 12.0;
+
+/// Pure geometry solver for the auto-resize path, extracted so it can be unit
+/// tested without a live window/window-manager (the actual `set_size` /
+/// `set_position` calls are not testable here).
+///
+/// All inputs/outputs are in **physical** pixels — the space `outer_position`,
+/// `Monitor::position`, and `Monitor::size` all report in. Mixing logical and
+/// physical here is the classic bug on non-1.0-scale (e.g. secondary) displays,
+/// so the caller converts the JS-supplied logical request to physical first.
+///
+/// Policy (UI/UX plan P1 #9/#10):
+/// - **Width is pinned** to the window's current width. The JS auto-resize asks
+///   for both width and height; we deliberately ignore the requested width so
+///   live tab-count changes can only grow/shrink height, never jitter width.
+///   (Accepted tradeoff: the agents-view auto-widening is disabled.)
+/// - **Height** is the only thing that tracks content, clamped so the window
+///   still fits within the monitor's visible frame at its current top edge.
+/// - **Position is clamped into the current monitor**, never moved across
+///   displays. If the window already sits partly off this monitor we nudge it
+///   back in, but we never recentre or otherwise fight a user-chosen spot.
+#[allow(clippy::too_many_arguments)]
+fn solve_window_geometry(
+    pos_x: i32,
+    pos_y: i32,
+    current_w: i32,
+    requested_h: i32,
+    mon_x: i32,
+    mon_y: i32,
+    mon_w: i32,
+    mon_h: i32,
+    margin: i32,
+) -> (u32, u32, i32, i32) {
+    // Visible frame inset by the edge margin on all sides.
+    let frame_x = mon_x + margin;
+    let frame_y = mon_y + margin;
+    let frame_w = (mon_w - 2 * margin).max(1);
+    let frame_h = (mon_h - 2 * margin).max(1);
+
+    // Width: pinned to current, but never wider than the visible frame.
+    let width = current_w.clamp(1, frame_w);
+
+    // Clamp the top-left into the visible frame first (handles a window already
+    // dragged off / pushed onto a secondary display).
+    let max_x = frame_x + frame_w - width;
+    let x = pos_x.clamp(frame_x, max_x.max(frame_x));
+    let max_y = frame_y + frame_h; // upper bound before height is known
+    let y = pos_y.clamp(frame_y, max_y.max(frame_y) - 1);
+
+    // Height: requested, but never taller than what fits below the (clamped) top.
+    let available_h = (frame_y + frame_h - y).max(1);
+    let height = requested_h.clamp(1, available_h);
+
+    (width as u32, height as u32, x, y)
+}
+
 #[tauri::command]
 fn resize_main_window(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
     let win = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
-    let width = width.clamp(520.0, 1180.0);
-    let height = height.clamp(420.0, 920.0);
-    win.set_size(Size::Logical(LogicalSize { width, height }))
-        .map_err(|e| e.to_string())
+
+    // Keep the JS request inside sane logical bounds first. Width is only used
+    // for the rare no-monitor fallback below; the normal path pins the width to
+    // the window's current width (see `solve_window_geometry`).
+    let requested_width = width.clamp(520.0, 1180.0);
+    let requested_height = height.clamp(420.0, 920.0);
+
+    // Resolve the current monitor; if we can't (rare), fall back to the legacy
+    // logical resize so the window still tracks content rather than freezing.
+    let monitor = match win.current_monitor() {
+        Ok(Some(m)) => m,
+        _ => {
+            return win
+                .set_size(Size::Logical(LogicalSize {
+                    width: requested_width,
+                    height: requested_height,
+                }))
+                .map_err(|e| e.to_string());
+        }
+    };
+
+    let scale = monitor.scale_factor();
+    let mon_pos = monitor.position();
+    let mon_size = monitor.size();
+    let cur_pos = win.outer_position().map_err(|e| e.to_string())?;
+    let cur_size = win.outer_size().map_err(|e| e.to_string())?;
+
+    // JS speaks logical px; everything below is physical. Convert the request.
+    let requested_h_phys = (requested_height * scale).round() as i32;
+    let margin_phys = (WINDOW_EDGE_MARGIN_LOGICAL * scale).round() as i32;
+
+    let (w, h, x, y) = solve_window_geometry(
+        cur_pos.x,
+        cur_pos.y,
+        cur_size.width as i32,
+        requested_h_phys,
+        mon_pos.x,
+        mon_pos.y,
+        mon_size.width as i32,
+        mon_size.height as i32,
+        margin_phys,
+    );
+
+    // Apply size first, then re-assert position. The set_position is what
+    // actually pins the window: macOS may try to relocate a window whose new
+    // size no longer fits its old origin (the observed cross-display jump), and
+    // re-asserting the clamped origin overrides that.
+    win.set_size(Size::Physical(PhysicalSize {
+        width: w,
+        height: h,
+    }))
+    .map_err(|e| e.to_string())?;
+    win.set_position(tauri::Position::Physical(PhysicalPosition { x, y }))
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -6312,6 +6424,36 @@ mod tests {
 
         assert_eq!(events.len(), MAX_UI_EVENTS);
         assert!(events.iter().any(|ev| ev.id == 1 && ev.correlated));
+    }
+
+    #[test]
+    fn solve_window_geometry_pins_width_and_only_changes_height() {
+        // Window at (200, 100), 700x500 on a 1920x1080 monitor at origin.
+        // Request a taller height; width must stay 700, position unchanged.
+        let (w, h, x, y) = solve_window_geometry(200, 100, 700, 760, 0, 0, 1920, 1080, 12);
+        assert_eq!(w, 700, "width must be pinned to current");
+        assert_eq!(h, 760, "height tracks the request when it fits");
+        assert_eq!((x, y), (200, 100), "position must not move");
+    }
+
+    #[test]
+    fn solve_window_geometry_never_moves_across_displays() {
+        // Window reported at a negative-X origin (already on/near a secondary
+        // display). It must be clamped back onto the current monitor's frame,
+        // never left at a negative X.
+        let (_w, _h, x, y) = solve_window_geometry(-1500, 50, 700, 500, 0, 0, 1920, 1080, 12);
+        assert!(x >= 12, "x must be clamped into the monitor frame, got {x}");
+        assert!(y >= 12, "y must be clamped into the monitor frame, got {y}");
+    }
+
+    #[test]
+    fn solve_window_geometry_caps_height_to_fit_below_top() {
+        // A short monitor: a tall requested height must be clamped so the bottom
+        // edge stays inside the visible frame (the cross-display relocation
+        // trigger we are avoiding).
+        let (_w, h, _x, y) = solve_window_geometry(0, 600, 700, 900, 0, 0, 1280, 800, 12);
+        // Frame bottom = 0 + (800 - 12) = 788; top y clamped to <= 787.
+        assert!(y + (h as i32) <= 788, "window bottom must fit: y={y} h={h}");
     }
 
     #[test]
