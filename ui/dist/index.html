@@ -3447,7 +3447,7 @@
               <div class="agent-lane-name">${escapeHtml(agentShortName(agent))}</div>
               <div class="agent-lane-meta">${escapeHtml(meta)}</div>
             </div>
-            <button class="agent-lane-action" onclick="filterAgent('${escapeHtml(agent.id)}')">View</button>
+            <button class="agent-lane-action" onclick="filterAgent('${escapeHtml(agent.id)}')">Inspect</button>
           </div>
           <div class="agent-lane-events">${empty}</div>
         </section>`;
@@ -3581,7 +3581,7 @@
             <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
             ${agentBadge || `<span class="network-compact-meta">${escapeHtml(pidMeta || 'unattributed')}</span>`}
             <span class="network-state" title="${escapeHtml(stateLabel)}">${escapeHtml(stateLabel)}</span>
-            <button class="mini-button" title="${expanded ? 'Hide flow details' : 'Show flow details'}" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Details'}</button>
+            <button class="mini-button" title="${expanded ? 'Hide flow details' : 'Show flow details'}" onclick="toggleRawDetails(${Number(ev.id)})">Details</button>
           </div>
           ${expanded ? `<div class="network-raw">${detailsBody}</div>` : ''}
         </div>
@@ -3618,7 +3618,7 @@
             <span class="network-group-title" title="${escapeHtml(destinationLabel)}">Routine network traffic · ${count} ${escapeHtml(pluralize(count, 'flow'))}</span>
             <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
             <span class="network-group-meta" title="${escapeHtml(destinationLabel)}">${escapeHtml(primaryDestination)} ${memory}</span>
-            <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">${expanded ? 'Collapse' : 'Details'}</button>
+            <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">Details</button>
           </div>
           <div class="network-group-meta">${escapeHtml(sourceState)} · grouped because destination/category already look routine</div>
           ${expanded ? `<div class="network-group-members">${memberRows || '<div class="network-group-meta">No member details</div>'}</div>` : ''}
@@ -3665,7 +3665,7 @@
             <span class="network-attribution-meta" title="${escapeHtml(agentNameText)}">${escapeHtml(agentNameText)}</span>
             <span class="network-attribution-meta" title="${escapeHtml(hook)}">${escapeHtml(hook)}</span>
             <span class="network-attribution-why" title="${escapeHtml(why)}">${escapeHtml(confidence)} confidence · ${escapeHtml(why)}</span>
-            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Why'}</button>
+            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">Details</button>
           </div>
           ${expanded ? `<div class="network-raw">${rawRows || '<div class="network-raw-value">No attribution details</div>'}</div>` : ''}
         </div>
@@ -3730,8 +3730,8 @@
             <span class="category-pill">${escapeHtml(category)}</span>
             <span class="risk-chip low">Risk low</span>
             <span class="evidence-actions">
-              <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">${expanded ? 'Collapse' : 'Expand'}</button>
-              <button class="mini-button" onclick="quietCategory('${escapeHtml(category)}')">Quiet category</button>
+              <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">Details</button>
+              <button class="mini-button" title="Quiet this destination category" onclick="quietCategory('${escapeHtml(category)}')">Quiet</button>
               <button class="mini-button" onclick="doExport()">Evidence Pack</button>
             </span>
           </div>
@@ -3986,7 +3986,7 @@
           ${isExpanded ? `<div class="evidence-expanded">
             ${renderRelatedSubEvents(ev)}
             ${replayRows ? `<div class="replay-block"><div class="section-label">Process lineage</div>${replayRows}</div>` : ''}
-            <button class="mini-button" onclick="toggleRawDetails(${Number(ev.id)})">${showingRawDetails ? 'Hide provenance details' : 'Provenance details'}</button>
+            <button class="mini-button" title="${showingRawDetails ? 'Hide provenance details' : 'Show provenance details'}" onclick="toggleRawDetails(${Number(ev.id)})">Details</button>
             ${showingRawDetails ? `${detailRows}${processTreeHtml}${evidenceDiagnosticTags(ev, evidence, rawWhy)}` : ''}
           </div>` : ''}
         </div>
@@ -4010,8 +4010,8 @@
             </div>
             <span class="evidence-actions">
               ${agentBadge}
-              <button class="mini-button" title="Quiet this linked pattern" onclick="quietPattern(${Number(ev.id)})">Quiet pattern</button>
-              <button class="mini-button" onclick="toggleDetails(${Number(ev.id)})">${isExpanded ? 'Less' : 'Explain'}</button>
+              <button class="mini-button" title="Quiet this linked pattern" onclick="quietPattern(${Number(ev.id)})">Quiet</button>
+              <button class="mini-button" title="${isExpanded ? 'Hide the forensic replay' : 'Explain how this was linked'}" onclick="toggleDetails(${Number(ev.id)})">Explain</button>
               <button class="mini-button icon" title="Dismiss card" onclick="dismissEvent(${Number(ev.id)})">x</button>
             </span>
           </div>
