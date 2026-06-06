@@ -1157,6 +1157,18 @@
       color: var(--orange);
       overflow-wrap: anywhere;
     }
+    /* Diagnostics subheading (P2 #13): separates human fields from machine fields,
+       spanning both grid columns. */
+    .network-raw-group-label {
+      grid-column: 1 / -1;
+      margin-top: 4px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-family: inherit;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+      opacity: 0.8;
+    }
     .event.evidence {
       gap: 9px;
       padding: 11px 12px;
@@ -3524,21 +3536,28 @@
       const expanded = rawDetailIds.has(ev.id);
       const memory = renderDestinationMemory(ev);
       const signalClass = routineNetworkEvent(ev) ? 'routine' : 'attention-network';
-      const rawRows = [
-        ['remote', meta.remote || destination],
+      const rowHtml = ([label, value]) => `
+        <div class="network-raw-label">${escapeHtml(label)}</div>
+        <div class="network-raw-value">${escapeHtml(value)}</div>`;
+      // Details grid (P0/P2 #13): human-meaningful fields first (destination,
+      // process, category), then diagnostic fields (SNI/bundle/team/proto/…).
+      const humanRows = [
+        ['destination', meta.remote || destination],
+        ['process', [pid ? `PID ${pid}` : '', process].filter(Boolean).join(' · ')],
+        ['category', category],
+      ].filter(([, value]) => value).map(rowHtml).join('');
+      const diagnosticRows = [
         ['source', source],
         ['state', state],
         ['proto', meta.proto || ''],
-        ['process', process],
-        ['category', category],
         ['SNI', meta.sni || ''],
         ['bundle', meta.bundle || ''],
         ['team', meta.team || ''],
         ['out', meta.out || ''],
-      ].filter(([, value]) => value).map(([label, value]) => `
-        <div class="network-raw-label">${escapeHtml(label)}</div>
-        <div class="network-raw-value">${escapeHtml(value)}</div>
-      `).join('');
+      ].filter(([, value]) => value).map(rowHtml).join('');
+      const detailsBody = (humanRows || diagnosticRows)
+        ? `${humanRows}${diagnosticRows ? `<div class="network-raw-group-label">Diagnostics</div>${diagnosticRows}` : ''}`
+        : '<div class="network-raw-value">No details</div>';
       return `
         <div class="event network compact-network ${escapeHtml(signalClass)}">
           <div class="network-row">
@@ -3548,9 +3567,9 @@
             <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
             ${agentBadge || `<span class="network-compact-meta">${escapeHtml(pidMeta || 'unattributed')}</span>`}
             <span class="network-state" title="${escapeHtml(stateLabel)}">${escapeHtml(stateLabel)}</span>
-            <button class="mini-button" title="${expanded ? 'Hide raw event details' : 'Show raw event details'}" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Raw'}</button>
+            <button class="mini-button" title="${expanded ? 'Hide flow details' : 'Show flow details'}" onclick="toggleRawDetails(${Number(ev.id)})">${expanded ? 'Hide' : 'Details'}</button>
           </div>
-          ${expanded ? `<div class="network-raw">${rawRows || '<div class="network-raw-value">No raw details</div>'}</div>` : ''}
+          ${expanded ? `<div class="network-raw">${detailsBody}</div>` : ''}
         </div>
       `;
     }
