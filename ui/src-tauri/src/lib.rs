@@ -1402,13 +1402,23 @@ fn evidence_severity(
     "low"
 }
 
-/// A destination category that is ordinary, expected agent traffic — Claude's
-/// own API, a package registry, a telemetry endpoint, or the Playwright bridge.
-/// Traffic to these is normal tool operation even right after a sensitive read,
-/// so it must not drive a card to full-red high risk, nor escalate the session
-/// verdict to red, nor break quiet mode (T5). This is the single source of truth
-/// for that judgement; `evidence_risk`, `compute_verdict`, and
-/// `linked_event_breaks_quiet` all consult it so the three signals can't drift.
+/// A destination category whose traffic cannot be exfiltration of a just-read
+/// sensitive file, so it must not drive a card to full-red high risk, nor
+/// escalate the session verdict to red, nor break quiet mode (T5). Single source
+/// of truth: `evidence_risk`, `compute_verdict`, and `linked_event_breaks_quiet`
+/// all consult it so the three signals can't drift.
+///
+/// Two distinct bases qualify a category here, both on the "can't carry the data
+/// off-machine to an untrusted party" axis (NOT the `quiet_by_default` axis —
+/// `local dev tunnel` is quiet-by-default but is a *public* tunnel, a plausible
+/// exfil path, so it is deliberately excluded):
+///   - Trusted external services — Claude's own API, a package registry, a
+///     telemetry endpoint, the Playwright bridge. Ordinary tool operation.
+///   - Loopback — `local dev server` / `local dev server bridge` are
+///     127.0.0.1/::1/.localhost. Data physically does not leave the machine, a
+///     stronger guarantee than the heuristic trust behind the external services.
+///     (If a local listener then egresses, that second hop is a flow AgentSnitch
+///     observes separately, so this does not blind the tool to a forwarder.)
 fn known_safe_category(destination_category: &str) -> bool {
     matches!(
         destination_category,
@@ -1416,6 +1426,8 @@ fn known_safe_category(destination_category: &str) -> bool {
             | "Playwright bridge traffic"
             | "telemetry/logging"
             | "package registry"
+            | "local dev server"
+            | "local dev server bridge"
     )
 }
 
@@ -1499,8 +1511,13 @@ fn evidence_review_status(
     if has_sensitive && weak_existing_only {
         return "Likely False Positive".into();
     }
+    // A sensitive read to a known-safe destination (incl. loopback) is not
+    // review-worthy — the data cannot be exfiltration (T5/F2). Don't let the
+    // has_sensitive branch below mark it "Needs Review"; fall through to the
+    // category-based classification (which yields "Routine" for these).
+    let sensitive_but_safe = has_sensitive && known_safe_category(destination_category);
     if risk == "high"
-        || (has_sensitive && !weak_existing_only)
+        || (has_sensitive && !weak_existing_only && !sensitive_but_safe)
         || destination_category == "unknown external"
         || destination_category == "local dev tunnel"
     {
@@ -5361,6 +5378,51 @@ mod tests {
             ),
             "high",
             "sensitive read → unknown external must stay high so it surfaces for review"
+        );
+    }
+
+    #[test]
+    fn evidence_risk_reconciles_sensitive_read_to_loopback() {
+        // F2: a sensitive read followed by traffic to LOOPBACK (local dev server /
+        // bridge — 127.0.0.1/::1/.localhost) cannot be exfiltration; the data does
+        // not leave the machine. So it reconciles to "low", not full-red high —
+        // fixing the false positive where sensitive-read → localhost rendered red.
+        for cat in ["local dev server", "local dev server bridge"] {
+            assert_eq!(
+                evidence_risk(
+                    None,
+                    &["after_sensitive_read".into(), "within_10s".into()],
+                    None,
+                    cat,
+                ),
+                "low",
+                "sensitive read → {cat} (loopback) must reconcile to low, not red"
+            );
+            // And the review status must not be "Needs Review" for loopback.
+            let status = evidence_review_status(
+                None,
+                &["after_sensitive_read".into(), "within_10s".into()],
+                None,
+                cat,
+                "low",
+            );
+            assert_ne!(
+                status, "Needs Review",
+                "sensitive read → {cat} (loopback) is not review-worthy"
+            );
+        }
+
+        // Regression guard: a PUBLIC tunnel is NOT loopback — sensitive read →
+        // local dev tunnel is a plausible exfil path and must stay flagged.
+        assert_eq!(
+            evidence_risk(
+                None,
+                &["after_sensitive_read".into(), "within_10s".into()],
+                None,
+                "local dev tunnel",
+            ),
+            "high",
+            "sensitive read → local dev tunnel (public) must stay high — exfil path"
         );
     }
 
