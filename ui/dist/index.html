@@ -2873,10 +2873,13 @@
 
     function displayEvents(selected) {
       const sorted = [...selected].sort((a, b) => b.id - a.id);
-      if (activeView === 'evidence') {
-        // Locked order (user decision): risk tier descending, recency within
-        // tier. The recency sort above is the within-tier tiebreaker; a stable
-        // sort by tier rank then preserves it.
+      // Evidence ordering (locked: risk tier descending, recency within tier)
+      // applies both to the top-level Evidence tab AND to the Evidence chip in
+      // the agent-detail drill-down (activeView is 'agents' there), since the
+      // drill-down chips now mirror the nav and make the same ordering promise.
+      // The recency sort above is the within-tier tiebreaker; a STABLE sort by
+      // tier rank preserves it.
+      if (activeView === 'evidence' || (activeView === 'agents' && activeAgentDetailKind === 'evidence')) {
         const tiered = [...sorted].sort((a, b) => evidenceTierRank(a) - evidenceTierRank(b));
         return groupAttentionNetworkEvents(tiered);
       }
