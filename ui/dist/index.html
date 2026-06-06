@@ -561,6 +561,14 @@
       line-height: 17px;
       overflow-wrap: anywhere;
     }
+    /* Story summary (P0 #7): the human one-liner that leads the detail panel. */
+    .agent-detail-story {
+      margin-top: 4px;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 16px;
+      overflow-wrap: anywhere;
+    }
     .agent-detail-subtitle {
       margin-top: 3px;
       color: var(--text-dim);
@@ -3110,6 +3118,73 @@
       </button>`;
     }
 
+    // relativeSince (P0 #7): humanize the gap between an ISO timestamp and now,
+    // e.g. "6s ago", "3m ago", "2h ago". Returns '' when unparseable.
+    function relativeSince(ts) {
+      const t = Date.parse(String(ts || ''));
+      if (!Number.isFinite(t)) return '';
+      const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (secs < 60) return `${secs}s ago`;
+      const mins = Math.round(secs / 60);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.round(mins / 60);
+      return `${hrs}h ago`;
+    }
+
+    // eventIsRead (P0 #7): a hook event that read a file/context (Read/Grep/Glob/
+    // cat-style tools, or a sensitive-context read).
+    function eventIsRead(ev) {
+      if (eventKind(ev) !== 'hooks') return false;
+      const s = String(ev?.summary || '');
+      return /\b(Read|Grep|Glob|cat|LS|NotebookRead|view|open)\b/i.test(s);
+    }
+
+    // eventIsSensitive (P0 #7): the event touched sensitive/credential context.
+    function eventIsSensitive(ev) {
+      const tags = Array.isArray(ev?.tags) ? ev.tags.map(String) : [];
+      if (tags.some(t => /sensitive|credential|secret/i.test(t))) return true;
+      return attentionReasons(ev).includes('sensitive context');
+    }
+
+    // agentStorySummary (P0 #7): synthesize a human one-liner from the agent's
+    // scoped events — "Spawned 6s ago by main(69566) · read 1 file · 1 outbound
+    // flow to api.github.com · no sensitive context." Leads the detail panel.
+    function agentStorySummary(agent, scoped, counts) {
+      const parts = [];
+      const isSub = agentType(agent) === 'sub';
+      // Earliest scoped event approximates spawn/first-activity time.
+      const earliest = scoped.reduce((min, ev) => {
+        const t = Date.parse(String(ev?.ts || ''));
+        return Number.isFinite(t) && (min === null || t < min) ? t : min;
+      }, null);
+      const ago = earliest !== null ? relativeSince(new Date(earliest).toISOString()) : '';
+      if (isSub) {
+        const parentAgent = agentParentId(agent) ? findAgent(agentParentId(agent)) : null;
+        const parentPid = parentAgent ? agentPid(parentAgent) : 0;
+        const parentName = parentAgent ? agentShortName(parentAgent).replace(/ — main$/, '') : 'main';
+        const by = parentAgent ? ` by ${parentName}${parentPid ? `(${parentPid})` : ''}` : '';
+        parts.push(ago ? `Spawned ${ago}${by}` : `Spawned${by}`);
+      } else {
+        parts.push(ago ? `Active since ${ago}` : 'Active');
+      }
+      // Reads.
+      const reads = scoped.filter(eventIsRead).length;
+      if (reads) parts.push(`read ${reads} ${pluralize(reads, 'file')}`);
+      // Outbound flows + distinct destinations.
+      const flows = scoped.filter(ev => eventKind(ev) === 'network' || isAttributedNetworkEvent(ev));
+      if (flows.length) {
+        const dests = [...new Set(flows
+          .map(ev => destinationHost(networkDisplayDestination(ev) || summaryDestination(ev) || ''))
+          .filter(Boolean))];
+        const destText = dests.length === 1 ? ` to ${dests[0]}`
+          : dests.length > 1 ? ` to ${dests.length} destinations` : '';
+        parts.push(`${flows.length} outbound ${pluralize(flows.length, 'flow')}${destText}`);
+      }
+      // Sensitive context.
+      parts.push(scoped.some(eventIsSensitive) ? 'sensitive context read' : 'no sensitive context');
+      return parts.join(' · ') + '.';
+    }
+
     function renderAgentDetailView() {
       const agent = findAgent(activeAgentFilter) || { id: activeAgentFilter, name: activeAgentFilter, type: 'main' };
       const scoped = events.filter(ev => eventMatchesAgentScope(ev, activeAgentFilter));
@@ -3133,6 +3208,9 @@
         return `<button class="agent-detail-chip${active}" onclick="setAgentDetailKind('${kind}')"><span>${label}</span><strong>${counts[kind] || 0}</strong></button>`;
       }).join('');
       const emptyText = agentDetailEmptyText(activeAgentDetailKind, agent);
+      // Lead with a synthesized human story (P0 #7), computed from the agent's
+      // scoped events; the diagnostic meta line stays below it.
+      const story = agentStorySummary(agent, scoped, counts);
       const feed = selected.length
         ? `<div class="agent-detail-feed">${displayEvents(selected).map(ev => renderAgentDetailEvent(ev, activeAgentDetailKind, agent)).join('')}</div>`
         : `<div class="agent-detail-empty">${escapeHtml(emptyText)}</div>`;
@@ -3140,6 +3218,7 @@
         <div class="agent-detail-head">
           <div>
             <div class="agent-detail-title">${escapeHtml(agentShortName(agent))}</div>
+            <div class="agent-detail-story">${escapeHtml(story)}</div>
             <div class="agent-detail-subtitle">${escapeHtml(meta)}</div>
           </div>
           <button class="mini-button" onclick="clearAgentDetail()">Back</button>
