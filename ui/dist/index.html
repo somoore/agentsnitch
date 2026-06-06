@@ -206,6 +206,62 @@
     }
     .verdict-banner.red .verdict-dot { background: var(--red); }
     .verdict-banner.red .verdict-text { color: var(--red); }
+    /* Activity ticker (P0 #1): always-visible heartbeat of recent tool calls,
+       independent of the active tab. Lives in the header, above the tabs. */
+    .activity-ticker {
+      margin: 0 8px 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(120, 120, 128, 0.08);
+    }
+    .activity-ticker-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .activity-ticker-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .activity-ticker-counts {
+      font-size: 10px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .activity-ticker-counts strong { color: var(--text); font-weight: 600; }
+    .activity-ticker-items {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .activity-ticker-item {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .activity-ticker-item .activity-ticker-ts {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+    .activity-ticker-item .activity-ticker-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .activity-ticker-empty {
+      font-size: 11px;
+      color: var(--muted);
+    }
     .agent-main-list {
       display: grid;
       gap: 5px;
@@ -1844,6 +1900,14 @@
       <span id="verdictText" class="verdict-text">No sensitive context has left this machine.</span>
     </div>
 
+    <div id="activityTicker" class="activity-ticker" hidden>
+      <div class="activity-ticker-head">
+        <span class="activity-ticker-label">Live activity</span>
+        <span id="activityTickerCounts" class="activity-ticker-counts"></span>
+      </div>
+      <div id="activityTickerItems" class="activity-ticker-items"></div>
+    </div>
+
     <div class="tabs" id="tabs">
       <button class="tab active" data-view="attention" onclick="setView('attention')">Attention</button>
       <button class="tab" data-view="linked" onclick="setView('linked')">Linked</button>
@@ -3098,9 +3162,63 @@
       renderEvents();
     }
 
+    // tickerSentence (P0 #1): render one recent event as a human sentence for the
+    // activity strip — "Read go.mod", "Bash: curl api.github.com",
+    // "Spawned subagent: QA login flow", "Network → api.github.com".
+    function tickerSentence(ev) {
+      const kind = eventKind(ev);
+      if (kind === 'network' || isAttributedNetworkEvent(ev)) {
+        const dest = networkDisplayDestination(ev) || summaryDestination(ev) || 'a destination';
+        return `Network → ${dest}`;
+      }
+      // A spawned subagent reads from the event's own agent record when it's a sub.
+      if (agentType(ev?.agent) === 'sub') {
+        const summary = laneSummary(ev);
+        const subName = agentShortName(ev.agent);
+        if (/spawn|subagent|sub-agent/i.test(summary)) return summary;
+        return `${subName}: ${summary || 'tool activity'}`;
+      }
+      const summary = laneSummary(ev);
+      return summary || 'tool activity';
+    }
+
+    // renderTicker (P0 #1): always-visible. Called unconditionally at the top of
+    // renderEvents so it survives every tab (including the agents/empty early
+    // returns, which replace the #events container but not the header).
+    function renderTicker() {
+      const wrap = document.getElementById('activityTicker');
+      const itemsEl = document.getElementById('activityTickerItems');
+      const countsEl = document.getElementById('activityTickerCounts');
+      if (!wrap || !itemsEl || !countsEl) return;
+      const sc = sessionCounts();
+      const agentCount = visibleTeamAgents().length;
+      const total = events.length;
+      if (!total) {
+        wrap.hidden = true;
+        return;
+      }
+      wrap.hidden = false;
+      // Newest first; show the last 5 as sentences (events are id-ordered).
+      const recent = [...events].sort((a, b) => (b.id || 0) - (a.id || 0)).slice(0, 5);
+      itemsEl.innerHTML = recent.map(ev => `
+        <div class="activity-ticker-item" title="${escapeHtml(tickerSentence(ev))}">
+          <span class="activity-ticker-ts">${escapeHtml(displayTimestamp(ev.ts))}</span>
+          <span class="activity-ticker-text">${escapeHtml(tickerSentence(ev))}</span>
+        </div>
+      `).join('') || '<div class="activity-ticker-empty">Watching for tool calls…</div>';
+      const parts = [
+        `<strong>${agentCount}</strong> ${pluralize(agentCount, 'agent')}`,
+        `<strong>${sc.hooks}</strong> tool ${pluralize(sc.hooks, 'call')}`,
+        `<strong>${sc.network}</strong> ${pluralize(sc.network, 'flow')}`,
+      ];
+      if (sc.linked) parts.push(`<strong>${sc.linked}</strong> linked`);
+      countsEl.innerHTML = parts.join(' · ');
+    }
+
     function renderEvents() {
       const container = document.getElementById('events');
       const empty = document.getElementById('empty');
+      renderTicker();
       renderTabs();
       renderAgentTeam(teamAgents);
       if (activeView === 'agents') {
