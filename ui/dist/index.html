@@ -2871,24 +2871,12 @@
       return tier === 'hot' ? 0 : tier === 'medium' ? 1 : 2;
     }
 
-    function displayEvents(selected) {
-      const sorted = [...selected].sort((a, b) => b.id - a.id);
-      // Evidence ordering (locked: risk tier descending, recency within tier)
-      // applies both to the top-level Evidence tab AND to the Evidence chip in
-      // the agent-detail drill-down (activeView is 'agents' there), since the
-      // drill-down chips now mirror the nav and make the same ordering promise.
-      // The recency sort above is the within-tier tiebreaker; a STABLE sort by
-      // tier rank preserves it.
-      if (activeView === 'evidence' || (activeView === 'agents' && activeAgentDetailKind === 'evidence')) {
-        const tiered = [...sorted].sort((a, b) => evidenceTierRank(a) - evidenceTierRank(b));
-        return groupAttentionNetworkEvents(tiered);
-      }
-      // Only the Raw feed falls through to the known-group collapsing below
-      // (for raw:hooks it's a harmless no-op — no network rows to collapse).
-      // Every other caller (the agent-detail drill-down, where activeView is
-      // 'agents') gets the plain recency sort.
-      if (activeView !== 'raw') return sorted;
-
+    // collapseKnownAndDuplicate groups low-risk known-safe correlated rows into a
+    // grey category summary (the zoom-out) and dedups identical findings. Shared
+    // by the Raw feed and the Evidence feed so known-safe correlations never
+    // flood either view as individual cards. Input must already be in the desired
+    // top-level order; grouping preserves first-occurrence order.
+    function collapseKnownAndDuplicate(sorted) {
       const knownGroups = new Map();
       const groups = new Map();
       const rendered = [];
@@ -2937,6 +2925,29 @@
         rendered.push(grouped);
       }
       return rendered;
+    }
+
+    function displayEvents(selected) {
+      const sorted = [...selected].sort((a, b) => b.id - a.id);
+      // Evidence ordering (locked: risk tier descending, recency within tier)
+      // applies both to the top-level Evidence tab AND to the Evidence chip in
+      // the agent-detail drill-down (activeView is 'agents' there), since the
+      // drill-down chips now mirror the nav and make the same ordering promise.
+      // The recency sort above is the within-tier tiebreaker; a STABLE sort by
+      // tier rank preserves it. Evidence inherits BOTH the raw-network grouping
+      // (groupAttentionNetworkEvents) AND the known-safe/duplicate collapse that
+      // the old Linked/All path used, so low-risk known-safe correlations stay in
+      // the grey category summary instead of flooding the view as single cards.
+      if (activeView === 'evidence' || (activeView === 'agents' && activeAgentDetailKind === 'evidence')) {
+        const tiered = [...sorted].sort((a, b) => evidenceTierRank(a) - evidenceTierRank(b));
+        return collapseKnownAndDuplicate(groupAttentionNetworkEvents(tiered));
+      }
+      // Only the Raw feed falls through to the known-group collapsing below
+      // (for raw:hooks it's a harmless no-op — no network rows to collapse).
+      // Every other caller (the agent-detail drill-down, where activeView is
+      // 'agents') gets the plain recency sort.
+      if (activeView !== 'raw') return sorted;
+      return collapseKnownAndDuplicate(sorted);
     }
 
     function countsByKind() {
