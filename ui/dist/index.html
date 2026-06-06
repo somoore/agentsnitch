@@ -1090,6 +1090,9 @@
       border-radius: 7px;
       margin-bottom: 8px;
     }
+    /* #16: one risk scale on the card border, matching the review-chip colors —
+       red = high, amber = medium, green = low/safe. Previously "low" used the
+       purple accent, which read as a 4th color off the risk scale. */
     .event.evidence.hot {
       border-left-color: #ff6b61;
       background: #321c1c;
@@ -1100,8 +1103,8 @@
       background: #2b2418;
     }
     .event.evidence.low {
-      border-left-color: var(--accent);
-      background: #1d2530;
+      border-left-color: #4cd07d;
+      background: #18241d;
     }
     .event.evidence.compact {
       gap: 7px;
@@ -1196,25 +1199,27 @@
       white-space: nowrap;
       border: 1px solid transparent;
     }
-    .review-chip.needs-review {
+    /* #16: the review chip's COLOR is driven by the card's risk tier (red/amber/
+       green), so it can never contradict the card border — which is also driven
+       by risk. The chip TEXT still carries the workflow status ("Needs Review" /
+       "Review" / "Routine" / "Likely False Positive"), which can legitimately
+       diverge from the tier; color = risk, text = workflow, so the two can't
+       fight. One risk scale everywhere: red = high (matches .hot border),
+       amber = medium (matches .medium), green = low/safe (matches .low). */
+    .review-chip.risk-high {
       color: #1c1c1e;
-      background: var(--orange);
-      border-color: rgba(255, 159, 10, 0.85);
+      background: var(--red);
+      border-color: rgba(255, 69, 58, 0.85);
     }
-    .review-chip.review {
+    .review-chip.risk-medium {
       color: #ffd89b;
-      background: rgba(255, 159, 10, 0.14);
-      border-color: rgba(255, 159, 10, 0.35);
+      background: rgba(255, 159, 10, 0.16);
+      border-color: rgba(255, 159, 10, 0.42);
     }
-    .review-chip.routine {
-      color: #a9d8ff;
-      background: rgba(10, 132, 255, 0.13);
-      border-color: rgba(10, 132, 255, 0.34);
-    }
-    .review-chip.likely-false-positive {
+    .review-chip.risk-low {
       color: #b9f3c8;
       background: rgba(48, 209, 88, 0.12);
-      border-color: rgba(48, 209, 88, 0.36);
+      border-color: rgba(48, 209, 88, 0.4);
     }
     .evidence-head {
       display: grid;
@@ -1237,6 +1242,33 @@
     }
     .evidence.hot .severity-mark { background: var(--red); }
     .evidence.medium .severity-mark { background: var(--orange); color: #1c1c1e; }
+    /* T4/T6: the human "why" sentence is the HEADLINE of each card; the old
+       generic pattern title ("Sensitive read → outbound connection") is demoted
+       to a small eyebrow above it. The sentence wraps (it is prose, not a
+       truncated title) and is the single place the why is shown — the body row
+       that used to repeat it is removed. */
+    .evidence-eyebrow {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      overflow-wrap: anywhere;
+    }
+    .evidence-headline {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+    .evidence-headline .evidence-why {
+      font-size: 13px;
+      font-weight: 720;
+      line-height: 1.32;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+    .evidence-headline .mini-button { flex-shrink: 0; }
     .evidence-title {
       font-size: 13px;
       font-weight: 760;
@@ -1487,16 +1519,6 @@
       font-size: 11px;
       line-height: 15px;
       overflow-wrap: anywhere;
-    }
-    .why-value {
-      display: flex;
-      align-items: baseline;
-      gap: 6px;
-      min-width: 0;
-    }
-    .why-value .evidence-why {
-      flex: 1;
-      min-width: 0;
     }
     .evidence-expanded {
       display: grid;
@@ -3505,6 +3527,16 @@
       return normalizePatternPiece(status || 'Review').replace(/[ /_]+/g, '-');
     }
 
+    // #16: map a card severity/risk tier (hot|high → high, medium → medium,
+    // everything else → low) to the unified risk-color class shared by the chip
+    // and the card border, so chip color can never contradict the border.
+    function riskTierClass(tier) {
+      const t = String(tier || '').toLowerCase();
+      if (t === 'hot' || t === 'high') return 'risk-high';
+      if (t === 'medium') return 'risk-medium';
+      return 'risk-low';
+    }
+
     function reviewStatus(evidence) {
       return evidence?.review_status || (String(evidence?.risk || '').toLowerCase() === 'high' ? 'Needs Review' : 'Review');
     }
@@ -3674,13 +3706,6 @@
         <div class="evidence-body compact-body">
           ${destinationLine}
           ${provenance}
-          <div class="evidence-line">
-            <div class="evidence-label">Why this matters</div>
-            <div class="why-value">
-              <div class="evidence-why">${escapeHtml(why)}</div>
-              <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
-            </div>
-          </div>
         </div>
       `;
       const fullBody = `
@@ -3694,13 +3719,6 @@
           <div class="evidence-line">
             <div class="evidence-label">Network evidence</div>
             <div class="evidence-text">${escapeHtml(evidence.flow || ev.detail || '')}</div>
-          </div>
-          <div class="evidence-line">
-            <div class="evidence-label">Why this matters</div>
-            <div class="why-value">
-              <div class="evidence-why">${escapeHtml(why)}</div>
-              <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
-            </div>
           </div>
           ${isExpanded ? `<div class="evidence-expanded">
             ${renderRelatedSubEvents(ev)}
@@ -3716,11 +3734,15 @@
             <span class="ts" title="${escapeHtml(ev.ts || '')}">${escapeHtml(displayTimestamp(ev.ts))}</span>
             <div class="evidence-heading">
               <div class="evidence-meta-row">
-                <span class="review-chip ${escapeHtml(statusClass)}">${escapeHtml(status)}</span>
+                <span class="review-chip ${escapeHtml(riskTierClass(cardSeverity))} status-${escapeHtml(statusClass)}">${escapeHtml(status)}</span>
                 ${groupChip}
                 <span class="category-pill">${escapeHtml(category)}</span>
               </div>
-              <span class="evidence-title">${escapeHtml(evidence.title || ev.summary || 'Linked evidence')}</span>
+              <div class="evidence-eyebrow">${escapeHtml(evidence.title || ev.summary || 'Linked evidence')}</div>
+              <div class="evidence-headline">
+                <span class="evidence-why">${escapeHtml(why)}</span>
+                <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
+              </div>
               <span class="evidence-subtitle">${escapeHtml(subtitle)} · ${escapeHtml(decision)} · risk ${escapeHtml(risk)}</span>
             </div>
             <span class="evidence-actions">
