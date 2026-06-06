@@ -3527,9 +3527,19 @@
       return normalizePatternPiece(status || 'Review').replace(/[ /_]+/g, '-');
     }
 
-    // #16: map a card severity/risk tier (hot|high → high, medium → medium,
-    // everything else → low) to the unified risk-color class shared by the chip
-    // and the card border, so chip color can never contradict the border.
+    // #16: map the reconciled risk to the card's CSS visual tier (the border
+    // classes .hot/.medium/.low). Driven by risk, not raw severity, so a
+    // medium-risk/low-severity card reads amber, not green.
+    function cardRiskTier(risk) {
+      const r = String(risk || '').toLowerCase();
+      if (r === 'high' || r === 'hot') return 'hot';
+      if (r === 'medium') return 'medium';
+      return 'low';
+    }
+
+    // #16: map a card tier (hot|high → high, medium → medium, everything else →
+    // low) to the unified risk-color class shared by the chip and the card
+    // border, so chip color can never contradict the border.
     function riskTierClass(tier) {
       const t = String(tier || '').toLowerCase();
       if (t === 'hot' || t === 'high') return 'risk-high';
@@ -3655,11 +3665,16 @@
       // mechanism-level severity. A sensitive read followed by known-safe traffic
       // (Claude API etc.) is "hot" at the mechanism level but reconciled to low
       // risk — so it must not paint the card red while the subtitle says "risk
-      // low". Reading risk (rather than re-deriving from category) catches both
-      // the category and SNI/flow known-safe paths, mirroring the Rust guards.
-      // (`.hot`/`.medium`/`.low` are the styled classes; risk "high" maps to the
-      // hot styling, every other non-low risk keeps the raw severity.)
-      const cardSeverity = (evidence.risk === 'low') ? 'low' : severity;
+      // low". The card VISUAL TIER (border + chip) is driven by the reconciled
+      // `risk`, not the raw mechanism severity. Keying off severity mis-colored
+      // medium-risk cards whose severity is still "low" (e.g. first_destination
+      // to an unknown external host: risk=medium, severity=low) as green while
+      // the subtitle said "risk medium" — a contradiction the unified scale is
+      // meant to remove. risk alone determines the correct tier in every
+      // reachable case (severity=="hot" implies risk in {low,high}; risk=="high"
+      // implies severity=="hot"), so this can't under-color a dangerous card.
+      // `risk` here already falls back to severity when evidence.risk is absent.
+      const cardSeverity = cardRiskTier(risk);
       const destination = evidence.destination || '';
       const isExpanded = expandedIds.has(ev.id);
       const groupCount = Number(ev._groupCount || 1);
