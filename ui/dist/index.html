@@ -3369,13 +3369,14 @@
       // Known-safe categories are always grey, regardless of an incidental risk
       // field — that's the deliberate desaturation that clears the field.
       if (knownQuietCategory(category) || collapsedKnownCategory(category)) return 'low';
-      // Any destination NOT in a known-safe category is a breakout — the whole
-      // point is that "not known-safe" pops hot regardless of whether the daemon
-      // has scored it high yet (a brand-new unexpected egress may still read
-      // low/medium). cardRiskTier is consulted only to keep the hot color in sync
-      // with the existing #16 scale; the floor here is always hot for uncollapsed.
-      cardRiskTier(evidence.risk || evidence.severity || '');
-      return 'hot';
+      // For an uncollapsed destination the color is driven by the daemon's risk
+      // score on the existing #16 scale (hot/red = risk high, medium/orange =
+      // medium, low = neutral). This keeps "hot-breakout = the red/risk-high
+      // color" honest: an expected-but-uncollapsed destination (e.g. a
+      // "cloud provider" flow, quiet_by_default:false, scored low) renders
+      // NEUTRAL, not the same red as a genuine CN/RU egress scored high — so the
+      // one true anomaly still pops as the lone red in a field of grey/neutral.
+      return cardRiskTier(evidence.risk || evidence.severity || '');
     }
 
     // Build the node/edge graph from the flow events. Four columns:
