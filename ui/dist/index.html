@@ -3095,7 +3095,7 @@
         // <button> (Inspect, or a child subagent row) so those keep their own
         // action — event.target.closest('button') catches them before the card
         // handler runs, preventing a double-fire.
-        return `${header}<section class="agent-tree-group" role="button" tabindex="0" data-card-main="${escapeHtml(main.id)}" title="Inspect ${escapeHtml(baseLabel)}" onclick="if (!event.target.closest('button')) showAgentDetail('${escapeHtml(main.id)}')">
+        return `${header}<section class="agent-tree-group" role="button" tabindex="0" data-card-main="${escapeHtml(main.id)}" title="Inspect ${escapeHtml(baseLabel)}" onclick="if (!event.target.closest('button')) showAgentDetail('${escapeHtml(main.id)}')" onkeydown="if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) { event.preventDefault(); showAgentDetail('${escapeHtml(main.id)}'); }">
           <div class="agent-tree-main">
             <div>
               <strong title="${escapeHtml(String(main.cwd || ''))}">${escapeHtml(mainLabel)}</strong>
