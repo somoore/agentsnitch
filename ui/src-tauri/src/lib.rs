@@ -2802,22 +2802,64 @@ fn load_claude_hooks_status(
     Ok(status)
 }
 
+fn hook_events_needing_refresh(hooks: &[ClaudeHookStatus]) -> Vec<String> {
+    hooks
+        .iter()
+        .filter(|hook| hook.installed && !hook.up_to_date)
+        .map(|hook| hook.event.clone())
+        .collect()
+}
+
+fn hook_auto_update_plan(status: &ClaudeHooksStatus) -> Vec<(String, Vec<String>)> {
+    if !status.agents.is_empty() {
+        return status
+            .agents
+            .iter()
+            .filter(|agent| agent.supported && agent.installed)
+            .filter_map(|agent| {
+                let events = hook_events_needing_refresh(&agent.hooks);
+                if events.is_empty() {
+                    None
+                } else {
+                    Some((agent.id.clone(), events))
+                }
+            })
+            .collect();
+    }
+
+    let agent = normalize_hook_agent(Some(status.selected_agent_id.clone()));
+    if agent == "all" {
+        return Vec::new();
+    }
+    let events = hook_events_needing_refresh(&status.hooks);
+    if events.is_empty() {
+        Vec::new()
+    } else {
+        vec![(agent, events)]
+    }
+}
+
 fn ensure_claude_hooks_current_if_enabled(settings: AppSettings) {
     if !settings.keep_hooks_up_to_date {
         return;
     }
     thread::spawn(
         move || match load_claude_hooks_status(&settings, Some("all".into())) {
-            Ok(status)
-                if status.claude_installed
-                    && status.emitter_executable
-                    && !status.all_up_to_date =>
-            {
-                if let Err(err) = run_hookctl("install", Vec::new(), Some("all".into())) {
-                    append_ui_log(&format!(
-                        "[agentsnitch-ui] hook auto-update failed: {}",
-                        err
-                    ));
+            Ok(status) if status.emitter_executable => {
+                for (agent, events) in hook_auto_update_plan(&status) {
+                    if let Err(err) = run_hookctl("install", events, Some(agent.clone())) {
+                        append_ui_log(&format!(
+                            "[agentsnitch-ui] hook auto-update failed for {}: {}",
+                            agent, err
+                        ));
+                    }
+                }
+            }
+            Ok(status) if !status.emitter_executable => {
+                if status.needs_update {
+                    append_ui_log(
+                        "[agentsnitch-ui] hook auto-update skipped: emitter helper is not executable",
+                    );
                 }
             }
             Ok(_) => {}
@@ -5443,6 +5485,41 @@ mod tests {
     }
 
     #[test]
+    fn hook_auto_update_plan_refreshes_only_installed_stale_hooks() {
+        let mut status = hooks_status_fixture();
+        status.agents = vec![ClaudeHookAgentStatus {
+            id: "claude".into(),
+            label: "Claude Code".into(),
+            installed: true,
+            supported: true,
+            path: "/opt/homebrew/bin/claude".into(),
+            settings_path: "/Users/example/.claude/settings.json".into(),
+            settings_exists: true,
+            all_installed: false,
+            all_up_to_date: false,
+            needs_update: true,
+            hooks: vec![
+                hook_status_fixture("PreToolUse", true, false),
+                hook_status_fixture("PostToolUse", false, false),
+            ],
+        }];
+
+        assert_eq!(
+            hook_auto_update_plan(&status),
+            vec![("claude".into(), vec!["PreToolUse".into()])]
+        );
+    }
+
+    #[test]
+    fn hook_auto_update_plan_skips_aggregate_all_without_agent_detail() {
+        let mut status = hooks_status_fixture();
+        status.selected_agent_id = "all".into();
+        status.hooks = vec![hook_status_fixture("PreToolUse", true, false)];
+
+        assert!(hook_auto_update_plan(&status).is_empty());
+    }
+
+    #[test]
     fn network_sensor_env_kill_switch_forces_disabled_settings() {
         std::env::set_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION", "1");
         let settings = apply_network_sensor_env_override(AppSettings {
@@ -5455,6 +5532,53 @@ mod tests {
         std::env::remove_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION");
 
         assert!(settings.network_sensor_disabled);
+    }
+
+    fn hooks_status_fixture() -> ClaudeHooksStatus {
+        ClaudeHooksStatus {
+            schema: "agentsnitch.hooks_status.v0".into(),
+            selected_agent_id: "claude".into(),
+            selected_agent_label: "Claude Code".into(),
+            scope_label: "Claude Code".into(),
+            agents: Vec::new(),
+            claude_installed: true,
+            claude_path: "/opt/homebrew/bin/claude".into(),
+            settings_path: "/Users/example/.claude/settings.json".into(),
+            settings_exists: true,
+            emitter_path: "/Applications/AgentSnitch.app/Contents/MacOS/emitter".into(),
+            emitter_executable: true,
+            all_installed: false,
+            all_up_to_date: false,
+            needs_update: true,
+            hooks: Vec::new(),
+            keep_hooks_up_to_date: true,
+            detail: String::new(),
+        }
+    }
+
+    fn hook_status_fixture(event: &str, installed: bool, up_to_date: bool) -> ClaudeHookStatus {
+        ClaudeHookStatus {
+            event: event.into(),
+            arg: event.to_ascii_lowercase(),
+            label: event.into(),
+            description: format!("{} hook", event),
+            desired_command: "/Applications/AgentSnitch.app/Contents/MacOS/emitter".into(),
+            installed,
+            up_to_date,
+            stale: installed && !up_to_date,
+            current_command: if installed {
+                "/tmp/old-agentsnitch-emitter".into()
+            } else {
+                String::new()
+            },
+            status: if up_to_date {
+                "up_to_date".into()
+            } else if installed {
+                "stale".into()
+            } else {
+                "missing".into()
+            },
+        }
     }
 
     #[test]
