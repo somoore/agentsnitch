@@ -39,8 +39,15 @@ jobs:
           fetch-depth: 0
 
       - name: Validate release ref
+        env:
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${RELEASE_GPG_PUBLIC_KEY:-}" ]; then
+            echo "::error::Missing required secret/env: RELEASE_GPG_PUBLIC_KEY"
+            exit 1
+          fi
+          printf '%s' "$RELEASE_GPG_PUBLIC_KEY" | gpg --batch --import
           case "$TAG_NAME" in
             v*) ;;
             *)
@@ -102,6 +109,7 @@ jobs:
           APPLE_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLE_KEY_P8: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           missing=0
@@ -116,7 +124,8 @@ jobs:
             EXT_PROFILE \
             APPLE_KEY_ID \
             APPLE_ISSUER_ID \
-            APPLE_KEY_P8; do
+            APPLE_KEY_P8 \
+            RELEASE_GPG_PUBLIC_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required secret/env: $name"
               missing=1
