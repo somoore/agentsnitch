@@ -176,12 +176,15 @@ func (x *sidechainIndexer) indexClaudeTranscriptLocked(path, parentAgentID strin
 		return subagentEvents{}
 	}
 	defer f.Close()
+	if info, err := f.Stat(); err != nil || info.Size() > SidechainTranscriptMaxBytes {
+		return subagentEvents{}
+	}
 
 	var detected subagentEvents
 	skipAgentToolSeeds := hasTranscriptSubagents(path)
 	meta := readSidechainMeta(path)
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), SidechainTranscriptMaxBytes)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -297,10 +300,13 @@ func recentClaudeSidechainPaths(now time.Time) []string {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || info.ModTime().Before(cutoff) {
+		if err != nil || info.ModTime().Before(cutoff) || info.Size() > SidechainTranscriptMaxBytes {
 			return nil
 		}
 		paths = append(paths, path)
+		if len(paths) >= SidechainDiscoveryMaxFiles {
+			return filepath.SkipAll
+		}
 		return nil
 	})
 	return paths
@@ -312,6 +318,9 @@ func firstSidechainCWD(path string) string {
 		return ""
 	}
 	defer f.Close()
+	if info, err := f.Stat(); err != nil || info.Size() > SidechainTranscriptMaxBytes {
+		return ""
+	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {

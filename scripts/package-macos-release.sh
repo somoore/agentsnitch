@@ -150,9 +150,9 @@ cat > "$PKGROOT/Library/LaunchAgents/com.somoore.agentsnitch.daemon.plist" <<'PL
   <key>LimitLoadToSessionType</key>
   <string>Aqua</string>
   <key>StandardOutPath</key>
-  <string>/tmp/agentsnitch-daemon.log</string>
+  <string>/dev/null</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/agentsnitch-daemon.log</string>
+  <string>/dev/null</string>
 </dict>
 </plist>
 PLIST

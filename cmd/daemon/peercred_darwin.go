@@ -17,7 +17,9 @@ func resolvePeerExePath(pid int) (string, bool) {
 	if pid <= 0 {
 		return "", false
 	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	cmd := exec.Command("/bin/ps", "-p", strconv.Itoa(pid), "-o", "comm=")
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out, err := cmd.Output()
 	if err != nil {
 		return "", false
 	}

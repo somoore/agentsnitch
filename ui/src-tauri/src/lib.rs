@@ -17,6 +17,8 @@ use std::time::{Duration, SystemTime};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 #[cfg(unix)]
+use std::os::unix::io::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use chrono::{DateTime, Utc};
@@ -827,8 +829,10 @@ fn agent_process_running_for_session(
     snap: &SessionSnapshot,
     agents: &HashMap<String, AgentInfo>,
 ) -> Result<bool, String> {
-    let output = Command::new("ps")
+    let output = Command::new("/bin/ps")
         .args(["-axo", "pid=,comm=,args="])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         .output()
         .map_err(|err| err.to_string())?;
     if !output.status.success() {
@@ -2499,7 +2503,7 @@ fn load_app_settings() -> AppSettings {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return apply_network_sensor_env_override(AppSettings::default());
     };
-    let mut settings = match serde_json::from_str::<AppSettings>(&text) {
+    let settings = match serde_json::from_str::<AppSettings>(&text) {
         Ok(mut settings) => {
             if settings.schema.is_empty() {
                 settings.schema = "agentsnitch.ui_settings.v0".into();
@@ -2514,7 +2518,6 @@ fn load_app_settings() -> AppSettings {
             AppSettings::default()
         }
     };
-    settings.network_sensor_disabled = !settings.high_assurance_default_enabled;
     apply_network_sensor_env_override(settings)
 }
 
@@ -3317,8 +3320,210 @@ fn handle_unix_stream(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::BufReader;
 
+    let peer_pid = peer_pid_for_unix_stream(&stream).ok_or("ui socket peer pid unavailable")?;
+    if !trusted_daemon_socket_peer(peer_pid) {
+        return Err(format!(
+            "ui socket peer pid {} is not the AgentSnitch daemon",
+            peer_pid
+        )
+        .into());
+    }
+
     let mut reader = BufReader::new(stream);
     process_ui_socket_lines(&mut reader, |line| process_incoming_json(app, line, "UDS"))
+}
+
+#[cfg(target_os = "macos")]
+fn peer_pid_for_unix_stream(stream: &UnixStream) -> Option<i32> {
+    const SOL_LOCAL: libc::c_int = 0;
+    const LOCAL_PEERPID: libc::c_int = 0x002;
+    let mut pid: libc::c_int = 0;
+    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            SOL_LOCAL,
+            LOCAL_PEERPID,
+            (&mut pid as *mut libc::c_int).cast(),
+            &mut len,
+        )
+    };
+    if rc == 0 && pid > 0 {
+        Some(pid)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn peer_pid_for_unix_stream(stream: &UnixStream) -> Option<i32> {
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    if rc == 0 && cred.pid > 0 {
+        Some(cred.pid)
+    } else {
+        None
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn peer_pid_for_unix_stream(_stream: &UnixStream) -> Option<i32> {
+    None
+}
+
+#[cfg(unix)]
+fn trusted_daemon_socket_peer(pid: i32) -> bool {
+    let Some(exe) = resolve_peer_exe_path(pid) else {
+        append_ui_log(&format!(
+            "[agentsnitch-ui] rejected UI socket peer pid {}: executable unavailable",
+            pid
+        ));
+        return false;
+    };
+    if !is_trusted_daemon_exe(&exe) {
+        append_ui_log(&format!(
+            "[agentsnitch-ui] rejected UI socket peer pid {}: untrusted executable {}",
+            pid,
+            exe.display()
+        ));
+        return false;
+    }
+    trusted_peer_signature(&exe)
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_peer_exe_path(pid: i32) -> Option<std::path::PathBuf> {
+    let output = Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.starts_with('/') {
+        Some(std::path::PathBuf::from(path))
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_peer_exe_path(pid: i32) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/{}/exe", pid)).ok()
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn resolve_peer_exe_path(_pid: i32) -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(unix)]
+fn is_trusted_daemon_exe(exe: &std::path::Path) -> bool {
+    let exe = clean_path(exe);
+    agent_snitch_support_bins()
+        .into_iter()
+        .any(|bin| exe == bin.join("AgentSnitch"))
+}
+
+#[cfg(unix)]
+fn agent_snitch_support_bins() -> Vec<std::path::PathBuf> {
+    if let Ok(dir) = std::env::var("AGENTSNITCH_SUPPORT_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return vec![std::path::PathBuf::from(trimmed).join("bin")];
+        }
+    }
+    let mut bins = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            bins.push(
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("AgentSnitch")
+                    .join("bin"),
+            );
+        }
+    }
+    bins.push(std::path::PathBuf::from(
+        "/Library/Application Support/AgentSnitch/bin",
+    ));
+    bins
+}
+
+#[cfg(unix)]
+fn clean_path(path: &std::path::Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(path).components().collect()
+}
+
+#[cfg(target_os = "macos")]
+fn trusted_peer_signature(exe: &std::path::Path) -> bool {
+    let peer = match macos_ne_bridge::codesign_report(exe) {
+        Ok(report) => report,
+        Err(err) => {
+            if unsigned_peer_trust_allowed() {
+                append_ui_log(&format!(
+                    "[agentsnitch-ui] weakly accepted unsigned UI socket peer {}: {}",
+                    exe.display(),
+                    err
+                ));
+                return true;
+            }
+            append_ui_log(&format!(
+                "[agentsnitch-ui] rejected UI socket peer {}: {}",
+                exe.display(),
+                err
+            ));
+            return false;
+        }
+    };
+    let app_team = current_app_team_id();
+    match app_team.as_deref() {
+        Some(team) => peer.team_id.as_deref() == Some(team) && !peer.ad_hoc,
+        None => unsigned_peer_trust_allowed() && peer.ad_hoc,
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn trusted_peer_signature(_exe: &std::path::Path) -> bool {
+    true
+}
+
+#[cfg(target_os = "macos")]
+fn current_app_team_id() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let target = macos_ne_bridge::app_bundle_from_exe(&exe).unwrap_or(exe);
+    macos_ne_bridge::codesign_report(&target)
+        .ok()
+        .and_then(|report| report.team_id)
+}
+
+#[cfg(unix)]
+fn unsigned_peer_trust_allowed() -> bool {
+    matches!(
+        std::env::var("AGENTSNITCH_ALLOW_UNSIGNED_PEERS")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    )
 }
 
 #[cfg(unix)]
@@ -3448,6 +3653,7 @@ mod macos_ne_bridge {
     }
 
     pub fn set_network_sensor_disabled(disabled: bool) -> Result<String, String> {
+        preflight_activation_signing()?;
         let (path, handle) = load_host_bridge()?;
         let set_disabled = unsafe {
             load_set_disabled_symbol(handle, "AgentSnitchHostBridgeSetNetworkSensorDisabled")?
@@ -3492,23 +3698,25 @@ mod macos_ne_bridge {
         Ok(())
     }
 
-    fn app_bundle_from_exe(exe: &Path) -> Option<PathBuf> {
+    pub(crate) fn app_bundle_from_exe(exe: &Path) -> Option<PathBuf> {
         exe.ancestors()
             .find(|path| path.extension().is_some_and(|ext| ext == "app"))
             .map(Path::to_path_buf)
     }
 
     #[derive(Debug, PartialEq, Eq)]
-    struct CodeSignReport {
-        team_id: Option<String>,
-        ad_hoc: bool,
-        text: String,
+    pub(crate) struct CodeSignReport {
+        pub(crate) team_id: Option<String>,
+        pub(crate) ad_hoc: bool,
+        pub(crate) text: String,
     }
 
-    fn codesign_report(path: &Path) -> Result<CodeSignReport, String> {
-        let output = Command::new("codesign")
+    pub(crate) fn codesign_report(path: &Path) -> Result<CodeSignReport, String> {
+        let output = Command::new("/usr/bin/codesign")
             .args(["-dvvv", "--entitlements", ":-"])
             .arg(path)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .output()
             .map_err(|err| format!("codesign failed to start for {}: {}", path.display(), err))?;
 
@@ -3605,6 +3813,10 @@ mod macos_ne_bridge {
                 attempts.push(format!("{} missing", path.display()));
                 continue;
             }
+            if let Err(err) = validate_bridge_load_path(&path) {
+                attempts.push(format!("{} rejected: {}", path.display(), err));
+                continue;
+            }
 
             let c_path = CString::new(path.to_string_lossy().as_bytes())
                 .map_err(|_| format!("{} contains an interior NUL byte", path.display()))?;
@@ -3621,6 +3833,78 @@ mod macos_ne_bridge {
             DYLIB_NAME,
             attempts.join("; ")
         ))
+    }
+
+    fn validate_bridge_load_path(path: &Path) -> Result<(), String> {
+        #[cfg(debug_assertions)]
+        {
+            if std::env::var("AGENTSNITCH_HOST_BRIDGE_DYLIB")
+                .ok()
+                .is_some_and(|override_path| Path::new(&override_path) == path)
+            {
+                return Ok(());
+            }
+        }
+
+        let exe = env::current_exe()
+            .map_err(|err| format!("could not inspect current executable: {}", err))?;
+        let Some(app_bundle) = app_bundle_from_exe(&exe) else {
+            #[cfg(debug_assertions)]
+            {
+                return Ok(());
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                return Err("production bridge loading requires an app bundle context".into());
+            }
+        };
+
+        let canonical_path = path
+            .canonicalize()
+            .map_err(|err| format!("could not canonicalize bridge path: {}", err))?;
+        let allowed_dirs = [
+            app_bundle.join("Contents").join("Frameworks"),
+            app_bundle.join("Contents").join("Resources"),
+        ];
+        let inside_bundle = allowed_dirs.iter().any(|dir| {
+            dir.canonicalize()
+                .ok()
+                .is_some_and(|allowed| canonical_path.starts_with(allowed))
+        });
+        if !inside_bundle {
+            return Err(format!(
+                "bridge dylib must live inside {}; got {}",
+                app_bundle.display(),
+                canonical_path.display()
+            ));
+        }
+
+        let app_report = codesign_report(&app_bundle)?;
+        validate_app_signing(&app_report)?;
+        let bridge_report = codesign_report(&canonical_path)?;
+        validate_bridge_signing(&bridge_report, app_report.team_id.as_deref())?;
+        Ok(())
+    }
+
+    fn validate_bridge_signing(
+        report: &CodeSignReport,
+        app_team_id: Option<&str>,
+    ) -> Result<(), String> {
+        if report.ad_hoc {
+            return Err("host bridge dylib is ad hoc signed".into());
+        }
+        let Some(bridge_team_id) = report.team_id.as_deref() else {
+            return Err("host bridge dylib has no TeamIdentifier".into());
+        };
+        if let Some(app_team_id) = app_team_id {
+            if bridge_team_id != app_team_id {
+                return Err(format!(
+                    "TeamIdentifier mismatch between app ({}) and host bridge ({})",
+                    app_team_id, bridge_team_id
+                ));
+            }
+        }
+        Ok(())
     }
 
     unsafe fn load_symbol(handle: *mut c_void, symbol: &str) -> Result<BridgeFn, String> {
@@ -3646,6 +3930,7 @@ mod macos_ne_bridge {
 
     fn candidate_paths() -> Vec<PathBuf> {
         let mut paths = Vec::new();
+        #[cfg(debug_assertions)]
         if let Ok(path) = env::var("AGENTSNITCH_HOST_BRIDGE_DYLIB") {
             paths.push(PathBuf::from(path));
         }
@@ -3661,6 +3946,7 @@ mod macos_ne_bridge {
         }
 
         if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+            #[cfg(debug_assertions)]
             paths.push(
                 PathBuf::from(manifest_dir)
                     .join("..")
@@ -4051,6 +4337,9 @@ fn set_network_sensor_disabled(
     let mut settings = {
         let mut guard = state.app_settings.lock().unwrap();
         guard.network_sensor_disabled = disabled;
+        if disabled {
+            guard.high_assurance_default_enabled = false;
+        }
         guard.schema = "agentsnitch.ui_settings.v0".into();
         guard.clone()
     };
@@ -7003,7 +7292,10 @@ pub fn run() {
             if let Some(state) = handle.try_state::<AppState>() {
                 let prefs = load_quiet_preferences();
                 let effective = effective_quieted_patterns(&prefs, &SessionSnapshot::default());
-                let settings = load_app_settings();
+                let mut settings = load_app_settings();
+                if settings.high_assurance_default_enabled {
+                    settings.network_sensor_disabled = false;
+                }
                 network_sensor_disabled = settings.network_sensor_disabled;
                 let destination_memory = load_destination_memory();
                 if let Err(err) = save_app_settings(&settings) {

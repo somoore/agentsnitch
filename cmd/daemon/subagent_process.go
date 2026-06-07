@@ -164,7 +164,9 @@ var cwdForPID = func(pid int) string {
 	if pid <= 0 {
 		return ""
 	}
-	out, err := exec.Command("lsof", "-a", "-p", fmt.Sprint(pid), "-d", "cwd", "-Fn").Output()
+	cmd := exec.Command("/usr/sbin/lsof", "-a", "-p", fmt.Sprint(pid), "-d", "cwd", "-Fn")
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
