@@ -25,6 +25,7 @@ type options struct {
 	settings string
 	emitter  string
 	events   []hookSpec
+	agent    string
 }
 
 type hookSpec struct {
@@ -32,6 +33,29 @@ type hookSpec struct {
 	Arg         string `json:"arg"`
 	Label       string `json:"label"`
 	Description string `json:"description"`
+}
+
+type agentTarget struct {
+	ID           string
+	Label        string
+	SettingsPath string
+	CommandPath  string
+	Installed    bool
+	Supported    bool
+}
+
+type agentStatus struct {
+	ID             string       `json:"id"`
+	Label          string       `json:"label"`
+	Installed      bool         `json:"installed"`
+	Supported      bool         `json:"supported"`
+	Path           string       `json:"path,omitempty"`
+	SettingsPath   string       `json:"settings_path"`
+	SettingsExists bool         `json:"settings_exists"`
+	AllInstalled   bool         `json:"all_installed"`
+	AllUpToDate    bool         `json:"all_up_to_date"`
+	NeedsUpdate    bool         `json:"needs_update"`
+	Hooks          []hookStatus `json:"hooks"`
 }
 
 type hookStatus struct {
@@ -48,17 +72,21 @@ type hookStatus struct {
 }
 
 type statusReport struct {
-	Schema            string       `json:"schema"`
-	ClaudeInstalled   bool         `json:"claude_installed"`
-	ClaudePath        string       `json:"claude_path,omitempty"`
-	SettingsPath      string       `json:"settings_path"`
-	SettingsExists    bool         `json:"settings_exists"`
-	EmitterPath       string       `json:"emitter_path"`
-	EmitterExecutable bool         `json:"emitter_executable"`
-	AllInstalled      bool         `json:"all_installed"`
-	AllUpToDate       bool         `json:"all_up_to_date"`
-	NeedsUpdate       bool         `json:"needs_update"`
-	Hooks             []hookStatus `json:"hooks"`
+	Schema             string        `json:"schema"`
+	SelectedAgentID    string        `json:"selected_agent_id"`
+	SelectedAgentLabel string        `json:"selected_agent_label"`
+	ScopeLabel         string        `json:"scope_label"`
+	Agents             []agentStatus `json:"agents"`
+	ClaudeInstalled    bool          `json:"claude_installed"`
+	ClaudePath         string        `json:"claude_path,omitempty"`
+	SettingsPath       string        `json:"settings_path"`
+	SettingsExists     bool          `json:"settings_exists"`
+	EmitterPath        string        `json:"emitter_path"`
+	EmitterExecutable  bool          `json:"emitter_executable"`
+	AllInstalled       bool          `json:"all_installed"`
+	AllUpToDate        bool          `json:"all_up_to_date"`
+	NeedsUpdate        bool          `json:"needs_update"`
+	Hooks              []hookStatus  `json:"hooks"`
 }
 
 var allHookSpecs = []hookSpec{
@@ -79,9 +107,11 @@ var allHookSpecs = []hookSpec{
 func main() {
 	opts := options{}
 	var eventsCSV string
+	var agentName string
 	flag.StringVar(&opts.settings, "settings", "", "Claude settings.json path")
 	flag.StringVar(&opts.emitter, "emitter", "", "AgentSnitch emitter path")
 	flag.StringVar(&eventsCSV, "events", "", "Comma-separated Claude hook events to manage")
+	flag.StringVar(&agentName, "agent", "claude", "Coding agent to manage: claude or all")
 	flag.Parse()
 
 	args := flag.Args()
@@ -107,6 +137,7 @@ func main() {
 		os.Exit(2)
 	}
 	opts.events = events
+	opts.agent = normalizeAgentName(agentName)
 
 	switch args[0] {
 	case "install":
@@ -128,7 +159,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: hookctl [--settings path] [--emitter path] [--events PreToolUse,PostToolUse] install|uninstall|verify|status-json")
+	fmt.Fprintln(os.Stderr, "usage: hookctl [--agent claude|all] [--settings path] [--emitter path] [--events PreToolUse,PostToolUse] install|uninstall|verify|status-json")
 }
 
 func claudeSettingsPath() (string, error) {
@@ -213,59 +244,62 @@ func installClaudeHooks(opts options) error {
 	if err := requireExecutable(opts.emitter); err != nil {
 		return err
 	}
-	doc, err := readSettings(opts.settings)
+	targets, err := selectedAgentTargets(opts)
 	if err != nil {
 		return err
 	}
 
-	hooks := hooksMap(doc)
-	removeAgentSnitchHooks(hooks, opts.emitter, opts.events)
-	for _, spec := range opts.events {
-		addAgentSnitchHook(hooks, spec, opts.emitter)
+	for _, target := range targets {
+		if err := installTargetHooks(opts, target); err != nil {
+			return err
+		}
+		fmt.Printf("%s hooks installed: %s\n", target.Label, target.SettingsPath)
 	}
-	doc["hooks"] = hooks
-
-	if err := writeSettings(opts.settings, doc); err != nil {
-		return err
-	}
-	fmt.Printf("Claude hooks installed: %s\n", opts.settings)
 	fmt.Printf("Emitter: %s\n", opts.emitter)
 	return verifyClaudeHooks(opts)
 }
 
 func uninstallClaudeHooks(opts options) error {
 	opts.events = selectedHooks(opts.events)
-	doc, err := readSettings(opts.settings)
+	targets, err := selectedAgentTargets(opts)
 	if err != nil {
 		return err
 	}
-	hooks := hooksMap(doc)
-	removed := removeAgentSnitchHooks(hooks, opts.emitter, opts.events)
-	doc["hooks"] = hooks
-	if err := writeSettings(opts.settings, doc); err != nil {
-		return err
+	total := 0
+	for _, target := range targets {
+		removed, err := uninstallTargetHooks(opts, target)
+		if err != nil {
+			return err
+		}
+		total += removed
+		fmt.Printf("%s hooks removed: %d AgentSnitch command(s)\n", target.Label, removed)
 	}
-	fmt.Printf("Claude hooks removed: %d AgentSnitch command(s)\n", removed)
+	fmt.Printf("Total hooks removed: %d AgentSnitch command(s)\n", total)
 	return nil
 }
 
 func verifyClaudeHooks(opts options) error {
 	opts.events = selectedHooks(opts.events)
-	doc, err := readSettings(opts.settings)
+	targets, err := selectedAgentTargets(opts)
 	if err != nil {
 		return err
 	}
-	hooks := hooksMap(doc)
 	missing := []string{}
-	for _, spec := range opts.events {
-		if !hookInstalled(hooks, spec, opts.emitter) {
-			missing = append(missing, spec.Event)
+	for _, target := range targets {
+		status, err := statusForAgent(opts, target)
+		if err != nil {
+			return err
+		}
+		for _, hook := range status.Hooks {
+			if !hook.UpToDate {
+				missing = append(missing, target.Label+"/"+hook.Event)
+			}
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("Claude hooks missing or wrong for: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("hooks missing or wrong for: %s", strings.Join(missing, ", "))
 	}
-	fmt.Printf("Claude hooks verified: %s point at %s\n", eventNames(opts.events), opts.emitter)
+	fmt.Printf("%s hooks verified: %s point at %s\n", selectedAgentLabel(targets), eventNames(opts.events), opts.emitter)
 	return nil
 }
 
@@ -281,37 +315,227 @@ func writeStatusJSON(opts options) error {
 
 func statusClaudeHooks(opts options) (statusReport, error) {
 	opts.events = selectedHooks(opts.events)
-	doc, err := readSettings(opts.settings)
+	emitterExecutable := requireExecutable(opts.emitter) == nil
+	allTargets := discoverAgentTargets(opts)
+	targets, err := selectedAgentTargets(opts)
 	if err != nil {
 		return statusReport{}, err
 	}
-	hooks := hooksMap(doc)
-	_, settingsErr := os.Stat(opts.settings)
-	claudePath := claudeCommandPath()
-	emitterExecutable := requireExecutable(opts.emitter) == nil
+
 	report := statusReport{
-		Schema:            "agentsnitch.hooks_status.v0",
-		ClaudeInstalled:   claudePath != "",
-		ClaudePath:        claudePath,
-		SettingsPath:      opts.settings,
-		SettingsExists:    settingsErr == nil,
-		EmitterPath:       opts.emitter,
-		EmitterExecutable: emitterExecutable,
-		AllInstalled:      true,
-		AllUpToDate:       true,
+		Schema:             "agentsnitch.hooks_status.v0",
+		SelectedAgentID:    opts.agent,
+		SelectedAgentLabel: selectedAgentLabel(targets),
+		ScopeLabel:         selectedAgentLabel(targets),
+		EmitterPath:        opts.emitter,
+		EmitterExecutable:  emitterExecutable,
+		AllInstalled:       true,
+		AllUpToDate:        true,
 	}
-	for _, spec := range opts.events {
-		status := statusForHook(hooks, spec, opts.emitter)
-		report.Hooks = append(report.Hooks, status)
-		if !status.Installed {
+	if opts.agent == "all" {
+		report.SelectedAgentID = "all"
+		report.SelectedAgentLabel = "All supported agents"
+		report.ScopeLabel = "All supported agents"
+	}
+	if opts.agent != "all" && len(targets) == 1 {
+		report.SelectedAgentID = targets[0].ID
+		report.SelectedAgentLabel = targets[0].Label
+		report.SettingsPath = targets[0].SettingsPath
+		report.SettingsExists = fileExists(targets[0].SettingsPath)
+	}
+	for _, target := range allTargets {
+		status, err := statusForAgent(opts, target)
+		if err != nil {
+			return statusReport{}, err
+		}
+		report.Agents = append(report.Agents, status)
+		if target.ID == "claude" {
+			report.ClaudeInstalled = target.Installed
+			report.ClaudePath = target.CommandPath
+			if report.SettingsPath == "" {
+				report.SettingsPath = target.SettingsPath
+				report.SettingsExists = status.SettingsExists
+			}
+		}
+	}
+	for _, target := range targets {
+		status, err := statusForAgent(opts, target)
+		if err != nil {
+			return statusReport{}, err
+		}
+		if len(targets) == 1 {
+			report.Hooks = status.Hooks
+		} else {
+			report.Hooks = mergeAggregateHooks(report.Hooks, status.Hooks)
+		}
+		if !status.AllInstalled {
 			report.AllInstalled = false
 		}
-		if !status.UpToDate {
+		if !status.AllUpToDate {
 			report.AllUpToDate = false
 		}
 	}
 	report.NeedsUpdate = !report.AllUpToDate
 	return report, nil
+}
+
+func installTargetHooks(opts options, target agentTarget) error {
+	doc, err := readSettings(target.SettingsPath)
+	if err != nil {
+		return err
+	}
+	hooks := hooksMap(doc)
+	removeAgentSnitchHooks(hooks, opts.emitter, opts.events)
+	for _, spec := range opts.events {
+		addAgentSnitchHook(hooks, spec, opts.emitter)
+	}
+	doc["hooks"] = hooks
+	return writeSettings(target.SettingsPath, doc)
+}
+
+func uninstallTargetHooks(opts options, target agentTarget) (int, error) {
+	doc, err := readSettings(target.SettingsPath)
+	if err != nil {
+		return 0, err
+	}
+	hooks := hooksMap(doc)
+	removed := removeAgentSnitchHooks(hooks, opts.emitter, opts.events)
+	doc["hooks"] = hooks
+	if err := writeSettings(target.SettingsPath, doc); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+func statusForAgent(opts options, target agentTarget) (agentStatus, error) {
+	doc, err := readSettings(target.SettingsPath)
+	if err != nil {
+		return agentStatus{}, err
+	}
+	hooks := hooksMap(doc)
+	status := agentStatus{
+		ID:             target.ID,
+		Label:          target.Label,
+		Installed:      target.Installed,
+		Supported:      target.Supported,
+		Path:           target.CommandPath,
+		SettingsPath:   target.SettingsPath,
+		SettingsExists: fileExists(target.SettingsPath),
+		AllInstalled:   true,
+		AllUpToDate:    true,
+	}
+	for _, spec := range opts.events {
+		hook := statusForHook(hooks, spec, opts.emitter)
+		status.Hooks = append(status.Hooks, hook)
+		if !hook.Installed {
+			status.AllInstalled = false
+		}
+		if !hook.UpToDate {
+			status.AllUpToDate = false
+		}
+	}
+	status.NeedsUpdate = !status.AllUpToDate
+	return status, nil
+}
+
+func discoverAgentTargets(opts options) []agentTarget {
+	settings := opts.settings
+	if settings == "" {
+		settings, _ = claudeSettingsPath()
+	}
+	claudePath := claudeCommandPath()
+	return []agentTarget{
+		{
+			ID:           "claude",
+			Label:        "Claude Code",
+			SettingsPath: settings,
+			CommandPath:  claudePath,
+			Installed:    claudePath != "",
+			Supported:    true,
+		},
+	}
+}
+
+func selectedAgentTargets(opts options) ([]agentTarget, error) {
+	agent := normalizeAgentName(opts.agent)
+	all := discoverAgentTargets(opts)
+	if agent == "all" {
+		targets := []agentTarget{}
+		for _, target := range all {
+			if target.Supported {
+				targets = append(targets, target)
+			}
+		}
+		if len(targets) == 0 {
+			return nil, errors.New("no supported coding agents discovered")
+		}
+		return targets, nil
+	}
+	for _, target := range all {
+		if target.ID == agent {
+			if !target.Supported {
+				return nil, fmt.Errorf("%s is discovered but not supported yet", target.Label)
+			}
+			return []agentTarget{target}, nil
+		}
+	}
+	return nil, fmt.Errorf("unsupported coding agent: %s", opts.agent)
+}
+
+func normalizeAgentName(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case "", "claude", "claude-code", "claudecode":
+		return "claude"
+	case "all", "*":
+		return "all"
+	default:
+		return strings.ToLower(strings.TrimSpace(agent))
+	}
+}
+
+func selectedAgentLabel(targets []agentTarget) string {
+	if len(targets) == 1 {
+		return targets[0].Label
+	}
+	labels := make([]string, 0, len(targets))
+	for _, target := range targets {
+		labels = append(labels, target.Label)
+	}
+	return strings.Join(labels, ", ")
+}
+
+func mergeAggregateHooks(current, next []hookStatus) []hookStatus {
+	if len(current) == 0 {
+		return append([]hookStatus(nil), next...)
+	}
+	byEvent := map[string]int{}
+	for i, hook := range current {
+		byEvent[hook.Event] = i
+	}
+	for _, hook := range next {
+		i, ok := byEvent[hook.Event]
+		if !ok {
+			current = append(current, hook)
+			byEvent[hook.Event] = len(current) - 1
+			continue
+		}
+		current[i].Installed = current[i].Installed && hook.Installed
+		current[i].UpToDate = current[i].UpToDate && hook.UpToDate
+		current[i].Stale = current[i].Stale || hook.Stale
+		if current[i].UpToDate {
+			current[i].Status = "up_to_date"
+		} else if current[i].Stale {
+			current[i].Status = "stale"
+		} else {
+			current[i].Status = "missing"
+		}
+	}
+	return current
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func executable(path string) bool {

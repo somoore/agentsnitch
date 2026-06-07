@@ -55,6 +55,59 @@ func TestInstallClaudeHooksIsIdempotentAndPreservesOtherHooks(t *testing.T) {
 	}
 }
 
+func TestInstallSwapsOnlyAgentSnitchHooksAndPreservesUserPreAndPostHooks(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "settings.json")
+	emitter := filepath.Join(dir, "emitter")
+	oldEmitter := filepath.Join(dir, "old-AgentSnitch", "bin", "emitter")
+	if err := os.MkdirAll(filepath.Dir(oldEmitter), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(emitter, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]interface{}{}
+	hooks := hooksMap(doc)
+	hooks[preEvent] = []interface{}{
+		map[string]interface{}{"matcher": "Bash", "hooks": []interface{}{
+			map[string]interface{}{"type": "command", "command": "/usr/bin/true pre", "timeout": float64(3)},
+		}},
+	}
+	hooks[postEvent] = []interface{}{
+		map[string]interface{}{"matcher": "Bash", "hooks": []interface{}{
+			map[string]interface{}{"type": "command", "command": "/usr/bin/true post", "timeout": float64(3)},
+		}},
+	}
+	addAgentSnitchHook(hooks, allHookSpecs[0], oldEmitter)
+	addAgentSnitchHook(hooks, allHookSpecs[1], oldEmitter)
+	if err := writeSettings(settings, doc); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := options{settings: settings, emitter: emitter, events: allHookSpecs, agent: "all"}
+	if err := installClaudeHooks(opts); err != nil {
+		t.Fatal(err)
+	}
+
+	doc = readSettingsForTest(t, settings)
+	hooks = hooksMap(doc)
+	if countAgentSnitchHooks(hooks, emitter) != 2 {
+		t.Fatalf("expected two current AgentSnitch hooks, got %#v", hooks)
+	}
+	if commandPresent(hooks, preEvent, shellCommand(oldEmitter, "pretooluse")) {
+		t.Fatalf("old pre AgentSnitch hook was not replaced: %#v", hooks[preEvent])
+	}
+	if commandPresent(hooks, postEvent, shellCommand(oldEmitter, "posttooluse")) {
+		t.Fatalf("old post AgentSnitch hook was not replaced: %#v", hooks[postEvent])
+	}
+	if !commandPresent(hooks, preEvent, "/usr/bin/true pre") {
+		t.Fatalf("user pre hook was not preserved: %#v", hooks[preEvent])
+	}
+	if !commandPresent(hooks, postEvent, "/usr/bin/true post") {
+		t.Fatalf("user post hook was not preserved: %#v", hooks[postEvent])
+	}
+}
+
 func TestUninstallClaudeHooksRemovesOnlyAgentSnitchHooks(t *testing.T) {
 	dir := t.TempDir()
 	settings := filepath.Join(dir, "settings.json")

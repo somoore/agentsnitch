@@ -351,8 +351,32 @@ struct ClaudeHookStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeHookAgentStatus {
+    id: String,
+    label: String,
+    installed: bool,
+    supported: bool,
+    #[serde(default)]
+    path: String,
+    settings_path: String,
+    settings_exists: bool,
+    all_installed: bool,
+    all_up_to_date: bool,
+    needs_update: bool,
+    hooks: Vec<ClaudeHookStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ClaudeHooksStatus {
     schema: String,
+    #[serde(default)]
+    selected_agent_id: String,
+    #[serde(default)]
+    selected_agent_label: String,
+    #[serde(default)]
+    scope_label: String,
+    #[serde(default)]
+    agents: Vec<ClaudeHookAgentStatus>,
     claude_installed: bool,
     #[serde(default)]
     claude_path: String,
@@ -2706,11 +2730,27 @@ fn normalize_hook_events(events: Vec<String>) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-fn run_hookctl(action: &str, events: Vec<String>) -> Result<String, String> {
+fn normalize_hook_agent(agent: Option<String>) -> String {
+    match agent
+        .unwrap_or_else(|| "all".into())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" | "all" | "*" => "all".into(),
+        "claude" | "claude-code" | "claudecode" => "claude".into(),
+        other => other.into(),
+    }
+}
+
+fn run_hookctl(action: &str, events: Vec<String>, agent: Option<String>) -> Result<String, String> {
     let hookctl = hookctl_path()?;
     let emitter = emitter_path()?;
     let selected = normalize_hook_events(events)?;
+    let agent = normalize_hook_agent(agent);
     let output = Command::new(&hookctl)
+        .arg("--agent")
+        .arg(&agent)
         .arg("--emitter")
         .arg(&emitter)
         .arg("--events")
@@ -2732,10 +2772,16 @@ fn run_hookctl(action: &str, events: Vec<String>) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn load_claude_hooks_status(settings: &AppSettings) -> Result<ClaudeHooksStatus, String> {
+fn load_claude_hooks_status(
+    settings: &AppSettings,
+    agent: Option<String>,
+) -> Result<ClaudeHooksStatus, String> {
     let hookctl = hookctl_path()?;
     let emitter = emitter_path()?;
+    let agent = normalize_hook_agent(agent);
     let output = Command::new(&hookctl)
+        .arg("--agent")
+        .arg(&agent)
         .arg("--emitter")
         .arg(&emitter)
         .arg("status-json")
@@ -2759,23 +2805,27 @@ fn ensure_claude_hooks_current_if_enabled(settings: AppSettings) {
     if !settings.keep_hooks_up_to_date {
         return;
     }
-    thread::spawn(move || match load_claude_hooks_status(&settings) {
-        Ok(status)
-            if status.claude_installed && status.emitter_executable && !status.all_up_to_date =>
-        {
-            if let Err(err) = run_hookctl("install", Vec::new()) {
-                append_ui_log(&format!(
-                    "[agentsnitch-ui] hook auto-update failed: {}",
-                    err
-                ));
+    thread::spawn(
+        move || match load_claude_hooks_status(&settings, Some("all".into())) {
+            Ok(status)
+                if status.claude_installed
+                    && status.emitter_executable
+                    && !status.all_up_to_date =>
+            {
+                if let Err(err) = run_hookctl("install", Vec::new(), Some("all".into())) {
+                    append_ui_log(&format!(
+                        "[agentsnitch-ui] hook auto-update failed: {}",
+                        err
+                    ));
+                }
             }
-        }
-        Ok(_) => {}
-        Err(err) => append_ui_log(&format!(
-            "[agentsnitch-ui] hook status check failed: {}",
-            err
-        )),
-    });
+            Ok(_) => {}
+            Err(err) => append_ui_log(&format!(
+                "[agentsnitch-ui] hook status check failed: {}",
+                err
+            )),
+        },
+    );
 }
 
 fn load_quiet_preferences() -> QuietPreferences {
@@ -4644,32 +4694,39 @@ fn set_advanced_controls_enabled(
 }
 
 #[tauri::command]
-fn get_claude_hooks_status(state: State<AppState>) -> Result<ClaudeHooksStatus, String> {
+fn get_claude_hooks_status(
+    agent: Option<String>,
+    state: State<AppState>,
+) -> Result<ClaudeHooksStatus, String> {
     let settings = state.app_settings.lock().unwrap().clone();
-    load_claude_hooks_status(&settings)
+    load_claude_hooks_status(&settings, agent)
 }
 
 #[tauri::command]
 fn install_claude_hooks(
     events: Vec<String>,
+    agent: Option<String>,
     state: State<AppState>,
 ) -> Result<ClaudeHooksStatus, String> {
-    run_hookctl("install", events)?;
+    let agent = normalize_hook_agent(agent);
+    run_hookctl("install", events, Some(agent.clone()))?;
     let settings = state.app_settings.lock().unwrap().clone();
-    let mut status = load_claude_hooks_status(&settings)?;
-    status.detail = "Selected Claude Code hooks installed.".into();
+    let mut status = load_claude_hooks_status(&settings, Some(agent))?;
+    status.detail = "Selected hooks installed.".into();
     Ok(status)
 }
 
 #[tauri::command]
 fn remove_claude_hooks(
     events: Vec<String>,
+    agent: Option<String>,
     state: State<AppState>,
 ) -> Result<ClaudeHooksStatus, String> {
-    run_hookctl("uninstall", events)?;
+    let agent = normalize_hook_agent(agent);
+    run_hookctl("uninstall", events, Some(agent.clone()))?;
     let settings = state.app_settings.lock().unwrap().clone();
-    let mut status = load_claude_hooks_status(&settings)?;
-    status.detail = "Selected Claude Code hooks removed.".into();
+    let mut status = load_claude_hooks_status(&settings, Some(agent))?;
+    status.detail = "Selected hooks removed.".into();
     Ok(status)
 }
 
@@ -4688,7 +4745,7 @@ fn set_keep_hooks_up_to_date(
     save_app_settings(&settings)?;
     let mut warning = None;
     if enabled {
-        if let Err(err) = run_hookctl("install", Vec::new()) {
+        if let Err(err) = run_hookctl("install", Vec::new(), Some("all".into())) {
             warning = Some(err);
         }
     }
