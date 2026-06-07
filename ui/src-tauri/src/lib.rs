@@ -300,6 +300,8 @@ struct AppSettings {
     schema: String,
     #[serde(default)]
     advanced_controls_enabled: bool,
+    #[serde(default)]
+    keep_hooks_up_to_date: bool,
     #[serde(default = "default_network_sensor_disabled")]
     network_sensor_disabled: bool,
     #[serde(default)]
@@ -319,6 +321,7 @@ impl Default for AppSettings {
         Self {
             schema: app_settings_schema(),
             advanced_controls_enabled: false,
+            keep_hooks_up_to_date: false,
             network_sensor_disabled: true,
             high_assurance_default_enabled: false,
         }
@@ -330,6 +333,65 @@ struct AppSettingsUpdate {
     settings: AppSettings,
     detail: String,
     warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeHookStatus {
+    event: String,
+    arg: String,
+    label: String,
+    description: String,
+    desired_command: String,
+    installed: bool,
+    up_to_date: bool,
+    stale: bool,
+    #[serde(default)]
+    current_command: String,
+    status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeHookAgentStatus {
+    id: String,
+    label: String,
+    installed: bool,
+    supported: bool,
+    #[serde(default)]
+    path: String,
+    settings_path: String,
+    settings_exists: bool,
+    all_installed: bool,
+    all_up_to_date: bool,
+    needs_update: bool,
+    hooks: Vec<ClaudeHookStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeHooksStatus {
+    schema: String,
+    #[serde(default)]
+    selected_agent_id: String,
+    #[serde(default)]
+    selected_agent_label: String,
+    #[serde(default)]
+    scope_label: String,
+    #[serde(default)]
+    agents: Vec<ClaudeHookAgentStatus>,
+    claude_installed: bool,
+    #[serde(default)]
+    claude_path: String,
+    settings_path: String,
+    settings_exists: bool,
+    emitter_path: String,
+    emitter_executable: bool,
+    all_installed: bool,
+    all_up_to_date: bool,
+    needs_update: bool,
+    hooks: Vec<ClaudeHookStatus>,
+    #[serde(default)]
+    keep_hooks_up_to_date: bool,
+    #[serde(default)]
+    detail: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2579,6 +2641,228 @@ fn save_app_settings(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn executable_candidate(path: std::path::PathBuf) -> Option<String> {
+    match std::fs::metadata(&path) {
+        Ok(meta) if meta.is_file() && meta.permissions().mode() & 0o111 != 0 => {
+            Some(path.to_string_lossy().into_owned())
+        }
+        _ => None,
+    }
+}
+
+fn support_binary_path(env_key: &str, name: &str) -> Option<String> {
+    if let Ok(path) = std::env::var(env_key) {
+        if !path.trim().is_empty() {
+            return Some(path);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            if let Some(path) = executable_candidate(parent.join(name)) {
+                return Some(path);
+            }
+        }
+    }
+    if let Ok(dir) = std::env::var("AGENTSNITCH_SUPPORT_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            if let Some(path) =
+                executable_candidate(std::path::PathBuf::from(trimmed).join("bin").join(name))
+            {
+                return Some(path);
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        for bin in agent_snitch_support_bins() {
+            if let Some(path) = executable_candidate(bin.join(name)) {
+                return Some(path);
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(path) = executable_candidate(cwd.join("bin").join(name)) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn hookctl_path() -> Result<String, String> {
+    support_binary_path("AGENTSNITCH_HOOKCTL", "hookctl")
+        .ok_or_else(|| "AgentSnitch hookctl helper is not installed".into())
+}
+
+fn emitter_path() -> Result<String, String> {
+    support_binary_path("AGENTSNITCH_EMITTER", "emitter")
+        .ok_or_else(|| "AgentSnitch emitter helper is not installed".into())
+}
+
+fn normalize_hook_events(events: Vec<String>) -> Result<Vec<String>, String> {
+    if events.is_empty() {
+        return Ok(vec!["PreToolUse".into(), "PostToolUse".into()]);
+    }
+    let mut out = Vec::new();
+    for event in events {
+        let normalized = match event.trim().to_ascii_lowercase().as_str() {
+            "pretooluse" => "PreToolUse",
+            "posttooluse" => "PostToolUse",
+            other => return Err(format!("Unsupported Claude hook event: {}", other)),
+        };
+        if !out.iter().any(|item| item == normalized) {
+            out.push(normalized.to_string());
+        }
+    }
+    if out.is_empty() {
+        return Err("No Claude hook events selected".into());
+    }
+    Ok(out)
+}
+
+fn normalize_hook_agent(agent: Option<String>) -> String {
+    match agent
+        .unwrap_or_else(|| "all".into())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" | "all" | "*" => "all".into(),
+        "claude" | "claude-code" | "claudecode" => "claude".into(),
+        other => other.into(),
+    }
+}
+
+fn run_hookctl(action: &str, events: Vec<String>, agent: Option<String>) -> Result<String, String> {
+    let hookctl = hookctl_path()?;
+    let emitter = emitter_path()?;
+    let selected = normalize_hook_events(events)?;
+    let agent = normalize_hook_agent(agent);
+    let output = Command::new(&hookctl)
+        .arg("--agent")
+        .arg(&agent)
+        .arg("--emitter")
+        .arg(&emitter)
+        .arg("--events")
+        .arg(selected.join(","))
+        .arg(action)
+        .output()
+        .map_err(|err| format!("run hookctl: {}", err))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("hookctl {} failed", action)
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn load_claude_hooks_status(
+    settings: &AppSettings,
+    agent: Option<String>,
+) -> Result<ClaudeHooksStatus, String> {
+    let hookctl = hookctl_path()?;
+    let emitter = emitter_path()?;
+    let agent = normalize_hook_agent(agent);
+    let output = Command::new(&hookctl)
+        .arg("--agent")
+        .arg(&agent)
+        .arg("--emitter")
+        .arg(&emitter)
+        .arg("status-json")
+        .output()
+        .map_err(|err| format!("run hookctl status: {}", err))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "hookctl status failed".into()
+        } else {
+            stderr
+        });
+    }
+    let mut status: ClaudeHooksStatus =
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
+    status.keep_hooks_up_to_date = settings.keep_hooks_up_to_date;
+    Ok(status)
+}
+
+fn hook_events_needing_refresh(hooks: &[ClaudeHookStatus]) -> Vec<String> {
+    hooks
+        .iter()
+        .filter(|hook| hook.installed && !hook.up_to_date)
+        .map(|hook| hook.event.clone())
+        .collect()
+}
+
+fn hook_auto_update_plan(status: &ClaudeHooksStatus) -> Vec<(String, Vec<String>)> {
+    if !status.agents.is_empty() {
+        return status
+            .agents
+            .iter()
+            .filter(|agent| agent.supported)
+            .filter_map(|agent| {
+                let events = hook_events_needing_refresh(&agent.hooks);
+                if events.is_empty() {
+                    None
+                } else {
+                    Some((agent.id.clone(), events))
+                }
+            })
+            .collect();
+    }
+
+    let agent = normalize_hook_agent(Some(status.selected_agent_id.clone()));
+    if agent == "all" {
+        return Vec::new();
+    }
+    let events = hook_events_needing_refresh(&status.hooks);
+    if events.is_empty() {
+        Vec::new()
+    } else {
+        vec![(agent, events)]
+    }
+}
+
+fn apply_hook_auto_update_plan(status: &ClaudeHooksStatus) -> Vec<String> {
+    if !status.emitter_executable {
+        return if status.needs_update {
+            vec!["hook auto-update skipped: emitter helper is not executable".into()]
+        } else {
+            Vec::new()
+        };
+    }
+
+    let mut warnings = Vec::new();
+    for (agent, events) in hook_auto_update_plan(status) {
+        if let Err(err) = run_hookctl("install", events, Some(agent.clone())) {
+            warnings.push(format!("hook auto-update failed for {}: {}", agent, err));
+        }
+    }
+    warnings
+}
+
+fn ensure_claude_hooks_current_if_enabled(settings: AppSettings) {
+    if !settings.keep_hooks_up_to_date {
+        return;
+    }
+    thread::spawn(
+        move || match load_claude_hooks_status(&settings, Some("all".into())) {
+            Ok(status) => apply_hook_auto_update_plan(&status)
+                .into_iter()
+                .for_each(|warning| append_ui_log(&format!("[agentsnitch-ui] {}", warning))),
+            Err(err) => append_ui_log(&format!(
+                "[agentsnitch-ui] hook status check failed: {}",
+                err
+            )),
+        },
+    );
+}
+
 fn load_quiet_preferences() -> QuietPreferences {
     let path = quiet_preferences_path();
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -3460,22 +3744,64 @@ fn agent_snitch_support_bins() -> Vec<std::path::PathBuf> {
             return vec![std::path::PathBuf::from(trimmed).join("bin")];
         }
     }
+    let home = std::env::var("HOME").ok();
+    let user_plist = home
+        .as_deref()
+        .filter(|home| !home.trim().is_empty())
+        .map(user_launch_agent_plist);
+    ordered_support_bins_for_launch_agents(
+        home.as_deref(),
+        user_plist.as_deref().and_then(modified_time),
+        modified_time(std::path::Path::new(
+            "/Library/LaunchAgents/com.somoore.agentsnitch.daemon.plist",
+        )),
+    )
+}
+
+#[cfg(unix)]
+fn ordered_support_bins_for_launch_agents(
+    home: Option<&str>,
+    user_plist_modified: Option<SystemTime>,
+    system_plist_modified: Option<SystemTime>,
+) -> Vec<std::path::PathBuf> {
+    let user_bin = home.filter(|home| !home.trim().is_empty()).map(|home| {
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("AgentSnitch")
+            .join("bin")
+    });
+    let system_bin = std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin");
+    let system_first = match (user_plist_modified, system_plist_modified) {
+        (Some(user), Some(system)) => system > user,
+        (None, Some(_)) => true,
+        _ => false,
+    };
+
     let mut bins = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            bins.push(
-                std::path::PathBuf::from(home)
-                    .join("Library")
-                    .join("Application Support")
-                    .join("AgentSnitch")
-                    .join("bin"),
-            );
-        }
+    if system_first {
+        bins.push(system_bin.clone());
     }
-    bins.push(std::path::PathBuf::from(
-        "/Library/Application Support/AgentSnitch/bin",
-    ));
+    if let Some(bin) = user_bin {
+        bins.push(bin);
+    }
+    if !system_first {
+        bins.push(system_bin);
+    }
     bins
+}
+
+#[cfg(unix)]
+fn user_launch_agent_plist(home: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(home)
+        .join("Library")
+        .join("LaunchAgents")
+        .join("com.somoore.agentsnitch.daemon.plist")
+}
+
+#[cfg(unix)]
+fn modified_time(path: &std::path::Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 #[cfg(unix)]
@@ -4444,6 +4770,82 @@ fn set_advanced_controls_enabled(
     })
 }
 
+#[tauri::command]
+fn get_claude_hooks_status(
+    agent: Option<String>,
+    state: State<AppState>,
+) -> Result<ClaudeHooksStatus, String> {
+    let settings = state.app_settings.lock().unwrap().clone();
+    load_claude_hooks_status(&settings, agent)
+}
+
+#[tauri::command]
+fn install_claude_hooks(
+    events: Vec<String>,
+    agent: Option<String>,
+    state: State<AppState>,
+) -> Result<ClaudeHooksStatus, String> {
+    let agent = normalize_hook_agent(agent);
+    run_hookctl("install", events, Some(agent.clone()))?;
+    let settings = state.app_settings.lock().unwrap().clone();
+    let mut status = load_claude_hooks_status(&settings, Some(agent))?;
+    status.detail = "Selected hooks installed.".into();
+    Ok(status)
+}
+
+#[tauri::command]
+fn remove_claude_hooks(
+    events: Vec<String>,
+    agent: Option<String>,
+    state: State<AppState>,
+) -> Result<ClaudeHooksStatus, String> {
+    let agent = normalize_hook_agent(agent);
+    run_hookctl("uninstall", events, Some(agent.clone()))?;
+    let settings = state.app_settings.lock().unwrap().clone();
+    let mut status = load_claude_hooks_status(&settings, Some(agent))?;
+    status.detail = "Selected hooks removed.".into();
+    Ok(status)
+}
+
+#[tauri::command]
+fn set_keep_hooks_up_to_date(
+    enabled: bool,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.keep_hooks_up_to_date = enabled;
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+    let mut warning = None;
+    if enabled {
+        warning = match load_claude_hooks_status(&settings, Some("all".into())) {
+            Ok(status) => {
+                let warnings = apply_hook_auto_update_plan(&status);
+                if warnings.is_empty() {
+                    None
+                } else {
+                    Some(warnings.join("; "))
+                }
+            }
+            Err(err) => Some(err),
+        };
+    }
+    let _ = app.emit("settings-changed", &settings);
+    Ok(AppSettingsUpdate {
+        settings,
+        detail: if enabled {
+            "AgentSnitch will keep Claude Code hooks up to date.".into()
+        } else {
+            "Automatic Claude Code hook updates are off.".into()
+        },
+        warning,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn set_macos_network_sensor_disabled(disabled: bool) -> Result<String, String> {
     macos_ne_bridge::set_network_sensor_disabled(disabled)
@@ -5118,9 +5520,83 @@ mod tests {
     fn app_settings_default_keeps_network_sensor_disabled() {
         let settings = AppSettings::default();
         assert!(!settings.advanced_controls_enabled);
+        assert!(!settings.keep_hooks_up_to_date);
         assert!(settings.network_sensor_disabled);
         assert!(!settings.high_assurance_default_enabled);
         assert_eq!(settings.schema, "agentsnitch.ui_settings.v0");
+    }
+
+    #[test]
+    fn hook_auto_update_plan_refreshes_only_installed_stale_hooks() {
+        let mut status = hooks_status_fixture();
+        status.agents = vec![ClaudeHookAgentStatus {
+            id: "claude".into(),
+            label: "Claude Code".into(),
+            installed: false,
+            supported: true,
+            path: String::new(),
+            settings_path: "/Users/example/.claude/settings.json".into(),
+            settings_exists: true,
+            all_installed: false,
+            all_up_to_date: false,
+            needs_update: true,
+            hooks: vec![
+                hook_status_fixture("PreToolUse", true, false),
+                hook_status_fixture("PostToolUse", false, false),
+            ],
+        }];
+
+        assert_eq!(
+            hook_auto_update_plan(&status),
+            vec![("claude".into(), vec!["PreToolUse".into()])]
+        );
+    }
+
+    #[test]
+    fn hook_auto_update_plan_skips_aggregate_all_without_agent_detail() {
+        let mut status = hooks_status_fixture();
+        status.selected_agent_id = "all".into();
+        status.hooks = vec![hook_status_fixture("PreToolUse", true, false)];
+
+        assert!(hook_auto_update_plan(&status).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn support_bins_prefer_newer_system_launch_agent() {
+        let bins = ordered_support_bins_for_launch_agents(
+            Some("/Users/example"),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(2)),
+        );
+
+        assert_eq!(
+            bins[0],
+            std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin")
+        );
+        assert_eq!(
+            bins[1],
+            std::path::PathBuf::from("/Users/example/Library/Application Support/AgentSnitch/bin")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn support_bins_prefer_newer_user_launch_agent() {
+        let bins = ordered_support_bins_for_launch_agents(
+            Some("/Users/example"),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(2)),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+        );
+
+        assert_eq!(
+            bins[0],
+            std::path::PathBuf::from("/Users/example/Library/Application Support/AgentSnitch/bin")
+        );
+        assert_eq!(
+            bins[1],
+            std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin")
+        );
     }
 
     #[test]
@@ -5129,12 +5605,60 @@ mod tests {
         let settings = apply_network_sensor_env_override(AppSettings {
             schema: "agentsnitch.ui_settings.v0".into(),
             advanced_controls_enabled: true,
+            keep_hooks_up_to_date: true,
             network_sensor_disabled: false,
             high_assurance_default_enabled: true,
         });
         std::env::remove_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION");
 
         assert!(settings.network_sensor_disabled);
+    }
+
+    fn hooks_status_fixture() -> ClaudeHooksStatus {
+        ClaudeHooksStatus {
+            schema: "agentsnitch.hooks_status.v0".into(),
+            selected_agent_id: "claude".into(),
+            selected_agent_label: "Claude Code".into(),
+            scope_label: "Claude Code".into(),
+            agents: Vec::new(),
+            claude_installed: true,
+            claude_path: "/opt/homebrew/bin/claude".into(),
+            settings_path: "/Users/example/.claude/settings.json".into(),
+            settings_exists: true,
+            emitter_path: "/Applications/AgentSnitch.app/Contents/MacOS/emitter".into(),
+            emitter_executable: true,
+            all_installed: false,
+            all_up_to_date: false,
+            needs_update: true,
+            hooks: Vec::new(),
+            keep_hooks_up_to_date: true,
+            detail: String::new(),
+        }
+    }
+
+    fn hook_status_fixture(event: &str, installed: bool, up_to_date: bool) -> ClaudeHookStatus {
+        ClaudeHookStatus {
+            event: event.into(),
+            arg: event.to_ascii_lowercase(),
+            label: event.into(),
+            description: format!("{} hook", event),
+            desired_command: "/Applications/AgentSnitch.app/Contents/MacOS/emitter".into(),
+            installed,
+            up_to_date,
+            stale: installed && !up_to_date,
+            current_command: if installed {
+                "/tmp/old-agentsnitch-emitter".into()
+            } else {
+                String::new()
+            },
+            status: if up_to_date {
+                "up_to_date".into()
+            } else if installed {
+                "stale".into()
+            } else {
+                "missing".into()
+            },
+        }
     }
 
     #[test]
@@ -7281,8 +7805,12 @@ pub fn run() {
             get_events_json,
             get_status,
             get_app_settings,
+            get_claude_hooks_status,
+            install_claude_hooks,
+            remove_claude_hooks,
             set_advanced_controls_enabled,
             set_high_assurance_default_enabled,
+            set_keep_hooks_up_to_date,
             set_network_sensor_disabled,
             resize_main_window,
             clear_session,
@@ -7315,7 +7843,8 @@ pub fn run() {
                 *state.quiet_preferences.lock().unwrap() = prefs;
                 *state.quieted_patterns.lock().unwrap() = effective;
                 *state.destination_memory.lock().unwrap() = destination_memory;
-                *state.app_settings.lock().unwrap() = settings;
+                *state.app_settings.lock().unwrap() = settings.clone();
+                ensure_claude_hooks_current_if_enabled(settings);
             }
             if let Err(e) = create_tray(&handle) {
                 eprintln!("tray create failed: {}", e);

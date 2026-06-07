@@ -34,7 +34,7 @@ Download the latest pre-alpha package from [AgentSnitch v0.1.0-pre-alpha.4](http
 - `AgentSnitch.app`
 - the local daemon and support tools
 - a per-user LaunchAgent
-- Claude Code hook registration for the console user
+- Claude Code hook tooling, installed only when enabled from Settings
 
 For a source checkout:
 
@@ -43,7 +43,7 @@ make create
 make doctor
 ```
 
-`make create` builds the Go tools and Tauri app, installs `/Applications/AgentSnitch.app`, registers Claude Code hooks, starts the user daemon, launches the app, and runs `doctor`.
+`make create` builds the Go tools and Tauri app, installs `/Applications/AgentSnitch.app`, starts the user daemon, launches the app, and runs `doctor`. Claude Code hooks are not installed automatically; open Settings -> Hooks to install or update them explicitly.
 
 For development-only builds:
 

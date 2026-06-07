@@ -14,7 +14,7 @@ help:
 	@echo "  make build-neready     - Build the Network Extension readiness checker (Go)"
 	@echo "  make build-extension   - Build local .systemextension bundle and host bridge dylib"
 	@echo "  make package-macos-dev - Embed .systemextension and sign app (ad hoc by default, Developer ID with profiles)"
-	@echo "  make create            - Build, sign/package, optionally notarize, install app/hooks/daemon"
+	@echo "  make create            - Build, sign/package, optionally notarize, install app/daemon"
 	@echo "  make run-daemon        - go run ./cmd/daemon (for live testing)"
 	@echo "  make doctor            - Check hook, emitter, daemon, UI, and recent hook health"
 	@echo "  make ne-ready          - Check production Network Extension readiness"
@@ -107,7 +107,7 @@ build-ui:
 	cd ui && cargo tauri build
 
 install:
-	@echo "==> Installing AgentSnitch Claude Code hooks"
+	@echo "==> Manually installing AgentSnitch Claude Code hooks"
 	./scripts/install.sh
 
 uninstall:

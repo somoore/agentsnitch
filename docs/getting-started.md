@@ -10,7 +10,7 @@ AgentSnitch is a local-first macOS pre-alpha. The current release path is built 
 
 Download [AgentSnitch v0.1.0-pre-alpha.4](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.4) and install the macOS `.pkg`.
 
-The installer includes `AgentSnitch.app`, the local daemon, support tools, LaunchAgent registration, and Claude Code hook registration for the console user. High Assurance mode is available as an optional macOS system-extension-backed path, but User Visibility mode is the default unless explicitly changed in app Settings.
+The installer includes `AgentSnitch.app`, the local daemon, support tools, and LaunchAgent registration. Claude Code hook tooling is included, but hooks are not installed automatically; open AgentSnitch Settings -> Hooks to install or update them explicitly. High Assurance mode is available as an optional macOS system-extension-backed path, but User Visibility mode is the default unless explicitly changed in app Settings.
 
 ## Build
 
@@ -33,7 +33,7 @@ The emitter tags linkable network intent from shell network commands, MCP tools,
 make create
 ```
 
-This is the one-command build/install path. It builds every Go tool, builds the Tauri app, installs `/Applications/AgentSnitch.app`, embeds and signs the optional Network Extension and host bridge, installs support binaries under `~/Library/Application Support/AgentSnitch/bin`, registers Claude Code hooks against the installed emitter, installs a per-user LaunchAgent for the daemon, starts the daemon, launches the app, and runs `doctor`.
+This is the one-command build/install path. It builds every Go tool, builds the Tauri app, installs `/Applications/AgentSnitch.app`, embeds and signs the optional Network Extension and host bridge, installs support binaries under `~/Library/Application Support/AgentSnitch/bin`, installs a per-user LaunchAgent for the daemon, starts the daemon, launches the app, and runs `doctor`. Claude Code hooks are managed separately from Settings -> Hooks.
 
 The installed LaunchAgent sets `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=0` and `AGENTSNITCH_DISABLE_LSOF=0` by default. That keeps the shipped/local-install path on semantic hooks plus unprivileged NetworkStatistics/`nettop` process-network correlation, with polling-based `lsof` as a fallback if `nettop` is unavailable. High Assurance is disabled by default and must be enabled explicitly when you need stronger OS-backed attribution.
 
@@ -55,7 +55,7 @@ Alternatively set `AGENTSNITCH_NOTARY_APPLE_ID`, `AGENTSNITCH_NOTARY_PASSWORD`, 
 make install
 ```
 
-This builds the emitter and hook manager, then installs idempotent Claude Code `PreToolUse` and `PostToolUse` hooks into `~/.claude/settings.json` (or `CLAUDE_SETTINGS` if set). Existing non-AgentSnitch hooks are preserved. Before writing, the installer creates a timestamped backup next to the settings file.
+This builds the emitter and hook manager, then manually installs idempotent Claude Code `PreToolUse` and `PostToolUse` hooks into `~/.claude/settings.json` (or `CLAUDE_SETTINGS` if set). Existing non-AgentSnitch hooks are preserved. Before writing, the installer creates a timestamped backup next to the settings file. The normal app install path does not run this target; Settings -> Hooks is the preferred UI flow.
 
 Remove AgentSnitch with:
 
@@ -245,7 +245,7 @@ make doctor
 
 The doctor checks:
 
-- Claude hooks point at the AgentSnitch emitter;
+- Claude hooks point at the AgentSnitch emitter after they are explicitly installed from Settings -> Hooks or `make install`;
 - the emitter binary exists and is executable;
 - the daemon Unix socket is reachable;
 - the Tauri UI listener is reachable;
