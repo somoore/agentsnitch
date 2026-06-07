@@ -2839,30 +2839,33 @@ fn hook_auto_update_plan(status: &ClaudeHooksStatus) -> Vec<(String, Vec<String>
     }
 }
 
+fn apply_hook_auto_update_plan(status: &ClaudeHooksStatus) -> Vec<String> {
+    if !status.emitter_executable {
+        return if status.needs_update {
+            vec!["hook auto-update skipped: emitter helper is not executable".into()]
+        } else {
+            Vec::new()
+        };
+    }
+
+    let mut warnings = Vec::new();
+    for (agent, events) in hook_auto_update_plan(status) {
+        if let Err(err) = run_hookctl("install", events, Some(agent.clone())) {
+            warnings.push(format!("hook auto-update failed for {}: {}", agent, err));
+        }
+    }
+    warnings
+}
+
 fn ensure_claude_hooks_current_if_enabled(settings: AppSettings) {
     if !settings.keep_hooks_up_to_date {
         return;
     }
     thread::spawn(
         move || match load_claude_hooks_status(&settings, Some("all".into())) {
-            Ok(status) if status.emitter_executable => {
-                for (agent, events) in hook_auto_update_plan(&status) {
-                    if let Err(err) = run_hookctl("install", events, Some(agent.clone())) {
-                        append_ui_log(&format!(
-                            "[agentsnitch-ui] hook auto-update failed for {}: {}",
-                            agent, err
-                        ));
-                    }
-                }
-            }
-            Ok(status) if !status.emitter_executable => {
-                if status.needs_update {
-                    append_ui_log(
-                        "[agentsnitch-ui] hook auto-update skipped: emitter helper is not executable",
-                    );
-                }
-            }
-            Ok(_) => {}
+            Ok(status) => apply_hook_auto_update_plan(&status)
+                .into_iter()
+                .for_each(|warning| append_ui_log(&format!("[agentsnitch-ui] {}", warning))),
             Err(err) => append_ui_log(&format!(
                 "[agentsnitch-ui] hook status check failed: {}",
                 err
@@ -4788,9 +4791,17 @@ fn set_keep_hooks_up_to_date(
     save_app_settings(&settings)?;
     let mut warning = None;
     if enabled {
-        if let Err(err) = run_hookctl("install", Vec::new(), Some("all".into())) {
-            warning = Some(err);
-        }
+        warning = match load_claude_hooks_status(&settings, Some("all".into())) {
+            Ok(status) => {
+                let warnings = apply_hook_auto_update_plan(&status);
+                if warnings.is_empty() {
+                    None
+                } else {
+                    Some(warnings.join("; "))
+                }
+            }
+            Err(err) => Some(err),
+        };
     }
     let _ = app.emit("settings-changed", &settings);
     Ok(AppSettingsUpdate {
