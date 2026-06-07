@@ -2673,6 +2673,11 @@ fn support_binary_path(env_key: &str, name: &str) -> Option<String> {
             }
         }
     }
+    if let Some(path) = executable_candidate(
+        std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin").join(name),
+    ) {
+        return Some(path);
+    }
     if let Ok(home) = std::env::var("HOME") {
         if !home.trim().is_empty() {
             if let Some(path) = executable_candidate(
@@ -2686,11 +2691,6 @@ fn support_binary_path(env_key: &str, name: &str) -> Option<String> {
                 return Some(path);
             }
         }
-    }
-    if let Some(path) = executable_candidate(
-        std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin").join(name),
-    ) {
-        return Some(path);
     }
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(path) = executable_candidate(cwd.join("bin").join(name)) {
