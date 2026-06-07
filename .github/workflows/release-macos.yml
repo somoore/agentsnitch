@@ -221,7 +221,7 @@ jobs:
           - AgentSnitch.app
           - AgentSnitch daemon and support tools
           - LaunchAgent registration
-          - Claude Code hook registration for the console user during install
+          - Claude Code hook tooling; hooks are installed explicitly from Settings
           EOF
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then

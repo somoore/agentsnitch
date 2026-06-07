@@ -116,6 +116,9 @@ func checkClaudeHooks(emitter string) check {
 	}
 	raw, err := os.ReadFile(settings)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return check{name: "Claude hooks", status: "SETUP", detail: "not installed; open AgentSnitch Settings > Hooks"}
+		}
 		return check{name: "Claude hooks", ok: false, fail: true, detail: fmt.Sprintf("settings not readable: %s", settings)}
 	}
 
@@ -138,7 +141,7 @@ func checkClaudeHooks(emitter string) check {
 	if !post {
 		missing = append(missing, "PostToolUse")
 	}
-	return check{name: "Claude hooks", ok: false, fail: true, detail: "missing or wrong: " + strings.Join(missing, ", ")}
+	return check{name: "Claude hooks", status: "SETUP", detail: "missing or wrong: " + strings.Join(missing, ", ") + "; open AgentSnitch Settings > Hooks"}
 }
 
 func claudeSettingsPath() (string, error) {

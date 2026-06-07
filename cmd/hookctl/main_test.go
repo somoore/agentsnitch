@@ -31,7 +31,7 @@ func TestInstallClaudeHooksIsIdempotentAndPreservesOtherHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := options{settings: settings, emitter: emitter}
+	opts := options{settings: settings, emitter: emitter, events: allHookSpecs}
 	if err := installClaudeHooks(opts); err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func TestInstallClaudeHooksIsIdempotentAndPreservesOtherHooks(t *testing.T) {
 	if countAgentSnitchHooks(hooks, emitter) != 2 {
 		t.Fatalf("expected exactly two AgentSnitch hooks, got %#v", hooks)
 	}
-	if !hookInstalled(hooks, preEvent, emitter, "pretooluse") {
+	if !hookInstalled(hooks, allHookSpecs[0], emitter) {
 		t.Fatal("missing PreToolUse AgentSnitch hook")
 	}
-	if !hookInstalled(hooks, postEvent, emitter, "posttooluse") {
+	if !hookInstalled(hooks, allHookSpecs[1], emitter) {
 		t.Fatal("missing PostToolUse AgentSnitch hook")
 	}
 	if !commandPresent(hooks, preEvent, "/usr/bin/true") {
@@ -62,14 +62,14 @@ func TestUninstallClaudeHooksRemovesOnlyAgentSnitchHooks(t *testing.T) {
 	if err := os.WriteFile(emitter, []byte("#!/bin/sh\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	opts := options{settings: settings, emitter: emitter}
+	opts := options{settings: settings, emitter: emitter, events: allHookSpecs}
 	if err := installClaudeHooks(opts); err != nil {
 		t.Fatal(err)
 	}
 
 	doc := readSettingsForTest(t, settings)
 	hooks := hooksMap(doc)
-	addAgentSnitchHook(hooks, preEvent, "/usr/bin/true", "true")
+	addAgentSnitchHook(hooks, hookSpec{Event: preEvent, Arg: "true"}, "/usr/bin/true")
 	if err := writeSettings(settings, doc); err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,81 @@ func TestVerifyRejectsCommandsThatOnlyMentionEmitter(t *testing.T) {
 	if err := writeSettings(settings, doc); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyClaudeHooks(options{settings: settings, emitter: emitter}); err == nil {
+	if err := verifyClaudeHooks(options{settings: settings, emitter: emitter, events: allHookSpecs}); err == nil {
 		t.Fatal("spoofed echo commands should not verify")
+	}
+}
+
+func TestSelectedHookInstallAndUninstall(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "settings.json")
+	emitter := filepath.Join(dir, "emitter")
+	if err := os.WriteFile(emitter, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	preOnly := []hookSpec{allHookSpecs[0]}
+	opts := options{settings: settings, emitter: emitter, events: preOnly}
+	if err := installClaudeHooks(opts); err != nil {
+		t.Fatal(err)
+	}
+	doc := readSettingsForTest(t, settings)
+	hooks := hooksMap(doc)
+	if !hookInstalled(hooks, allHookSpecs[0], emitter) {
+		t.Fatal("expected PreToolUse installed")
+	}
+	if hookInstalled(hooks, allHookSpecs[1], emitter) {
+		t.Fatal("PostToolUse should not be installed")
+	}
+	if err := uninstallClaudeHooks(opts); err != nil {
+		t.Fatal(err)
+	}
+	doc = readSettingsForTest(t, settings)
+	hooks = hooksMap(doc)
+	if countAgentSnitchHooks(hooks, emitter) != 0 {
+		t.Fatalf("selected uninstall left hooks: %#v", hooks)
+	}
+}
+
+func TestStatusReportsStaleHooks(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "settings.json")
+	emitter := filepath.Join(dir, "emitter")
+	if err := os.WriteFile(emitter, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]interface{}{}
+	hooks := hooksMap(doc)
+	addAgentSnitchHook(hooks, hookSpec{Event: preEvent, Arg: "old"}, emitter)
+	if err := writeSettings(settings, doc); err != nil {
+		t.Fatal(err)
+	}
+	report, err := statusClaudeHooks(options{settings: settings, emitter: emitter, events: allHookSpecs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.AllUpToDate {
+		t.Fatal("stale hook should not report all up to date")
+	}
+	if !report.Hooks[0].Installed || !report.Hooks[0].Stale || report.Hooks[0].UpToDate {
+		t.Fatalf("unexpected pre hook status: %+v", report.Hooks[0])
+	}
+	if report.Hooks[1].Installed {
+		t.Fatalf("post hook should be missing: %+v", report.Hooks[1])
+	}
+}
+
+func TestClaudeCommandPathUsesExplicitEnv(t *testing.T) {
+	dir := t.TempDir()
+	claude := filepath.Join(dir, "claude")
+	if err := os.WriteFile(claude, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_BIN", claude)
+	t.Setenv("CLAUDE_PATH", "")
+	t.Setenv("PATH", "")
+
+	if got := claudeCommandPath(); got != claude {
+		t.Fatalf("expected %s, got %s", claude, got)
 	}
 }
 

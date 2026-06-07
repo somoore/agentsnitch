@@ -1786,7 +1786,8 @@
 	      display: grid;
 	    }
 	    .settings-modal {
-	      width: min(420px, 100%);
+	      width: min(720px, 100%);
+      max-height: min(720px, calc(100vh - 36px));
 	      border: 1px solid var(--border);
 	      border-radius: 8px;
 	      background: #202022;
@@ -1811,6 +1812,29 @@
       display: grid;
       gap: 10px;
       padding: 12px;
+      overflow: auto;
+    }
+    .settings-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px 0;
+      background: #202022;
+    }
+    .settings-tab {
+      min-width: 88px;
+      justify-content: center;
+    }
+    .settings-tab.active {
+      background: rgba(43, 139, 255, 0.18);
+      border-color: rgba(43, 139, 255, 0.55);
+      color: var(--blue);
+    }
+    .settings-pane {
+      display: none;
+      gap: 10px;
+    }
+    .settings-pane.active {
+      display: grid;
     }
     .settings-modal-body .settings-row + .settings-row {
       padding-top: 10px;
@@ -1860,6 +1884,61 @@
 	      color: var(--orange);
       font-size: 10px;
       line-height: 1.35;
+    }
+    .hook-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .hook-list {
+      display: grid;
+      gap: 8px;
+    }
+    .hook-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+    .hook-item input {
+      margin-top: 2px;
+    }
+    .hook-command {
+      margin-top: 4px;
+      color: var(--text-dim);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .status-pill.ok {
+      border-color: rgba(48, 209, 88, 0.55);
+      color: var(--green);
+      background: rgba(48, 209, 88, 0.10);
+    }
+    .status-pill.bad {
+      border-color: rgba(255, 69, 58, 0.55);
+      color: var(--red);
+      background: rgba(255, 69, 58, 0.10);
+    }
+    .status-pill.warn {
+      border-color: rgba(255, 159, 10, 0.55);
+      color: var(--orange);
+      background: rgba(255, 159, 10, 0.10);
     }
     .simple-proof-grid,
     .first-run-grid {
@@ -2371,7 +2450,12 @@
 	        <div id="settingsModalTitle" class="settings-modal-title">Settings</div>
 	        <button onclick="closeSettingsModal()" title="Close settings">Close</button>
 	      </div>
+	      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+	        <button id="settingsTabGeneral" class="settings-tab active" onclick="setSettingsTab('general')" role="tab" aria-selected="true">General</button>
+	        <button id="settingsTabHooks" class="settings-tab" onclick="setSettingsTab('hooks')" role="tab" aria-selected="false">Hooks</button>
+	      </div>
 	      <div class="settings-modal-body">
+	        <div id="settingsPaneGeneral" class="settings-pane active" role="tabpanel" aria-labelledby="settingsTabGeneral">
 	        <div class="settings-row">
 	          <div class="settings-label">
 	            <div class="settings-title">Interface</div>
@@ -2414,6 +2498,45 @@
 	            <input id="highAssuranceDefaultEnabled" type="checkbox" onchange="setDraftHighAssuranceDefaultEnabled(this.checked)">
 	          </label>
 	        </div>
+	        </div>
+	        <div id="settingsPaneHooks" class="settings-pane" role="tabpanel" aria-labelledby="settingsTabHooks">
+	          <div class="settings-row">
+	            <div class="settings-label">
+	              <div class="settings-title">Claude Code</div>
+	              <div id="claudeCodeStatus" class="settings-status">Checking</div>
+	              <p class="settings-copy">AgentSnitch never installs Claude Code hooks automatically during app install. Choose the hooks you want and install them explicitly.</p>
+	            </div>
+	            <span id="claudeCodeBadge" class="status-pill warn">Checking</span>
+	          </div>
+	          <div class="settings-row">
+	            <div class="settings-label">
+	              <div class="settings-title">Keep hooks up to date</div>
+	              <div id="keepHooksStatus" class="settings-status">Off</div>
+	              <p class="settings-copy">When enabled, AgentSnitch updates its Claude Code hooks on app startup if the expected hook commands changed.</p>
+	            </div>
+	            <label class="switch" title="Automatically update AgentSnitch Claude Code hooks">
+	              <input id="keepHooksUpToDate" type="checkbox" onchange="setKeepHooksUpToDate(this.checked)">
+	              <span class="switch-track"></span>
+	            </label>
+	          </div>
+	          <div class="settings-row">
+	            <div class="settings-label">
+	              <div class="settings-title">Installed hooks</div>
+	              <div id="hooksSummaryStatus" class="settings-status">Loading</div>
+	            </div>
+	            <div class="hook-toolbar">
+	              <button onclick="selectAllHooks(true)">All</button>
+	              <button onclick="selectAllHooks(false)">None</button>
+	              <button onclick="refreshHookStatus()">Refresh</button>
+	            </div>
+	          </div>
+	          <div id="hookList" class="hook-list"></div>
+	          <p id="hooksChangedWarning" class="settings-warning" hidden></p>
+	          <div class="hook-toolbar">
+	            <button onclick="removeSelectedHooks()">Remove selected</button>
+	            <button onclick="installSelectedHooks()" class="primary">Install / Update selected</button>
+	          </div>
+	        </div>
 	      </div>
 	      <div class="settings-modal-actions">
 	        <button onclick="closeSettingsModal()">Cancel</button>
@@ -2440,8 +2563,11 @@
     let rawQuery = '';
     let traceQuery = '';
 	    let activeReasonFilter = '';
-	    let appSettings = { network_sensor_disabled: true, high_assurance_default_enabled: false, advanced_controls_enabled: false };
+	    let appSettings = { network_sensor_disabled: true, high_assurance_default_enabled: false, advanced_controls_enabled: false, keep_hooks_up_to_date: false };
 	    let draftSettings = null;
+    let settingsTab = 'general';
+    let hooksStatus = null;
+    const selectedHookEvents = new Set(['PreToolUse', 'PostToolUse']);
     const expandedIds = new Set();
     const rawWhyIds = new Set();
     const rawDetailIds = new Set();
@@ -5560,14 +5686,198 @@
       if (defaultStatus) defaultStatus.textContent = defaultEnabled ? 'High Assurance at startup' : 'User Visibility at startup';
       if (advancedToggle) advancedToggle.checked = advanced;
 	      if (advancedStatus) advancedStatus.textContent = advanced ? 'Advanced controls shown' : 'Simple';
+      const keepToggle = document.getElementById('keepHooksUpToDate');
+      const keepStatus = document.getElementById('keepHooksStatus');
+      if (keepToggle) keepToggle.checked = !!source.keep_hooks_up_to_date;
+      if (keepStatus) keepStatus.textContent = source.keep_hooks_up_to_date ? 'Automatic updates on' : 'Manual updates only';
+      renderHooksStatus();
 	      applyInterfaceMode();
 	    }
+
+    function setSettingsTab(tab) {
+      settingsTab = tab === 'hooks' ? 'hooks' : 'general';
+      for (const name of ['general', 'hooks']) {
+        const active = settingsTab === name;
+        const tabEl = document.getElementById(name === 'general' ? 'settingsTabGeneral' : 'settingsTabHooks');
+        const paneEl = document.getElementById(name === 'general' ? 'settingsPaneGeneral' : 'settingsPaneHooks');
+        if (tabEl) {
+          tabEl.classList.toggle('active', active);
+          tabEl.setAttribute('aria-selected', active ? 'true' : 'false');
+        }
+        if (paneEl) paneEl.classList.toggle('active', active);
+      }
+      if (settingsTab === 'hooks') refreshHookStatus();
+    }
+
+    function hookStatusClass(hook) {
+      if (hook && hook.up_to_date) return 'ok';
+      if (hook && hook.stale) return 'warn';
+      return 'bad';
+    }
+
+    function hookStatusLabel(hook) {
+      if (hook && hook.up_to_date) return 'Installed';
+      if (hook && hook.stale) return 'Update needed';
+      return 'Missing';
+    }
+
+    function renderHooksStatus() {
+      const claudeStatus = document.getElementById('claudeCodeStatus');
+      const claudeBadge = document.getElementById('claudeCodeBadge');
+      const summary = document.getElementById('hooksSummaryStatus');
+      const list = document.getElementById('hookList');
+      const warning = document.getElementById('hooksChangedWarning');
+      if (!list) return;
+
+      if (!hooksStatus) {
+        if (claudeStatus) claudeStatus.textContent = 'Checking Claude Code and hook settings';
+        if (claudeBadge) {
+          claudeBadge.textContent = 'Checking';
+          claudeBadge.className = 'status-pill warn';
+        }
+        if (summary) summary.textContent = 'Loading';
+        list.innerHTML = '';
+        if (warning) warning.hidden = true;
+        return;
+      }
+
+      if (claudeStatus) {
+        claudeStatus.textContent = hooksStatus.claude_installed
+          ? `Found at ${hooksStatus.claude_path || 'claude'}`
+          : 'Claude Code CLI was not found on PATH';
+      }
+      if (claudeBadge) {
+        claudeBadge.textContent = hooksStatus.claude_installed ? 'Found' : 'Not found';
+        claudeBadge.className = `status-pill ${hooksStatus.claude_installed ? 'ok' : 'bad'}`;
+      }
+      if (summary) {
+        if (hooksStatus.detail && !(hooksStatus.hooks || []).length) summary.textContent = hooksStatus.detail;
+        else if (!hooksStatus.emitter_executable) summary.textContent = 'AgentSnitch emitter helper is missing';
+        else if (hooksStatus.all_up_to_date) summary.textContent = 'All AgentSnitch hooks are up to date';
+        else if (hooksStatus.all_installed) summary.textContent = 'Hooks are installed but need an update';
+        else summary.textContent = 'One or more AgentSnitch hooks are missing';
+      }
+      const hooks = hooksStatus.hooks || [];
+      list.innerHTML = hooks.map((hook) => {
+        const checked = selectedHookEvents.has(hook.event) ? 'checked' : '';
+        const klass = hookStatusClass(hook);
+        const label = hookStatusLabel(hook);
+        const command = hook.current_command || hook.desired_command || '';
+        return `
+          <div class="hook-item">
+            <input type="checkbox" ${checked} onchange="setHookSelected('${hook.event}', this.checked)" aria-label="Select ${hook.label}">
+            <div class="settings-label">
+              <div class="settings-title">${escapeHtml(hook.label)}</div>
+              <div class="settings-status">${escapeHtml(hook.description || '')}</div>
+              <div class="hook-command">${escapeHtml(command)}</div>
+            </div>
+            <span class="status-pill ${klass}">${label}</span>
+          </div>`;
+      }).join('');
+      if (warning) {
+        const stale = hooks.filter((hook) => hook.stale);
+        const missing = hooks.filter((hook) => !hook.installed);
+        const messages = [];
+        if (stale.length) messages.push(`${stale.map((hook) => hook.label).join(', ')} changed and should be updated.`);
+        if (missing.length) messages.push(`${missing.map((hook) => hook.label).join(', ')} not installed.`);
+        warning.hidden = messages.length === 0;
+        warning.textContent = messages.join(' ');
+      }
+    }
+
+    async function refreshHookStatus() {
+      try {
+        hooksStatus = await invoke('get_claude_hooks_status');
+      } catch (e) {
+        hooksStatus = {
+          claude_installed: false,
+          claude_path: '',
+          emitter_executable: false,
+          all_installed: false,
+          all_up_to_date: false,
+          hooks: [],
+          detail: String(e),
+        };
+        const summary = document.getElementById('hooksSummaryStatus');
+        if (summary) summary.textContent = 'Hook status unavailable';
+        console.warn('hook status failed', e);
+      }
+      renderHooksStatus();
+    }
+
+    function setHookSelected(event, selected) {
+      if (selected) selectedHookEvents.add(event);
+      else selectedHookEvents.delete(event);
+    }
+
+    function selectAllHooks(selected) {
+      selectedHookEvents.clear();
+      if (selected && hooksStatus && Array.isArray(hooksStatus.hooks)) {
+        for (const hook of hooksStatus.hooks) selectedHookEvents.add(hook.event);
+      } else if (selected) {
+        selectedHookEvents.add('PreToolUse');
+        selectedHookEvents.add('PostToolUse');
+      }
+      renderHooksStatus();
+    }
+
+    function selectedHooks() {
+      return Array.from(selectedHookEvents);
+    }
+
+    async function installSelectedHooks() {
+      const events = selectedHooks();
+      if (!events.length) {
+        alert('Select at least one hook to install.');
+        return;
+      }
+      try {
+        hooksStatus = await invoke('install_claude_hooks', { events });
+        renderHooksStatus();
+      } catch (e) {
+        alert('install hooks failed: ' + e);
+        await refreshHookStatus();
+      }
+    }
+
+    async function removeSelectedHooks() {
+      const events = selectedHooks();
+      if (!events.length) {
+        alert('Select at least one hook to remove.');
+        return;
+      }
+      try {
+        hooksStatus = await invoke('remove_claude_hooks', { events });
+        renderHooksStatus();
+      } catch (e) {
+        alert('remove hooks failed: ' + e);
+        await refreshHookStatus();
+      }
+    }
+
+    async function setKeepHooksUpToDate(enabled) {
+      const previous = !!appSettings.keep_hooks_up_to_date;
+      appSettings.keep_hooks_up_to_date = !!enabled;
+      renderAppSettings(enabled ? 'Hook auto-update on' : 'Hook auto-update off');
+      try {
+        const result = await invoke('set_keep_hooks_up_to_date', { enabled: !!enabled });
+        appSettings = result.settings || appSettings;
+        if (draftSettings) draftSettings.keep_hooks_up_to_date = !!appSettings.keep_hooks_up_to_date;
+        renderAppSettings(result.warning || result.detail || '');
+        await refreshHookStatus();
+      } catch (e) {
+        appSettings.keep_hooks_up_to_date = previous;
+        renderAppSettings('Update failed');
+        alert('hook auto-update setting failed: ' + e);
+      }
+    }
 
 	    async function loadAppSettings() {
 	      try {
 	        appSettings = await invoke('get_app_settings');
 	        appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
 	        appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
+	        appSettings.keep_hooks_up_to_date = !!appSettings.keep_hooks_up_to_date;
 	        renderAppSettings();
 	      } catch (e) {
 	        renderAppSettings('Settings unavailable');
@@ -5579,6 +5889,7 @@
 	      draftSettings = { ...appSettings };
 	      const modal = document.getElementById('settingsModal');
 	      if (modal) modal.classList.add('open');
+	      setSettingsTab(settingsTab || 'general');
 	      renderAppSettings();
 	    }
 
@@ -5838,13 +6149,14 @@
 	      }).catch(() => {});
 
 	      listen('settings-changed', (evt) => {
-	        if (evt.payload) {
-	          appSettings = evt.payload;
-	          appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
-	          appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
-	          renderAppSettings();
-	          renderEvents();
-	        }
+		        if (evt.payload) {
+		          appSettings = evt.payload;
+		          appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
+		          appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
+		          appSettings.keep_hooks_up_to_date = !!appSettings.keep_hooks_up_to_date;
+		          renderAppSettings();
+		          renderEvents();
+		        }
 	      }).catch(() => {});
 
 	      listen('open-network-sensor-settings', () => {
@@ -5884,7 +6196,7 @@
         }
       });
 
-	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, setDraftHighAssuranceDefaultEnabled, setDraftAdvancedControlsEnabled, saveSettingsModal, setNetworkSensorDisabled, setHighAssuranceDefaultEnabled, setAdvancedControlsEnabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setTraceZoom, setRawKind, setFilterQuery, clearFilterQuery, showToast, setView, refresh: refreshFromBackend, invoke };
+		      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setSettingsTab, refreshHookStatus, installSelectedHooks, removeSelectedHooks, setKeepHooksUpToDate, selectAllHooks, setHookSelected, setDraftNetworkSensorEnabled, setDraftHighAssuranceDefaultEnabled, setDraftAdvancedControlsEnabled, saveSettingsModal, setNetworkSensorDisabled, setHighAssuranceDefaultEnabled, setAdvancedControlsEnabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setTraceZoom, setRawKind, setFilterQuery, clearFilterQuery, showToast, setView, refresh: refreshFromBackend, invoke };
       console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
     }
 

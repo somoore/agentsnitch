@@ -188,9 +188,6 @@ console_user="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
 if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ "$console_user" != "loginwindow" ]; then
   uid="$(/usr/bin/id -u "$console_user" 2>/dev/null || true)"
   if [ -n "$uid" ]; then
-    if [ -x "$support_bin/hookctl" ] && [ -x "$support_bin/emitter" ]; then
-      /usr/bin/sudo -u "$console_user" "$support_bin/hookctl" --emitter "$support_bin/emitter" install >/dev/null 2>&1 || true
-    fi
     /bin/launchctl bootstrap "gui/$uid" "$plist" >/dev/null 2>&1 || true
     /bin/launchctl kickstart -k "gui/$uid/$label" >/dev/null 2>&1 || true
     if [ -d "$app" ]; then

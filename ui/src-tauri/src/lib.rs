@@ -300,6 +300,8 @@ struct AppSettings {
     schema: String,
     #[serde(default)]
     advanced_controls_enabled: bool,
+    #[serde(default)]
+    keep_hooks_up_to_date: bool,
     #[serde(default = "default_network_sensor_disabled")]
     network_sensor_disabled: bool,
     #[serde(default)]
@@ -319,6 +321,7 @@ impl Default for AppSettings {
         Self {
             schema: app_settings_schema(),
             advanced_controls_enabled: false,
+            keep_hooks_up_to_date: false,
             network_sensor_disabled: true,
             high_assurance_default_enabled: false,
         }
@@ -330,6 +333,40 @@ struct AppSettingsUpdate {
     settings: AppSettings,
     detail: String,
     warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeHookStatus {
+    event: String,
+    arg: String,
+    label: String,
+    description: String,
+    desired_command: String,
+    installed: bool,
+    up_to_date: bool,
+    stale: bool,
+    #[serde(default)]
+    current_command: String,
+    status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeHooksStatus {
+    schema: String,
+    claude_installed: bool,
+    #[serde(default)]
+    claude_path: String,
+    settings_path: String,
+    settings_exists: bool,
+    emitter_path: String,
+    emitter_executable: bool,
+    all_installed: bool,
+    all_up_to_date: bool,
+    needs_update: bool,
+    hooks: Vec<ClaudeHookStatus>,
+    keep_hooks_up_to_date: bool,
+    #[serde(default)]
+    detail: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2579,6 +2616,168 @@ fn save_app_settings(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn executable_candidate(path: std::path::PathBuf) -> Option<String> {
+    match std::fs::metadata(&path) {
+        Ok(meta) if meta.is_file() && meta.permissions().mode() & 0o111 != 0 => {
+            Some(path.to_string_lossy().into_owned())
+        }
+        _ => None,
+    }
+}
+
+fn support_binary_path(env_key: &str, name: &str) -> Option<String> {
+    if let Ok(path) = std::env::var(env_key) {
+        if !path.trim().is_empty() {
+            return Some(path);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            if let Some(path) = executable_candidate(parent.join(name)) {
+                return Some(path);
+            }
+        }
+    }
+    if let Ok(dir) = std::env::var("AGENTSNITCH_SUPPORT_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            if let Some(path) =
+                executable_candidate(std::path::PathBuf::from(trimmed).join("bin").join(name))
+            {
+                return Some(path);
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            if let Some(path) = executable_candidate(
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("AgentSnitch")
+                    .join("bin")
+                    .join(name),
+            ) {
+                return Some(path);
+            }
+        }
+    }
+    if let Some(path) = executable_candidate(
+        std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin").join(name),
+    ) {
+        return Some(path);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(path) = executable_candidate(cwd.join("bin").join(name)) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn hookctl_path() -> Result<String, String> {
+    support_binary_path("AGENTSNITCH_HOOKCTL", "hookctl")
+        .ok_or_else(|| "AgentSnitch hookctl helper is not installed".into())
+}
+
+fn emitter_path() -> Result<String, String> {
+    support_binary_path("AGENTSNITCH_EMITTER", "emitter")
+        .ok_or_else(|| "AgentSnitch emitter helper is not installed".into())
+}
+
+fn normalize_hook_events(events: Vec<String>) -> Result<Vec<String>, String> {
+    if events.is_empty() {
+        return Ok(vec!["PreToolUse".into(), "PostToolUse".into()]);
+    }
+    let mut out = Vec::new();
+    for event in events {
+        let normalized = match event.trim().to_ascii_lowercase().as_str() {
+            "pretooluse" => "PreToolUse",
+            "posttooluse" => "PostToolUse",
+            other => return Err(format!("Unsupported Claude hook event: {}", other)),
+        };
+        if !out.iter().any(|item| item == normalized) {
+            out.push(normalized.to_string());
+        }
+    }
+    if out.is_empty() {
+        return Err("No Claude hook events selected".into());
+    }
+    Ok(out)
+}
+
+fn run_hookctl(action: &str, events: Vec<String>) -> Result<String, String> {
+    let hookctl = hookctl_path()?;
+    let emitter = emitter_path()?;
+    let selected = normalize_hook_events(events)?;
+    let output = Command::new(&hookctl)
+        .arg("--emitter")
+        .arg(&emitter)
+        .arg("--events")
+        .arg(selected.join(","))
+        .arg(action)
+        .output()
+        .map_err(|err| format!("run hookctl: {}", err))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("hookctl {} failed", action)
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn load_claude_hooks_status(settings: &AppSettings) -> Result<ClaudeHooksStatus, String> {
+    let hookctl = hookctl_path()?;
+    let emitter = emitter_path()?;
+    let output = Command::new(&hookctl)
+        .arg("--emitter")
+        .arg(&emitter)
+        .arg("status-json")
+        .output()
+        .map_err(|err| format!("run hookctl status: {}", err))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "hookctl status failed".into()
+        } else {
+            stderr
+        });
+    }
+    let mut status: ClaudeHooksStatus =
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
+    status.keep_hooks_up_to_date = settings.keep_hooks_up_to_date;
+    Ok(status)
+}
+
+fn ensure_claude_hooks_current_if_enabled(settings: AppSettings) {
+    if !settings.keep_hooks_up_to_date {
+        return;
+    }
+    thread::spawn(move || match load_claude_hooks_status(&settings) {
+        Ok(status)
+            if status.claude_installed && status.emitter_executable && !status.all_up_to_date =>
+        {
+            if let Err(err) = run_hookctl("install", Vec::new()) {
+                append_ui_log(&format!(
+                    "[agentsnitch-ui] hook auto-update failed: {}",
+                    err
+                ));
+            }
+        }
+        Ok(_) => {}
+        Err(err) => append_ui_log(&format!(
+            "[agentsnitch-ui] hook status check failed: {}",
+            err
+        )),
+    });
+}
+
 fn load_quiet_preferences() -> QuietPreferences {
     let path = quiet_preferences_path();
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -4444,6 +4643,67 @@ fn set_advanced_controls_enabled(
     })
 }
 
+#[tauri::command]
+fn get_claude_hooks_status(state: State<AppState>) -> Result<ClaudeHooksStatus, String> {
+    let settings = state.app_settings.lock().unwrap().clone();
+    load_claude_hooks_status(&settings)
+}
+
+#[tauri::command]
+fn install_claude_hooks(
+    events: Vec<String>,
+    state: State<AppState>,
+) -> Result<ClaudeHooksStatus, String> {
+    run_hookctl("install", events)?;
+    let settings = state.app_settings.lock().unwrap().clone();
+    let mut status = load_claude_hooks_status(&settings)?;
+    status.detail = "Selected Claude Code hooks installed.".into();
+    Ok(status)
+}
+
+#[tauri::command]
+fn remove_claude_hooks(
+    events: Vec<String>,
+    state: State<AppState>,
+) -> Result<ClaudeHooksStatus, String> {
+    run_hookctl("uninstall", events)?;
+    let settings = state.app_settings.lock().unwrap().clone();
+    let mut status = load_claude_hooks_status(&settings)?;
+    status.detail = "Selected Claude Code hooks removed.".into();
+    Ok(status)
+}
+
+#[tauri::command]
+fn set_keep_hooks_up_to_date(
+    enabled: bool,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.keep_hooks_up_to_date = enabled;
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+    let mut warning = None;
+    if enabled {
+        if let Err(err) = run_hookctl("install", Vec::new()) {
+            warning = Some(err);
+        }
+    }
+    let _ = app.emit("settings-changed", &settings);
+    Ok(AppSettingsUpdate {
+        settings,
+        detail: if enabled {
+            "AgentSnitch will keep Claude Code hooks up to date.".into()
+        } else {
+            "Automatic Claude Code hook updates are off.".into()
+        },
+        warning,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn set_macos_network_sensor_disabled(disabled: bool) -> Result<String, String> {
     macos_ne_bridge::set_network_sensor_disabled(disabled)
@@ -5118,6 +5378,7 @@ mod tests {
     fn app_settings_default_keeps_network_sensor_disabled() {
         let settings = AppSettings::default();
         assert!(!settings.advanced_controls_enabled);
+        assert!(!settings.keep_hooks_up_to_date);
         assert!(settings.network_sensor_disabled);
         assert!(!settings.high_assurance_default_enabled);
         assert_eq!(settings.schema, "agentsnitch.ui_settings.v0");
@@ -5129,6 +5390,7 @@ mod tests {
         let settings = apply_network_sensor_env_override(AppSettings {
             schema: "agentsnitch.ui_settings.v0".into(),
             advanced_controls_enabled: true,
+            keep_hooks_up_to_date: true,
             network_sensor_disabled: false,
             high_assurance_default_enabled: true,
         });
@@ -7281,8 +7543,12 @@ pub fn run() {
             get_events_json,
             get_status,
             get_app_settings,
+            get_claude_hooks_status,
+            install_claude_hooks,
+            remove_claude_hooks,
             set_advanced_controls_enabled,
             set_high_assurance_default_enabled,
+            set_keep_hooks_up_to_date,
             set_network_sensor_disabled,
             resize_main_window,
             clear_session,
@@ -7315,7 +7581,8 @@ pub fn run() {
                 *state.quiet_preferences.lock().unwrap() = prefs;
                 *state.quieted_patterns.lock().unwrap() = effective;
                 *state.destination_memory.lock().unwrap() = destination_memory;
-                *state.app_settings.lock().unwrap() = settings;
+                *state.app_settings.lock().unwrap() = settings.clone();
+                ensure_claude_hooks_current_if_enabled(settings);
             }
             if let Err(e) = create_tray(&handle) {
                 eprintln!("tray create failed: {}", e);

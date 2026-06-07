@@ -224,11 +224,6 @@ sign_support_binaries() {
   codesign --force --sign "$identity" --identifier com.somoore.agentsnitch.neready --options runtime "${timestamp_args[@]}" "$SUPPORT_BIN/neready"
 }
 
-install_hooks() {
-  log "Installing Claude Code hooks"
-  "$SUPPORT_BIN/hookctl" --emitter "$SUPPORT_BIN/emitter" install
-}
-
 write_launch_agent() {
   log "Installing daemon LaunchAgent"
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.agentsnitch"
@@ -312,8 +307,8 @@ install_support_binaries
 assert_app_exists "installing support binaries"
 sign_support_binaries
 assert_app_exists "signing support binaries"
-install_hooks
-assert_app_exists "installing hooks"
+log "Skipping Claude Code hook install"
+note "Open AgentSnitch Settings > Hooks to install or update hooks explicitly."
 write_launch_agent
 assert_app_exists "writing LaunchAgent"
 restart_launch_agent
