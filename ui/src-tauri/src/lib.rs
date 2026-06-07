@@ -2815,7 +2815,7 @@ fn hook_auto_update_plan(status: &ClaudeHooksStatus) -> Vec<(String, Vec<String>
         return status
             .agents
             .iter()
-            .filter(|agent| agent.supported && agent.installed)
+            .filter(|agent| agent.supported)
             .filter_map(|agent| {
                 let events = hook_events_needing_refresh(&agent.hooks);
                 if events.is_empty() {
@@ -5490,9 +5490,9 @@ mod tests {
         status.agents = vec![ClaudeHookAgentStatus {
             id: "claude".into(),
             label: "Claude Code".into(),
-            installed: true,
+            installed: false,
             supported: true,
-            path: "/opt/homebrew/bin/claude".into(),
+            path: String::new(),
             settings_path: "/Users/example/.claude/settings.json".into(),
             settings_exists: true,
             all_installed: false,
