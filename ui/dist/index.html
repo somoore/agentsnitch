@@ -69,6 +69,8 @@
       margin-left: auto;
       white-space: nowrap;
     }
+    body.simple-mode .advanced-only { display: none !important; }
+    body.advanced-mode .simple-only { display: none !important; }
     .sensor-button {
       display: inline-flex;
       align-items: center;
@@ -97,7 +99,7 @@
     }
     .tabs {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 4px;
       padding: 6px;
       background: var(--bg-elev);
@@ -1237,8 +1239,9 @@
     }
     .event-row {
       display: flex;
-      align-items: baseline;
+      align-items: flex-start;
       gap: 6px;
+      min-width: 0;
     }
     .ts {
       color: var(--text-dim);
@@ -1249,9 +1252,13 @@
     }
     .summary {
       flex: 1;
-      white-space: nowrap;
+      min-width: 0;
+      white-space: normal;
       overflow: hidden;
-      text-overflow: ellipsis;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
     }
     .tags {
       display: flex;
@@ -1274,6 +1281,7 @@
       color: var(--orange);
       padding-left: 58px;
       font-family: ui-monospace, monospace;
+      overflow-wrap: anywhere;
     }
     .correlated-label {
       font-size: 9px;
@@ -1593,6 +1601,11 @@
       border-color: #5a4324;
       background: #302818;
     }
+    .destination-memory.seen_before_project {
+      color: #b9f3c8;
+      border-color: rgba(48, 209, 88, 0.34);
+      background: rgba(48, 209, 88, 0.08);
+    }
     .category-pill {
       display: inline-flex;
       max-width: 100%;
@@ -1794,11 +1807,15 @@
 	      font-weight: 700;
 	      color: var(--text);
 	    }
-	    .settings-modal-body {
-	      display: grid;
-	      gap: 10px;
-	      padding: 12px;
-	    }
+    .settings-modal-body {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+    .settings-modal-body .settings-row + .settings-row {
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
 	    .settings-modal-actions {
 	      display: flex;
 	      justify-content: flex-end;
@@ -1834,16 +1851,52 @@
 	      margin: 0;
 	      max-width: 520px;
 	    }
-	    .settings-warning {
-	      margin: 4px 0 0;
-	      padding: 6px 7px;
-	      border: 1px solid rgba(255, 159, 10, 0.45);
+    .settings-warning {
+      margin: 4px 0 0;
+      padding: 6px 7px;
+      border: 1px solid rgba(255, 159, 10, 0.45);
 	      border-radius: 5px;
 	      background: rgba(255, 159, 10, 0.08);
 	      color: var(--orange);
-	      font-size: 10px;
-	      line-height: 1.35;
-	    }
+      font-size: 10px;
+      line-height: 1.35;
+    }
+    .simple-proof-grid,
+    .first-run-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 6px;
+    }
+    .simple-proof-card,
+    .first-run-card {
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(120, 120, 128, 0.06);
+    }
+    .simple-proof-title,
+    .first-run-title {
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+    .simple-proof-copy,
+    .first-run-copy {
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .first-run-card.ready {
+      border-color: rgba(48, 209, 88, 0.34);
+      background: rgba(48, 209, 88, 0.07);
+    }
+    .first-run-card.waiting {
+      border-color: rgba(255, 159, 10, 0.36);
+      background: rgba(255, 159, 10, 0.07);
+    }
 	    .switch {
 	      position: relative;
 	      display: inline-flex;
@@ -1946,8 +1999,105 @@
       position: absolute; bottom: 44px; right: 8px;
       font-size: 9px; color: var(--text-dim); opacity: 0.5; pointer-events: none;
     }
+    .filter-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
+    .filter-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: min(360px, 100%);
+      flex: 1 1 360px;
+      padding: 2px 3px 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #18181a;
+    }
+    .filter-input-wrap:focus-within {
+      border-color: rgba(10, 132, 255, 0.72);
+      box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.16);
+    }
+    .filter-input-icon {
+      color: var(--text-dim);
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .filter-input {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 11px;
+      line-height: 20px;
+    }
+    .filter-input::placeholder {
+      color: var(--text-dim);
+    }
+    .filter-count {
+      color: var(--text-dim);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .filter-empty {
+      padding: 16px;
+      border: 1px dashed var(--border);
+      border-radius: 7px;
+      color: var(--text-dim);
+      text-align: center;
+      font-size: 11px;
+      background: rgba(120, 120, 128, 0.04);
+    }
+    .toast-stack {
+      position: fixed;
+      right: 12px;
+      bottom: 42px;
+      z-index: 30;
+      display: grid;
+      gap: 8px;
+      width: min(420px, calc(100vw - 24px));
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      display: grid;
+      gap: 3px;
+      padding: 10px 12px;
+      border: 1px solid rgba(120, 183, 255, 0.35);
+      border-left: 4px solid var(--accent);
+      border-radius: 7px;
+      background: #202022;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.42);
+      font-size: 11px;
+    }
+    .toast.success {
+      border-color: rgba(48, 209, 88, 0.34);
+      border-left-color: var(--green);
+    }
+    .toast.error {
+      border-color: rgba(255, 69, 58, 0.44);
+      border-left-color: var(--red);
+    }
+    .toast-title {
+      color: var(--text);
+      font-weight: 700;
+    }
+    .toast-detail {
+      min-width: 0;
+      color: var(--text-dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: ui-monospace, monospace;
+    }
 
-    /* ---- Live flow-trace (Sankey) view ---- */
+    /* ---- Live flow-trace view ---- */
     .trace-view { display: flex; flex-direction: column; gap: 8px; }
     .trace-toolbar {
       display: flex; align-items: center; justify-content: space-between;
@@ -1955,7 +2105,8 @@
       padding: 6px 8px; background: var(--bg-elev);
       border: 1px solid var(--border); border-radius: 6px;
     }
-    .trace-modes { display: flex; gap: 4px; }
+    .trace-modes,
+    .trace-zoom-controls { display: flex; gap: 4px; }
     .trace-mode-btn {
       background: transparent; color: var(--text-dim);
       border: 1px solid var(--border); border-radius: 5px;
@@ -1963,16 +2114,38 @@
     }
     .trace-mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .trace-hint { color: var(--text-dim); font-size: 11px; }
-    .trace-selection { font-size: 11px; color: var(--text); }
-    .trace-selection strong { color: var(--accent); }
+    .trace-toolbar .filter-row {
+      flex: 1 1 380px;
+    }
+    .trace-selection {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      flex-wrap: wrap;
+      min-width: 0;
+      font-size: 11px;
+      color: var(--text);
+      overflow: hidden;
+    }
+    .trace-selection strong {
+      color: var(--accent);
+      display: inline-block;
+      max-width: min(560px, 50vw);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: bottom;
+      white-space: nowrap;
+    }
     .trace-svg-wrap {
       background: #161618; border: 1px solid var(--border);
-      border-radius: 8px; padding: 4px; overflow-x: auto;
+      border-radius: 8px; padding: 8px; overflow: auto;
+      max-height: min(42vh, 340px);
     }
     .trace-svg { display: block; }
     .trace-col-title { fill: var(--text-dim); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    .trace-label { fill: var(--text-dim); font-size: 10px; }
-    .trace-label.hot { fill: var(--red); font-weight: 700; }
+    .trace-label { fill: var(--text-dim); font-size: 10px; paint-order: stroke; stroke: rgba(0,0,0,0.48); stroke-width: 3px; stroke-linejoin: round; }
+    .trace-label.hot { fill: #ffd0cc; font-weight: 700; }
     .trace-label.medium { fill: var(--orange); }
     .trace-ribbon { cursor: pointer; transition: stroke-opacity 0.12s; }
     .trace-ribbon:hover { stroke-opacity: 0.95 !important; }
@@ -1981,7 +2154,7 @@
     .trace-node rect:hover { stroke: #fff; stroke-width: 1; }
     .trace-node.selected rect { stroke: var(--accent); stroke-width: 1.5; }
 
-    /* Node-link alternate (single-outlier emphasis) */
+    .trace-destination-view,
     .trace-nodelink { display: flex; flex-direction: column; gap: 10px; }
     .trace-nl-section {
       background: var(--bg-elev); border: 1px solid var(--border);
@@ -1993,18 +2166,153 @@
     .trace-nl-row { display: flex; flex-wrap: wrap; gap: 6px; }
     .trace-nl-chip {
       display: inline-flex; align-items: center; gap: 6px;
+      min-width: 0; max-width: 100%; flex: 1 1 250px;
       background: #232325; border: 1px solid var(--border); border-radius: 14px;
       padding: 4px 10px; font-size: 11px; color: var(--text); cursor: pointer;
     }
     .trace-nl-chip .trace-nl-dot { width: 8px; height: 8px; border-radius: 50%; background: #48484a; }
+    .trace-nl-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .trace-nl-chip.hot { border-color: var(--red); background: #3a2323; color: #fff; font-weight: 600; }
     .trace-nl-chip.hot .trace-nl-dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
     .trace-nl-chip.selected { outline: 2px solid var(--accent); }
     .trace-nl-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
     .trace-nl-chip.hot .trace-nl-count { color: #ffd0cc; }
+    .trace-dest-table {
+      display: grid;
+      gap: 5px;
+    }
+    .trace-dest-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.3fr) minmax(96px, 128px) minmax(118px, 0.75fr) minmax(92px, 0.55fr) minmax(80px, 0.5fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+      width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-radius: 6px;
+      background: #202022;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .trace-dest-row.hot {
+      border-color: rgba(255, 69, 58, 0.62);
+      border-left-color: var(--red);
+      background: #2a1a1a;
+    }
+    .trace-dest-row.safe {
+      border-left-color: #48484a;
+    }
+    .trace-dest-row.selected {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .trace-dest-primary,
+    .trace-dest-meta,
+    .trace-dest-process,
+    .trace-dest-reason {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .trace-dest-primary {
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .trace-dest-meta,
+    .trace-dest-process,
+    .trace-dest-reason {
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+    .trace-dest-row.hot .trace-dest-primary,
+    .trace-dest-row.hot .trace-dest-reason {
+      color: #ffd0cc;
+    }
+    .trace-dest-count,
+    .trace-dest-bytes {
+      color: var(--text);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .trace-path {
+      display: grid;
+      gap: 7px;
+      padding: 9px 10px;
+      border: 1px solid rgba(120, 183, 255, 0.24);
+      border-radius: 8px;
+      background: rgba(120, 183, 255, 0.055);
+    }
+    .trace-path-title {
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .trace-path-steps {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      align-items: stretch;
+    }
+    .trace-path-step {
+      min-width: 0;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #1f1f21;
+    }
+    .trace-path-label {
+      color: var(--text-dim);
+      font-size: 9px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 3px;
+    }
+    .trace-path-value {
+      color: var(--text);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    @media (max-width: 760px) {
+      .filter-row {
+        align-items: stretch;
+      }
+      .filter-input-wrap {
+        min-width: 0;
+      }
+      .filter-count {
+        white-space: normal;
+      }
+      .trace-dest-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+      .trace-dest-meta,
+      .trace-dest-process,
+      .trace-dest-reason {
+        grid-column: 1 / -1;
+      }
+      .trace-path-steps {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 560px) {
+      .trace-path-steps {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
   </style>
 </head>
-<body>
+<body class="simple-mode">
   <div class="wrap">
     <div class="header">
       <div id="title" class="title">AgentSnitch</div>
@@ -2050,9 +2358,9 @@
 	    <div class="footer">
 	      <div class="status" id="status">All local • session in memory</div>
 	      <button id="pauseToggle" class="pause-toggle" onclick="togglePaused()" title="Pause halts sensing so you can inspect the current data. Quiet only hides known-safe noise; Clear wipes the view.">Pause</button>
-	      <button onclick="quietKnownServices()">Quiet known</button>
-	      <button onclick="quietSession()">Quiet</button>
-	      <button onclick="clearSession()">Clear</button>
+	      <button class="advanced-only" onclick="quietKnownServices()">Quiet known</button>
+	      <button class="advanced-only" onclick="quietSession()">Quiet</button>
+	      <button class="advanced-only" onclick="clearSession()">Clear</button>
 	      <button onclick="doExport()" class="primary">Evidence Pack</button>
 	    </div>
 	  </div>
@@ -2066,14 +2374,44 @@
 	      <div class="settings-modal-body">
 	        <div class="settings-row">
 	          <div class="settings-label">
-	            <div class="settings-title">Advanced: experimental Network Extension sensor</div>
-	            <div id="networkSensorStatus" class="settings-status">Loading</div>
-	            <p class="settings-copy">Expert-only ground-truth attribution path. The default install uses semantic hooks plus NetworkStatistics/process-tree correlation, with lsof fallback.</p>
-	            <p class="settings-warning">Warning: this installs a macOS system network extension and content filter. Disable it immediately if you experience any connectivity issues.</p>
+	            <div class="settings-title">Interface</div>
+	            <div id="advancedControlsStatus" class="settings-status">Simple</div>
+	            <p class="settings-copy">Simple keeps the main window focused on agents, evidence, and unexpected destinations. Advanced adds raw sub-filters, Volume/List flow modes, zoom, and quiet/clear controls.</p>
+	            <p class="settings-warning simple-only">Simple mode hides diagnostic controls. Flow Trace stays on Destinations, Raw stays on All, and quiet/clear actions stay out of the way.</p>
 	          </div>
-	          <label class="switch" title="Enable the experimental macOS Network Extension content filter">
+	          <label class="switch" title="Show advanced diagnostic controls">
+	            <input id="advancedControlsEnabled" type="checkbox" onchange="setDraftAdvancedControlsEnabled(this.checked)">
+	            <span class="switch-track"></span>
+	          </label>
+	        </div>
+	        <div class="settings-row advanced-only">
+	          <div class="settings-label">
+	            <div class="settings-title">Advanced controls enabled</div>
+	            <div class="settings-status">Diagnostics visible</div>
+	            <p class="settings-copy">Raw sub-filters, Flow Trace Volume/List modes, Sankey zoom, destination quieting, raw reason toggles, and clear-session controls are visible.</p>
+	          </div>
+	        </div>
+	        <div class="settings-row">
+	          <div class="settings-label">
+	            <div class="settings-title">High Assurance mode</div>
+	            <div id="networkSensorStatus" class="settings-status">Loading</div>
+	            <p class="settings-copy">Requests stronger OS-backed network attribution for this session. User Visibility remains the default unless the startup default checkbox is selected.</p>
+	            <p class="settings-warning">This may ask macOS for additional approval. AgentSnitch still labels DNS, PTR, and service classification separately.</p>
+	            <p id="networkSensorActualWarning" class="settings-warning" hidden></p>
+	          </div>
+	          <label class="switch" title="Request High Assurance mode for this session">
 	            <input id="networkSensorEnabled" type="checkbox" onchange="setDraftNetworkSensorEnabled(this.checked)">
 	            <span class="switch-track"></span>
+	          </label>
+	        </div>
+	        <div class="settings-row">
+	          <div class="settings-label">
+	            <div class="settings-title">Make High Assurance the startup default</div>
+	            <div id="highAssuranceDefaultStatus" class="settings-status">Off</div>
+	            <p class="settings-copy">When unchecked, AgentSnitch always starts in User Visibility mode even if High Assurance was enabled during the previous session.</p>
+	          </div>
+	          <label title="Start in High Assurance mode">
+	            <input id="highAssuranceDefaultEnabled" type="checkbox" onchange="setDraftHighAssuranceDefaultEnabled(this.checked)">
 	          </label>
 	        </div>
 	      </div>
@@ -2083,6 +2421,7 @@
 	      </div>
 	    </div>
 	  </div>
+    <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Vendored d3-sankey layout (relative, offline; see file header for license). -->
   <script src="d3-sankey.js"></script>
@@ -2098,8 +2437,10 @@
     let activeAgentFilter = '';
     let activeAgentDetailKind = 'all';
     let rawKind = 'all';              // Raw tab sub-filter: 'all' | 'hooks' | 'network'
+    let rawQuery = '';
+    let traceQuery = '';
 	    let activeReasonFilter = '';
-	    let appSettings = { network_sensor_disabled: true };
+	    let appSettings = { network_sensor_disabled: true, high_assurance_default_enabled: false, advanced_controls_enabled: false };
 	    let draftSettings = null;
     const expandedIds = new Set();
     const rawWhyIds = new Set();
@@ -2453,6 +2794,95 @@
       return resolveViewEvents(scoped, activeView, activeReasonFilter);
     }
 
+    function normalizedQuery(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function eventSearchText(ev) {
+      const agent = ev?.agent || {};
+      const evidence = ev?.evidence || {};
+      const detail = detailMap(ev);
+      const fields = [
+        ev?.summary,
+        ev?.detail,
+        ev?.destination,
+        networkDisplayDestination(ev),
+        networkCategory(ev),
+        detail['category source'],
+        networkSource(ev),
+        networkState(ev),
+        detail.remote,
+        detail.sni,
+        detail.hostname,
+        detail['hostname source'],
+        detail['ptr hint'],
+        detail.process,
+        detail.bundle,
+        detail.team,
+        ...(Array.isArray(ev?.tags) ? ev.tags : []),
+        agentName(agent),
+        agentShortName(agent),
+        agentProjectName(agent),
+        agentProjectKey(agent),
+        agentPid(agent) ? `pid ${agentPid(agent)}` : '',
+        evidence.title,
+        evidence.destination,
+        evidence.destination_category,
+        evidence.semantic,
+        evidence.flow,
+        evidence.risk,
+        evidence.confidence,
+        evidence.decision,
+        evidence.review_status,
+        ...(Array.isArray(evidence.why) ? evidence.why : []),
+        ...(Array.isArray(evidence.details) ? evidence.details.flatMap(d => [d?.label, d?.value]) : []),
+      ];
+      return fields.filter(Boolean).join(' ').toLowerCase();
+    }
+
+    function filterByQuery(source, query) {
+      const q = normalizedQuery(query);
+      if (!q) return source;
+      const terms = q.split(/\s+/).filter(Boolean);
+      return source.filter(ev => {
+        const haystack = eventSearchText(ev);
+        return terms.every(term => haystack.includes(term));
+      });
+    }
+
+    function filterControl(kind, query, visibleCount, totalCount, placeholder) {
+      const escapedKind = escapeHtml(kind);
+      const value = escapeHtml(query || '');
+      const clear = query
+        ? `<button class="mini-button" title="Clear ${escapedKind} filter" onclick="clearFilterQuery('${escapedKind}')">Clear</button>`
+        : '';
+      const count = query
+        ? `Showing ${visibleCount} of ${totalCount}`
+        : `${totalCount} ${pluralize(totalCount, 'row')}`;
+      return `<div class="filter-row">
+        <label class="filter-input-wrap">
+          <span class="filter-input-icon">Filter</span>
+          <input class="filter-input" type="search" value="${value}" placeholder="${escapeHtml(placeholder)}" oninput="setFilterQuery('${escapedKind}', this.value)" spellcheck="false">
+          ${clear}
+        </label>
+        <span class="filter-count">${escapeHtml(count)}</span>
+      </div>`;
+    }
+
+    function advancedControlsEnabled() {
+      return !!(draftSettings || appSettings || {}).advanced_controls_enabled;
+    }
+
+    function applyInterfaceMode() {
+      const advanced = !!(draftSettings || appSettings).advanced_controls_enabled;
+      document.body.classList.toggle('advanced-mode', advanced);
+      document.body.classList.toggle('simple-mode', !advanced);
+      if (!advanced) {
+        if (traceMode !== 'destinations') traceMode = 'destinations';
+        if (rawKind !== 'all') rawKind = 'all';
+      }
+    }
+
     function eventCountForAgent(agentId, source = events) {
       return source.filter(ev => eventMatchesAgent(ev, agentId)).length;
     }
@@ -2553,7 +2983,14 @@
       const details = Array.isArray(evidence?.details) ? evidence.details : [];
       const hook = details.find(d => d && d.label === 'Hook event');
       const parts = String(hook?.value || '').trim().split(/\s+/).filter(Boolean);
-      return parts[1] || evidence?.semantic || '';
+      const tools = new Set([
+        'Task', 'Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Grep', 'Glob', 'LS',
+        'WebFetch', 'WebSearch', 'NotebookRead', 'NotebookEdit', 'TodoRead', 'TodoWrite',
+      ]);
+      const tool = parts
+        .map(part => part.replace(/[^A-Za-z]/g, ''))
+        .find(part => tools.has(part));
+      return tool || evidence?.semantic || '';
     }
 
     function eventPatternKey(ev) {
@@ -2647,7 +3084,9 @@
 
     function hasHostnameHint(ev) {
       const text = `${ev?.summary || ''} ${ev?.detail || ''}`;
-      return /\([a-z0-9.-]+\.[a-z]{2,}\)/i.test(text) || /\bSNI:\s*[a-z0-9.-]+\.[a-z]{2,}/i.test(text);
+      return /\([a-z0-9.-]+\.[a-z]{2,}\)/i.test(text)
+        || /\bSNI:\s*[a-z0-9.-]+\.[a-z]{2,}/i.test(text)
+        || /\bhostname:\s*[a-z0-9.-]+\.[a-z]{2,}/i.test(text);
     }
 
     function detailMap(ev) {
@@ -2667,6 +3106,38 @@
       return detailMap(ev).category || 'unknown external';
     }
 
+    function categoryDisplayName(category) {
+      const c = String(category || '').trim();
+      if (c === 'known Claude service') return 'known Claude service';
+      return c || 'unknown external';
+    }
+
+    function categoryExplanation(category) {
+      const c = String(category || '').trim();
+      if (c === 'known Claude service') {
+        return 'Known Claude/API traffic: matched by configured domains or service CIDR ranges. This is category evidence only, not a DNS-name claim.';
+      }
+      if (c === 'unknown external') {
+        return 'Unknown external destination: promoted because it is not recognized as routine Claude, local, registry, telemetry, or bridge traffic.';
+      }
+      if (c === 'cloud provider') {
+        return 'Cloud provider destination: useful to review because many unrelated services share cloud infrastructure.';
+      }
+      if (c === 'package registry') {
+        return 'Package registry traffic: common during development and grouped unless another signal makes it important.';
+      }
+      if (c === 'telemetry/logging') {
+        return 'Telemetry/logging traffic: grouped as routine unless paired with a stronger local-context signal.';
+      }
+      if (c === 'Playwright bridge traffic' || c === 'local dev server bridge' || c === 'local dev server') {
+        return 'Local development or test bridge traffic: usually expected while agents drive tools locally.';
+      }
+      if (c === 'local dev tunnel') {
+        return 'Local tunnel/listener traffic: review if it exposes a local development service outside this machine.';
+      }
+      return c ? `${c}: destination category assigned by AgentSnitch.` : 'Destination category unavailable.';
+    }
+
     function networkPid(ev) {
       const agentPidValue = agentPid(ev?.agent || {});
       if (agentPidValue) return String(agentPidValue);
@@ -2674,13 +3145,26 @@
       return match ? match[1].trim() : '';
     }
 
+    function destinationMemoryTitle(context) {
+      const label = String(context?.label || '').trim();
+      const state = String(context?.state || '').toLowerCase();
+      const count = Number(context?.previous_count || 0);
+      if (state === 'new_for_project') {
+        return `${label || 'new for project'}: this destination has not been observed in this project before, so it is promoted for review even when not linked to sensitive context.`;
+      }
+      if (state === 'seen_before_project') {
+        const seen = count ? `observed ${count} previous ${pluralize(count, 'time')}` : 'observed before';
+        return `${label || 'seen before'}: this destination was ${seen} in this project, so it is lower surprise unless paired with sensitive reads, large transfer, or a review-worthy category.`;
+      }
+      return label || 'destination context unavailable';
+    }
+
     function renderDestinationMemory(ev) {
       const context = ev?.destination_context;
       if (!context || !context.label) return '';
       const cls = normalizePatternPiece(context.state || 'seen_before_project').replace(/[^a-z0-9_-]+/g, '-');
-      const count = Number(context.previous_count || 0);
-      const title = count ? `${context.label}; previously observed ${count} time${count === 1 ? '' : 's'} in this project` : context.label;
-      return `<span class="destination-memory ${escapeHtml(cls)}" title="${escapeHtml(title)}">${escapeHtml(context.label)}</span>`;
+      const title = destinationMemoryTitle(context);
+      return `<span class="destination-memory ${escapeHtml(cls)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${escapeHtml(context.label)}</span>`;
     }
 
     function networkIsHighByte(ev) {
@@ -2977,9 +3461,9 @@
           return;
         }
         if (view === 'raw') {
-          // Raw's badge tracks the active sub-filter (All/Hooks/Network), so it
-          // matches the count shown on the sub-toggle and in the feed.
-          tab.textContent = `Raw ${counts[rawKind] || 0}`;
+          // Raw's primary badge is the full audit stream. The Raw toolbar carries
+          // the active All/Hooks/Network sub-filter counts.
+          tab.textContent = `Raw ${counts.all || 0}`;
           return;
         }
         // Evidence shows the deduped union count; Agents shows the team size.
@@ -3063,7 +3547,7 @@
         const tail = linked > 0
           ? `${linked} linked`
           : (hooks > 0 || network > 0)
-            ? 'no risky link so far'
+            ? 'no unexpected link so far'
             : 'sensors live';
         return `${watching} · ${tail}`;
       }
@@ -3072,12 +3556,60 @@
       return `Idle · ${hookState} · ${networkStateText}`;
     }
 
+    function networkCoverageNote() {
+      const sensor = latestStatus.sensor || {};
+      if (sensor.mode === 'high_assurance_active') return 'High Assurance active: OS-backed flow telemetry has been observed.';
+      if (sensor.mode === 'high_assurance_requested') return 'High Assurance requested; waiting for OS-backed flow telemetry.';
+      return 'User Visibility mode: hooks plus userland process/network observers, no root required.';
+    }
+
+    function renderTrustProofPanel() {
+      const counts = sessionCounts();
+      const known = Number(latestSummary?.known_claude_traffic || 0);
+      const cards = [
+        ['Known Claude traffic', known ? `${known} routine Claude/API ${pluralize(known, 'flow')} grouped` : 'Claude/API traffic is grouped when observed', 'Known Claude destinations are lower surprise by default, so ordinary API traffic does not dominate the review surface.'],
+        ['Unexpected destinations', counts.newDestinations ? `${counts.newDestinations} new ${pluralize(counts.newDestinations, 'destination')} promoted` : 'New external destinations will stand out', 'First-time external hosts, cloud providers, raw IPs, and large transfers are promoted above routine traffic.'],
+        ['Coverage', networkCoverageNote(), (latestStatus.sensor && latestStatus.sensor.trust_boundary) || 'AgentSnitch shows observed evidence only; short-lived flows can be missed by the default observer.'],
+        ['Scope', 'Claude Code on this Mac', 'The app is local visibility for Claude Code/macOS today, with exportable evidence when you need to share a session.'],
+      ];
+      return `<section class="overview-section">
+        <div class="overview-section-title">What AgentSnitch can prove</div>
+        <div class="simple-proof-grid">${cards.map(([title, value, detail]) => `
+          <div class="simple-proof-card" title="${escapeHtml(detail)}">
+            <div class="simple-proof-title">${escapeHtml(title)}</div>
+            <div class="simple-proof-copy">${escapeHtml(value)}</div>
+          </div>
+        `).join('')}</div>
+      </section>`;
+    }
+
+    function renderFirstRunPanel() {
+      const statusText = coverageStatusLine(latestStatus);
+      return `<section class="overview-section">
+        <div class="overview-section-title">Ready for a Claude Code session</div>
+        <div class="first-run-grid">
+          <div class="first-run-card ready">
+            <div class="first-run-title">Local observer ready</div>
+            <div class="first-run-copy">${escapeHtml(statusText)} · ${escapeHtml(networkCoverageNote())}</div>
+          </div>
+          <div class="first-run-card waiting">
+            <div class="first-run-title">Waiting for real activity</div>
+            <div class="first-run-copy">Run Claude Code on this Mac and use a tool such as Read, Bash, WebFetch, or MCP. No demo evidence is injected.</div>
+          </div>
+          <div class="first-run-card">
+            <div class="first-run-title">What will appear</div>
+            <div class="first-run-copy">Agents, subagents, tool calls, outbound flows, linked evidence, and destination paths will populate as they are observed.</div>
+          </div>
+        </div>
+      </section>`;
+    }
+
     function renderSessionNarrative(selected) {
       if (activeView === 'agents') return '';
       const counts = sessionCounts();
       if (!events.length && !selected.length) {
         return `<div class="session-narrative">
-          <span><span class="muted">Watching for the first hook or network observation.</span></span>
+          <span><span class="muted">Watching Claude Code on this Mac for the first real hook or network observation.</span></span>
           <span class="session-narrative-state">All local</span>
         </div>`;
       }
@@ -3090,7 +3622,7 @@
         ];
         text = `This session has ${pieces.join(', ')}.`;
       } else if (counts.hooks > 0 && counts.network > 0) {
-        text = `Watching hooks and network — no risky tool/network link so far.`;
+        text = `Watching hooks and network — no unexpected tool/network link so far.`;
       } else if (counts.network > 0) {
         text = `Watching network flows — no agent tool action linked yet.`;
       } else if (counts.hooks > 0) {
@@ -3453,26 +3985,25 @@
     }
 
     // =========================================================================
-    // Live flow-trace view (Sankey) — Track C.
-    // Maps hook/tool call -> trace -> PID (main/named subagent) -> destination in
-    // one glance. Known-safe destinations collapse into desaturated grey category
-    // sinks (the zoom-out); unknown-external / new-destination / sensitive-linked
-    // break out HOT (var(--red)) with a minimum width floor so a single anomaly
-    // among hundreds of safe flows is never lost in a sub-pixel ribbon. Clicking
-    // any node/edge scopes `traceSelection` and re-renders the SAME existing
-    // provenance cards (renderEvent -> renderEvidenceEvent/renderNetworkEvent,
-    // whose Explain button drives toggleDetails) — no new detail surface.
+    // Live flow-trace view — destination-first. The primary task is spotting
+    // unexpected egress quickly, then explaining the path that led there.
+    // Volume/Sankey is kept as a secondary view for aggregate flow shape.
     // =========================================================================
 
     // Module-scope so it survives the renderEvents() re-render that toggleDetails
     // triggers: a node/edge id-set + a label describing the current scope.
     let traceSelection = null;        // { kind:'node'|'edge', key, label, eventIds:Set }
-    let traceMode = 'sankey';         // 'sankey' | 'nodelink' | 'list'
+    let traceMode = 'destinations';   // 'destinations' | 'volume' | 'list'
+    let traceZoom = 'fit';            // 'fit' | 1 | 1.35 | 1.75
 
     // A flow-trace event is any event that has a destination we can place in the
     // Destination column: a raw network egress or a linked/attributed flow.
     function traceFlowEvents() {
       return events.filter(ev => eventKind(ev) === 'network' || isAttributedNetworkEvent(ev));
+    }
+
+    function traceVisibleFlowEvents() {
+      return filterByQuery(traceFlowEvents(), traceQuery);
     }
 
     function traceFlowCount() {
@@ -3486,7 +4017,7 @@
       const evidence = ev.evidence || {};
       const category = evidence.destination_category || networkCategory(ev) || 'unknown external';
       if (knownQuietCategory(category) || collapsedKnownCategory(category)) {
-        return { key: `dest:cat:${category}`, label: category, category, host: '', collapsed: true };
+        return { key: `dest:cat:${category}`, label: categoryDisplayName(category), category, host: '', collapsed: true };
       }
       const host = (evidence.destination || networkDisplayDestination(ev) || summaryDestination(ev) || 'unknown destination');
       return { key: `dest:host:${host}`, label: host, category, host, collapsed: false };
@@ -3521,8 +4052,7 @@
     //   and d3-sankey's depth math stays aligned) -> tool/hook -> destination.
     // Node ids are namespaced by column so a tool and a destination sharing a
     // string can never collide or form a cycle.
-    function buildTraceGraph() {
-      const flows = traceFlowEvents();
+    function buildTraceGraph(flows = traceVisibleFlowEvents()) {
       const nodeMap = new Map();   // key -> node
       const edgeMap = new Map();   // key -> edge
       function node(key, label, col, extra) {
@@ -3622,7 +4152,14 @@
     }
 
     function setTraceMode(mode) {
+      if (!advancedControlsEnabled() && mode !== 'destinations') return;
       traceMode = mode;
+      renderEvents();
+    }
+
+    function setTraceZoom(zoom) {
+      if (!advancedControlsEnabled()) return;
+      traceZoom = zoom === 'fit' ? 'fit' : Number(zoom) || 'fit';
       renderEvents();
     }
 
@@ -3635,15 +4172,29 @@
       return `M${x0},${y0}C${xm},${y0} ${xm},${y1} ${x1},${y1}`;
     }
 
-    function renderTraceToolbar() {
-      const modes = [['sankey', 'Sankey'], ['nodelink', 'Node-link'], ['list', 'List']];
+    function renderTraceToolbar(baseFlows = traceFlowEvents(), visibleFlows = traceVisibleFlowEvents()) {
+      if (!advancedControlsEnabled() && traceMode !== 'destinations') traceMode = 'destinations';
+      const modes = [['destinations', 'Destinations'], ['volume', 'Volume'], ['list', 'List']];
       const buttons = modes.map(([m, label]) =>
         `<button class="trace-mode-btn${traceMode === m ? ' active' : ''}" onclick="setTraceMode('${m}')">${label}</button>`
       ).join('');
+      const zooms = [['fit', 'Fit'], [1, '1x'], [1.35, '1.35x'], [1.75, '1.75x']];
+      const zoomButtons = traceMode === 'volume'
+        ? `<div class="trace-zoom-controls">${zooms.map(([z, label]) => {
+            const active = String(traceZoom) === String(z) ? ' active' : '';
+            return `<button class="trace-mode-btn${active}" onclick="setTraceZoom('${z}')">${label}</button>`;
+          }).join('')}</div>`
+        : '';
+      const hint = traceMode === 'list'
+        ? 'Exact flow rows with destination, category, process, observer, and details.'
+        : traceMode === 'volume'
+          ? 'Aggregate flow volume; use Destinations when you need the fastest anomaly read.'
+          : 'Unexpected destinations first; select one to inspect its path and provenance.';
       const sel = traceSelection
-        ? `<span class="trace-selection">Scoped to <strong>${escapeHtml(traceSelection.label)}</strong> · ${traceSelection.eventIds.size} ${pluralize(traceSelection.eventIds.size, 'event')} <button class="mini-button" onclick="clearTraceSelection()">Clear</button></span>`
-        : `<span class="trace-hint">Click any node or ribbon to see its provenance.</span>`;
-      return `<div class="trace-toolbar"><div class="trace-modes">${buttons}</div>${sel}</div>`;
+        ? `<span class="trace-selection">Scoped to <strong>${escapeHtml(traceSelection.label)}</strong> · ${traceSelection.eventIds.size} ${pluralize(traceSelection.eventIds.size, 'event')} <button class="mini-button" title="Reset trace selection" onclick="clearTraceSelection()">Reset</button></span>`
+        : `<span class="trace-hint">${escapeHtml(hint)}</span>`;
+      const search = filterControl('trace', traceQuery, visibleFlows.length, baseFlows.length, 'Search trace by host, category, PID, tool, agent');
+      return `<div class="trace-toolbar"><div class="trace-modes advanced-only">${buttons}</div><div class="advanced-only">${zoomButtons}</div>${search}${sel}</div>`;
     }
 
     function traceColorForTier(tier) {
@@ -3656,7 +4207,9 @@
       if (!window.d3Sankey || !graph.nodes.length) {
         return '<div class="empty">No flows to trace yet. Outbound flows (network egress and attributed tool→destination links) will map here as agents run.</div>';
       }
-      const width = 920, height = Math.max(320, Math.min(900, 90 + graph.nodes.filter(n => n.col === 3).length * 26 + graph.nodes.filter(n => n.col === 1).length * 18));
+      const width = 1120;
+      const rightLabelGutter = 260;
+      const height = Math.max(320, Math.min(900, 90 + graph.nodes.filter(n => n.col === 3).length * 26 + graph.nodes.filter(n => n.col === 1).length * 18));
       let layout;
       try {
         const s = window.d3Sankey.sankey()
@@ -3664,21 +4217,24 @@
           .nodeAlign(window.d3Sankey.sankeyLeft)  // force columns by depth, not justify
           .nodeWidth(14)
           .nodePadding(10)
-          .extent([[8, 12], [width - 8, height - 12]]);
+          .extent([[16, 24], [width - rightLabelGutter, height - 16]]);
         // Pin each node to its logical column via nodeAlign override on depth:
         layout = s({ nodes: graph.nodes.map(n => ({ ...n })), links: graph.links.map(l => ({ ...l })) });
       } catch (e) {
         return `<div class="empty">Flow trace could not be laid out (${escapeHtml(String(e.message || e))}). Try the List view.</div>`;
       }
 
-      const HOT_MIN_WIDTH = 6; // visibility floor so a single anomaly never vanishes
+      const HOT_MIN_WIDTH = 4; // visibility floor so a single anomaly never vanishes
+      const HOT_MAX_WIDTH = 38;
+      const SAFE_MAX_WIDTH = 28;
       const selKey = traceSelection ? traceSelection.key : '';
 
       const links = layout.links.map(l => {
-        const w = l.tier === 'hot' ? Math.max(HOT_MIN_WIDTH, l.width) : Math.max(1, l.width);
+        const maxWidth = l.tier === 'hot' ? HOT_MAX_WIDTH : SAFE_MAX_WIDTH;
+        const w = Math.min(maxWidth, l.tier === 'hot' ? Math.max(HOT_MIN_WIDTH, l.width) : Math.max(1, l.width));
         const color = traceColorForTier(l.tier);
         const isSel = selKey === l.id;
-        const opacity = selKey ? (isSel ? 0.95 : (l.tier === 'hot' ? 0.7 : 0.18)) : (l.tier === 'hot' ? 0.85 : 0.42);
+        const opacity = selKey ? (isSel ? 0.95 : (l.tier === 'hot' ? 0.55 : 0.18)) : (l.tier === 'hot' ? 0.64 : 0.38);
         const stroke = l.tier === 'hot' ? `stroke="#fff" stroke-width="1"` : '';
         return `<path class="trace-ribbon${isSel ? ' selected' : ''}" d="${sankeyLinkPath(l)}" fill="none"
           stroke="${color}" stroke-opacity="${opacity}" stroke-width="${w}" ${stroke}
@@ -3692,64 +4248,189 @@
         const x = n.x0, y = n.y0, w = Math.max(2, n.x1 - n.x0), h = Math.max(2, n.y1 - n.y0);
         const fill = traceColorForTier(n.tier);
         const isSel = selKey === n.id;
-        const labelX = n.col >= 3 ? x - 6 : x + w + 6;
-        const anchor = n.col >= 3 ? 'end' : 'start';
+        const labelX = n.col >= 3 ? x + w + 8 : x + w + 8;
+        const anchor = 'start';
         const labelCls = n.tier === 'hot' ? 'trace-label hot' : (n.tier === 'medium' ? 'trace-label medium' : 'trace-label');
+        const maxChars = n.col >= 3 ? 42 : 30;
+        const label = n.label.length > maxChars ? n.label.slice(0, maxChars - 1) + '…' : n.label;
         return `<g class="trace-node${isSel ? ' selected' : ''}" data-key="${escapeHtml(n.id)}" onclick="selectTrace('node', this.getAttribute('data-key'))">
           <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" rx="2" ${n.tier === 'hot' ? 'stroke="#fff" stroke-width="1"' : ''}>
             <title>${escapeHtml(`${n.label} · ${n.value} ${pluralize(n.value, 'event')}`)}</title>
           </rect>
-          <text class="${labelCls}" x="${labelX}" y="${y + h / 2}" text-anchor="${anchor}" dominant-baseline="middle">${escapeHtml(n.label.length > 30 ? n.label.slice(0, 29) + '…' : n.label)}</text>
+          <text class="${labelCls}" x="${labelX}" y="${y + h / 2}" text-anchor="${anchor}" dominant-baseline="middle">${escapeHtml(label)}</text>
         </g>`;
       }).join('');
 
       const headers = colTitles.map((t, i) => {
         const xs = layout.nodes.filter(n => n.col === i).map(n => n.x0);
         if (!xs.length) return '';
-        const cx = xs.reduce((a, b) => a + b, 0) / xs.length;
+        const cx = Math.max(40, Math.min(width - 72, xs.reduce((a, b) => a + b, 0) / xs.length));
         return `<text class="trace-col-title" x="${cx}" y="9" text-anchor="middle">${t}</text>`;
       }).join('');
 
-      return `<div class="trace-svg-wrap"><svg class="trace-svg" viewBox="0 0 ${width} ${height}" width="100%" preserveAspectRatio="xMidYMid meet">
+      const svgWidth = traceZoom === 'fit' ? '100%' : `${Math.round(width * traceZoom)}px`;
+      return `<div class="trace-svg-wrap"><svg class="trace-svg" viewBox="0 0 ${width} ${height}" width="${svgWidth}" preserveAspectRatio="xMinYMin meet">
         ${headers}${links}${nodes}
       </svg></div>`;
     }
 
-    // Node-link alternate: emphasizes a single outlier by laying destinations out
-    // radially and drawing only host→breakout edges large, so one hot egress is
-    // unmistakable even when its event volume is tiny. Reuses the same selection.
-    function renderTraceNodeLink(graph) {
-      const dests = graph.nodes.filter(n => n.col === 3);
-      if (!dests.length) return '<div class="empty">No destinations to trace yet.</div>';
-      const hot = dests.filter(n => n.tier === 'hot');
-      const safe = dests.filter(n => n.tier !== 'hot');
-      const selKey = traceSelection ? traceSelection.key : '';
-      function chip(n) {
-        const isSel = selKey === n.id;
-        const cls = n.tier === 'hot' ? 'trace-nl-chip hot' : 'trace-nl-chip safe';
-        return `<button class="${cls}${isSel ? ' selected' : ''}" data-key="${escapeHtml(n.id)}" onclick="selectTrace('node', this.getAttribute('data-key'))">
-          <span class="trace-nl-dot"></span>
-          <span class="trace-nl-host">${escapeHtml(n.label)}</span>
-          <span class="trace-nl-count">${n.value}</span>
-        </button>`;
+    function parseBytes(value) {
+      const raw = String(value || '').trim();
+      const match = raw.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)?$/i);
+      if (!match) return 0;
+      const n = Number(match[1]);
+      if (!Number.isFinite(n)) return 0;
+      const unit = String(match[2] || 'B').toUpperCase();
+      const scale = unit === 'TB' ? 1024 ** 4 : unit === 'GB' ? 1024 ** 3 : unit === 'MB' ? 1024 ** 2 : unit === 'KB' ? 1024 : 1;
+      return Math.round(n * scale);
+    }
+
+    function humanBytes(bytes) {
+      const n = Number(bytes || 0);
+      if (!Number.isFinite(n) || n <= 0) return '0B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let value = n;
+      let i = 0;
+      while (value >= 1024 && i < units.length - 1) {
+        value /= 1024;
+        i += 1;
       }
-      const hotBlock = hot.length
-        ? `<div class="trace-nl-section hot"><div class="trace-nl-title">Breakout — unknown / unexpected destinations</div><div class="trace-nl-row">${hot.map(chip).join('')}</div></div>`
-        : `<div class="trace-nl-section"><div class="trace-nl-title">No breakout destinations — all flows are to known-safe categories.</div></div>`;
-      const safeBlock = `<div class="trace-nl-section"><div class="trace-nl-title">Known-safe aggregate (${safe.length} ${pluralize(safe.length, 'sink')})</div><div class="trace-nl-row">${safe.map(chip).join('')}</div></div>`;
-      return `<div class="trace-nodelink">${hotBlock}${safeBlock}</div>`;
+      const digits = value >= 10 || i === 0 ? 0 : 1;
+      return `${value.toFixed(digits)}${units[i]}`;
+    }
+
+    function traceDestinationSummaries(graph) {
+      return graph.nodes
+        .filter(n => n.col === 3)
+        .map(n => {
+          const flows = traceEventsForKey(graph, n.id);
+          const sorted = [...flows].sort((a, b) => (b.id || 0) - (a.id || 0));
+          const latest = sorted[0] || {};
+          const categories = [...new Set(flows.map(networkCategory).filter(Boolean))];
+          const projects = [...new Set(flows.map(ev => agentProjectName(ev.agent || {})).filter(Boolean))];
+          const processes = [...new Set(flows.map(ev => {
+            const pid = networkPid(ev);
+            const name = agentName(ev.agent || {}) || 'process';
+            return pid ? `${name} ${pid}` : name;
+          }).filter(Boolean))];
+          const reasons = [...new Set(flows.flatMap(attentionReasons))];
+          const bytes = flows.reduce((sum, ev) => sum + parseBytes(detailMap(ev).out), 0);
+          return {
+            node: n,
+            key: n.id,
+            label: n.label,
+            tier: n.tier,
+            count: n.value,
+            bytes,
+            latest,
+            lastSeen: displayTimestamp(latest.ts || ''),
+            category: categories[0] || n.category || 'unknown external',
+            meta: n.collapsed ? 'known-safe aggregate' : (categories[0] || n.category || 'unknown external'),
+            project: projects.length === 1 ? projects[0] : projects.length ? `${projects.length} projects` : 'unknown project',
+            process: processes.length === 1 ? processes[0] : processes.length ? `${processes.length} processes` : 'unattributed',
+            observer: [networkSource(latest), networkState(latest)].filter(Boolean).join(' / '),
+            reason: reasons[0] || (n.tier === 'hot' ? 'needs review' : 'known/routine destination'),
+            eventIds: new Set(flows.map(ev => ev.id)),
+          };
+        })
+        .sort((a, b) => {
+          const tierRank = t => t === 'hot' ? 0 : t === 'medium' ? 1 : 2;
+          const tierDelta = tierRank(a.tier) - tierRank(b.tier);
+          if (tierDelta) return tierDelta;
+          if (b.count !== a.count) return b.count - a.count;
+          return String(a.label).localeCompare(String(b.label));
+        });
+    }
+
+    function activeTraceDestination(graph, summaries) {
+      if (traceSelection) {
+        const selected = summaries.find(s => s.key === traceSelection.key);
+        if (selected) return selected;
+      }
+      return summaries[0] || null;
+    }
+
+    function tracePathSteps(summary) {
+      const ev = summary?.latest || {};
+      const agent = ev.agent || {};
+      const project = agentProjectName(agent) || 'unknown project';
+      const subagent = agentType(agent) === 'sub' ? agentShortName(agent) : '(direct)';
+      const tool = (ev.evidence && evidenceHookTool(ev.evidence))
+        || (eventKind(ev) === 'network' ? 'Network' : (laneSummary(ev).split(/\s+/)[0] || 'tool'));
+      return [
+        ['Agent / Project', `${project} — main`],
+        ['Subagent', subagent],
+        ['Tool / Observer', tool],
+        ['Destination', summary?.label || networkDisplayDestination(ev) || 'unknown destination'],
+      ];
+    }
+
+    function renderTracePath(summary) {
+      if (!summary) return '';
+      const steps = tracePathSteps(summary).map(([label, value]) => `
+        <div class="trace-path-step" title="${escapeHtml(value)}">
+          <div class="trace-path-label">${escapeHtml(label)}</div>
+          <div class="trace-path-value">${escapeHtml(value)}</div>
+        </div>`).join('');
+      return `<section class="trace-path">
+        <div class="trace-path-title">Selected path · ${escapeHtml(summary.label)}</div>
+        <div class="trace-path-steps">${steps}</div>
+      </section>`;
+    }
+
+    function renderTraceDestinationRows(summaries, activeSummary, tier) {
+      const rows = summaries.filter(s => tier === 'hot' ? s.tier === 'hot' : s.tier !== 'hot');
+      if (!rows.length) return tier === 'hot'
+        ? '<div class="trace-nl-title">No breakout destinations — all observed flows are grouped below.</div>'
+        : '<div class="trace-nl-title">No known-safe aggregate destinations yet.</div>';
+      return `<div class="trace-dest-table">${rows.map(s => {
+        const isSelected = activeSummary && s.key === activeSummary.key;
+        const cls = s.tier === 'hot' ? 'hot' : 'safe';
+        return `<button class="trace-dest-row ${cls}${isSelected ? ' selected' : ''}" data-key="${escapeHtml(s.key)}" onclick="selectTrace('node', this.getAttribute('data-key'))" title="${escapeHtml(s.label)}">
+          <span class="trace-dest-primary">${escapeHtml(s.label)}</span>
+          <span class="trace-dest-meta">${escapeHtml(s.meta)}</span>
+          <span class="trace-dest-process">${escapeHtml(s.project)} · ${escapeHtml(s.process)}</span>
+          <span class="trace-dest-count">${s.count} ${escapeHtml(pluralize(s.count, 'flow'))}</span>
+          <span class="trace-dest-bytes">${escapeHtml(humanBytes(s.bytes))}</span>
+          <span class="trace-dest-reason">${escapeHtml(s.lastSeen ? `${s.lastSeen} · ${s.reason}` : s.reason)}</span>
+        </button>`;
+      }).join('')}</div>`;
+    }
+
+    function renderTraceDestinations(graph) {
+      const summaries = traceDestinationSummaries(graph);
+      if (!summaries.length) return '<div class="empty">No destinations to trace yet.</div>';
+      const active = activeTraceDestination(graph, summaries);
+      const hotCount = summaries.filter(s => s.tier === 'hot').length;
+      const safeCount = summaries.length - hotCount;
+      const hotBlock = `<div class="trace-nl-section${hotCount ? ' hot' : ''}">
+        <div class="trace-nl-title">Breakout destinations (${hotCount})</div>
+        ${renderTraceDestinationRows(summaries, active, 'hot')}
+      </div>`;
+      const safeBlock = `<div class="trace-nl-section">
+        <div class="trace-nl-title">Known-safe aggregate (${safeCount} ${escapeHtml(pluralize(safeCount, 'sink'))})</div>
+        ${renderTraceDestinationRows(summaries, active, 'safe')}
+      </div>`;
+      return `<div class="trace-destination-view">${hotBlock}${safeBlock}${renderTracePath(active)}</div>`;
     }
 
     function renderTraceView() {
-      const graph = buildTraceGraph();
-      const toolbar = renderTraceToolbar();
+      const baseFlows = traceFlowEvents();
+      const visibleFlows = traceVisibleFlowEvents();
+      const graph = buildTraceGraph(visibleFlows);
+      const toolbar = renderTraceToolbar(baseFlows, visibleFlows);
       let body;
+      const summaries = traceDestinationSummaries(graph);
+      const activeDestination = activeTraceDestination(graph, summaries);
+      if (traceQuery && !visibleFlows.length) {
+        return `<div class="trace-view">${toolbar}<div class="filter-empty">No traced flows match "${escapeHtml(traceQuery)}". Try a host, category, PID, tool, project, or agent name.</div></div>`;
+      }
       if (traceMode === 'list') {
         body = '';
-      } else if (traceMode === 'nodelink') {
-        body = renderTraceNodeLink(graph);
-      } else {
+      } else if (traceMode === 'volume') {
         body = renderTraceSankey(graph);
+      } else {
+        body = renderTraceDestinations(graph);
       }
       // Scoped provenance: reuse the EXISTING event cards (renderEvent dispatches
       // to renderEvidenceEvent/renderNetworkEvent; their Explain → toggleDetails
@@ -3759,8 +4440,12 @@
         const scoped = events.filter(ev => traceSelection.eventIds.has(ev.id));
         provenance = `<div class="feed-title">Provenance · ${escapeHtml(traceSelection.label)}</div>` +
           scoped.map(renderEvent).join('');
+      } else if (traceMode === 'destinations' && activeDestination) {
+        const scoped = events.filter(ev => activeDestination.eventIds.has(ev.id));
+        provenance = `<div class="feed-title">Provenance · ${escapeHtml(activeDestination.label)}</div>` +
+          scoped.map(renderEvent).join('');
       } else if (traceMode === 'list') {
-        const flows = traceFlowEvents();
+        const flows = visibleFlows;
         provenance = flows.length
           ? `<div class="feed-title">All traced flows</div>` + flows.map(renderEvent).join('')
           : '<div class="empty">No traced flows yet.</div>';
@@ -3848,6 +4533,10 @@
 
       // Session narrative (reused as-is).
       sections.push(renderSessionNarrative(viewEventsForKind('all')));
+      if (!events.length) {
+        sections.push(renderFirstRunPanel());
+      }
+      sections.push(renderTrustProofPanel());
 
       // Agent tree — the differentiator. Reuse the exact hierarchy the Agents tab
       // renders; if none yet, a teaching line.
@@ -3870,11 +4559,11 @@
       if (attention.length) {
         const sorted = displayEvents(groupAttentionNetworkEvents([...attention].sort((a, b) => (b.id || 0) - (a.id || 0))));
         sections.push(`<section class="overview-section">
-          <div class="overview-section-title">Needs attention <span class="overview-count">${attention.length}</span></div>
+          <div class="overview-section-title">Needs a look <span class="overview-count">${attention.length}</span></div>
           ${sorted.map(renderEvent).join('')}
         </section>`);
       } else {
-        sections.push('<section class="overview-section"><div class="overview-section-title">Needs attention</div><div class="overview-empty">Nothing needs attention. New external destinations, sensitive-context reads, and large transfers would surface here.</div></section>');
+        sections.push('<section class="overview-section"><div class="overview-section-title">Needs a look</div><div class="overview-empty">Nothing needs a look. New external destinations, sensitive-context reads, and large transfers would surface here.</div></section>');
       }
 
       return `<div class="overview-view">${sections.join('')}</div>`;
@@ -3908,12 +4597,13 @@
         scheduleAutoResize();
         return;
       }
-      const selected = viewEvents();
+      const baseSelected = viewEvents();
+      const selected = activeView === 'raw' ? filterByQuery(baseSelected, rawQuery) : baseSelected;
       const lanes = renderAgentLanes(selected);
       const agentContext = renderAgentContextCard();
       const contextGrid = renderAgentContextGrid(agentContext, lanes);
       const attentionBrief = renderAttentionBrief();
-      const rawToolbar = activeView === 'raw' ? renderRawToolbar() : '';
+      const rawToolbar = activeView === 'raw' ? renderRawToolbar(baseSelected, selected) : '';
       const narrative = renderSessionNarrative(selected);
       if (!selected.length) {
         // Teaching empty copy (P2 #15): say what WOULD appear here and why it
@@ -3935,10 +4625,11 @@
     function viewEmptyText() {
       if (activeView === 'evidence') {
         return activeReasonFilter
-          ? `No evidence rows match "${activeReasonFilter}". Anything risky for that reason — a correlated pair or a flagged read/flow — would surface here.`
+          ? `No evidence rows match "${activeReasonFilter}". Anything that needs a look for that reason — a correlated pair or a flagged read/flow — would surface here.`
           : 'No evidence yet. This is the product\'s core signal: correlated tool↔network pairs and anything that needs a look (new external destinations, sensitive-context reads, large transfers) — deduped into one story view.';
       }
       if (activeView === 'raw') {
+        if (rawQuery) return `No raw rows match "${rawQuery}". Try a host, PID, tool name, project, category, or risk reason.`;
         if (rawKind === 'hooks') return 'No hook events yet. Every tool call the agent makes (Read, Bash, WebFetch, MCP…) streams in here as it happens — the live heartbeat.';
         if (rawKind === 'network') return 'No network flows observed yet. Outbound connections from the agent\'s process tree — host, destination category, and bytes — will appear here.';
         return 'No events yet. Every tool call and network flow from running Claude Code agents streams in here once hooks are installed — the unfiltered firehose.';
@@ -3948,19 +4639,36 @@
 
     // renderRawToolbar: the {All/Hooks/Network} sub-filter for the Raw tab,
     // reusing the Flow-Trace mode-toggle visual pattern.
-    function renderRawToolbar() {
+    function renderRawToolbar(base = viewEvents(), filtered = filterByQuery(base, rawQuery)) {
+      if (!advancedControlsEnabled() && rawKind !== 'all') rawKind = 'all';
       const scoped = activeAgentFilter ? events.filter(ev => eventMatchesAgent(ev, activeAgentFilter)) : events;
       const counts = countsForEvents(scoped);
       const modes = [['all', 'All', counts.all], ['hooks', 'Hooks', counts.hooks], ['network', 'Network', counts.network]];
       const buttons = modes.map(([m, label, n]) =>
         `<button class="trace-mode-btn${rawKind === m ? ' active' : ''}" onclick="setRawKind('${m}')">${label} ${n || 0}</button>`
       ).join('');
-      return `<div class="trace-toolbar"><div class="trace-modes">${buttons}</div><span class="trace-hint">Unfiltered stream — every tool call and network flow as it happens.</span></div>`;
+      const search = filterControl('raw', rawQuery, filtered.length, base.length, 'Search raw by host, PID, tool, project, reason');
+      return `<div class="trace-toolbar"><div class="trace-modes advanced-only">${buttons}</div>${search}</div>`;
     }
 
     function setRawKind(kind) {
+      if (!advancedControlsEnabled() && kind !== 'all') return;
       rawKind = kind || 'all';
       renderEvents();
+    }
+
+    function setFilterQuery(kind, value) {
+      if (kind === 'trace') {
+        traceQuery = value || '';
+        traceSelection = null;
+      } else {
+        rawQuery = value || '';
+      }
+      renderEvents();
+    }
+
+    function clearFilterQuery(kind) {
+      setFilterQuery(kind, '');
     }
 
     function attentionBaseEvents() {
@@ -4149,21 +4857,28 @@
       const expanded = rawDetailIds.has(ev.id);
       const memory = renderDestinationMemory(ev);
       const signalClass = routineNetworkEvent(ev) ? 'routine' : 'attention-network';
-      const rowHtml = ([label, value]) => `
+      const rowHtml = ([label, value]) => {
+        const shownValue = label === 'category' ? categoryDisplayName(value) : value;
+        return `
         <div class="network-raw-label">${escapeHtml(label)}</div>
-        <div class="network-raw-value">${escapeHtml(value)}</div>`;
+        <div class="network-raw-value">${escapeHtml(shownValue)}</div>`;
+      };
       // Details grid (P0/P2 #13): human-meaningful fields first (destination,
       // process, category), then diagnostic fields (SNI/bundle/team/proto/…).
       const humanRows = [
         ['destination', meta.remote || destination],
         ['process', [pid ? `PID ${pid}` : '', process].filter(Boolean).join(' · ')],
         ['category', category],
+        ['category source', meta['category source'] || ''],
       ].filter(([, value]) => value).map(rowHtml).join('');
       const diagnosticRows = [
         ['source', source],
         ['state', state],
         ['proto', meta.proto || ''],
         ['SNI', meta.sni || ''],
+        ['hostname', meta.hostname || ''],
+        ['hostname source', meta['hostname source'] || ''],
+        ['PTR hint', meta['ptr hint'] || ''],
         ['bundle', meta.bundle || ''],
         ['team', meta.team || ''],
         ['out', meta.out || ''],
@@ -4174,10 +4889,10 @@
       return `
         <div class="event network compact-network ${escapeHtml(signalClass)}">
           <div class="network-row">
-            <span class="ts">${escapeHtml(ev.ts || '')}</span>
+            <span class="ts" title="${escapeHtml(ev.ts || '')}">${escapeHtml(displayTimestamp(ev.ts))}</span>
             <span class="network-dest" title="${escapeHtml(destination)}">${escapeHtml(destination)}</span>
             ${memory}
-            <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
+            <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
             ${agentBadge || `<span class="network-compact-meta">${escapeHtml(pidMeta || 'unattributed')}</span>`}
             <span class="network-state" title="${escapeHtml(stateLabel)}">${escapeHtml(stateLabel)}</span>
             <button class="mini-button" title="${expanded ? 'Hide flow details' : 'Show flow details'}" onclick="toggleRawDetails(${Number(ev.id)})">Details</button>
@@ -4204,7 +4919,7 @@
         .slice(0, 8);
       const memberRows = expanded ? members.map(ev => `
         <div class="network-group-member">
-          <span class="ts">${escapeHtml(ev.ts || '')}</span>
+          <span class="ts" title="${escapeHtml(ev.ts || '')}">${escapeHtml(displayTimestamp(ev.ts))}</span>
           <span>${escapeHtml(networkDisplayDestination(ev))}</span>
           <span>${escapeHtml(networkState(ev))}</span>
         </div>
@@ -4213,9 +4928,9 @@
       return `
         <div class="event network compact-network network-group routine">
           <div class="network-group-summary">
-            <span class="ts">${escapeHtml(group.ts || '')}</span>
+            <span class="ts" title="${escapeHtml(group.ts || '')}">${escapeHtml(displayTimestamp(group.ts))}</span>
             <span class="network-group-title" title="${escapeHtml(destinationLabel)}">Routine network traffic · ${count} ${escapeHtml(pluralize(count, 'flow'))}</span>
-            <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
+            <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
             <span class="network-group-meta" title="${escapeHtml(destinationLabel)}">${escapeHtml(primaryDestination)} ${memory}</span>
             <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">Details</button>
           </div>
@@ -4252,10 +4967,10 @@
       return `
         <div class="event network compact-network attributed-network">
           <div class="network-attribution">
-            <span class="ts">${escapeHtml(ev.ts || '')}</span>
+            <span class="ts" title="${escapeHtml(ev.ts || '')}">${escapeHtml(displayTimestamp(ev.ts))}</span>
             <span class="network-dest" title="${escapeHtml(destination)}">${escapeHtml(destination)}</span>
             ${memory}
-            <span class="category-pill" title="${escapeHtml(category)}">${escapeHtml(category)}</span>
+            <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
             <span class="network-attribution-meta" title="${escapeHtml(flow)}">${escapeHtml(viaPid ? `via Main PID ${viaPid}` : 'via main Claude')}</span>
             <span class="network-attribution-kind">Attributed</span>
           </div>
@@ -4326,11 +5041,11 @@
           <div class="evidence-head">
             <span class="ts" title="${escapeHtml(group.ts || '')}">${escapeHtml(displayTimestamp(group.ts))}</span>
             <span class="evidence-title">${escapeHtml(knownGroupTitle(category))} · ${Number(group._groupCount || 0)} events</span>
-            <span class="category-pill">${escapeHtml(category)}</span>
+            <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
             <span class="risk-chip low">Risk low</span>
             <span class="evidence-actions">
               <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">Details</button>
-              <button class="mini-button" title="Quiet this destination category" onclick="quietCategory('${escapeHtml(category)}')">Quiet</button>
+              <button class="mini-button advanced-only" title="Quiet this destination category" onclick="quietCategory('${escapeHtml(category)}')">Quiet</button>
               <button class="mini-button" onclick="doExport()">Evidence Pack</button>
             </span>
           </div>
@@ -4414,12 +5129,15 @@
     function renderDestinationProvenance(evidence, compact = false) {
       const rows = destinationProvenanceRows(evidence).filter(row => row && row.value);
       if (!rows.length) return '';
-      const shown = compact ? rows.filter(row => ['Display name', 'Semantic intent', 'SNI / PTR host', 'Observed endpoint', 'Category'].includes(row.label)).slice(0, 3) : rows;
+      const shown = compact ? rows.filter(row => ['Display name', 'Semantic intent', 'SNI', 'Hostname', 'Observed endpoint', 'Category'].includes(row.label)).slice(0, 3) : rows;
       return `<div class="provenance-grid">
-        ${shown.map(row => `<div class="provenance-row">
+        ${shown.map(row => {
+          const value = row.label === 'Category' ? categoryDisplayName(row.value) : (row.value || '');
+          return `<div class="provenance-row">
           <div class="provenance-label">${escapeHtml(row.label || '')}</div>
-          <div class="provenance-value">${escapeHtml(row.value || '')}</div>
-        </div>`).join('')}
+          <div class="provenance-value">${escapeHtml(value)}</div>
+        </div>`;
+        }).join('')}
       </div>`;
     }
 
@@ -4561,7 +5279,7 @@
         <div>
           <div class="destination-pill">${escapeHtml(displayDestination)}</div>
           ${destinationMemory}
-          <div class="destination-note">Best display name from semantic intent, SNI/PTR host, or observed endpoint.</div>
+	          <div class="destination-note">Best display name from semantic intent, directly observed SNI/hostname, or observed endpoint. PTR is shown only as a hint.</div>
         </div>
       </div>`;
       const compactBody = `
@@ -4598,18 +5316,18 @@
               <div class="evidence-meta-row">
                 <span class="review-chip ${escapeHtml(riskTierClass(cardSeverity))} status-${escapeHtml(statusClass)}">${escapeHtml(status)}</span>
                 ${groupChip}
-                <span class="category-pill">${escapeHtml(category)}</span>
+                <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
               </div>
               <div class="evidence-eyebrow">${escapeHtml(evidence.title || ev.summary || 'Linked evidence')}</div>
               <div class="evidence-headline">
                 <span class="evidence-why">${escapeHtml(why)}</span>
-                <button class="mini-button" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
+                <button class="mini-button advanced-only" onclick="toggleWhy(${Number(ev.id)})">${showingRawWhy ? 'Human' : 'Raw Why'}</button>
               </div>
               <span class="evidence-subtitle">${escapeHtml(subtitle)} · ${escapeHtml(decision)} · risk ${escapeHtml(risk)}</span>
             </div>
             <span class="evidence-actions">
               ${agentBadge}
-              <button class="mini-button" title="Quiet this linked pattern" onclick="quietPattern(${Number(ev.id)})">Quiet</button>
+              <button class="mini-button advanced-only" title="Quiet this linked pattern" onclick="quietPattern(${Number(ev.id)})">Quiet</button>
               <button class="mini-button" title="${isExpanded ? 'Hide the forensic replay' : 'Explain how this was linked'}" onclick="toggleDetails(${Number(ev.id)})">Explain</button>
               <button class="mini-button icon" title="Dismiss card" onclick="dismissEvent(${Number(ev.id)})">x</button>
             </span>
@@ -4803,17 +5521,49 @@
 	    function renderAppSettings(detail = '') {
 	      const toggle = document.getElementById('networkSensorEnabled');
 	      const statusEl = document.getElementById('networkSensorStatus');
+      const actualWarning = document.getElementById('networkSensorActualWarning');
+      const defaultToggle = document.getElementById('highAssuranceDefaultEnabled');
+      const defaultStatus = document.getElementById('highAssuranceDefaultStatus');
+      const advancedToggle = document.getElementById('advancedControlsEnabled');
+	      const advancedStatus = document.getElementById('advancedControlsStatus');
 
 	      const source = draftSettings || appSettings;
-	      const disabled = !!source.network_sensor_disabled;
-	      const enabled = !disabled;
-	      if (toggle) toggle.checked = enabled;
-	      if (statusEl) statusEl.textContent = detail || (enabled ? 'On' : 'Off');
+      const sensor = latestStatus.sensor || {};
+      const disabled = !!source.network_sensor_disabled;
+      const enabled = !disabled;
+      const defaultEnabled = !!source.high_assurance_default_enabled;
+      const advanced = !!source.advanced_controls_enabled;
+      const actualActive = sensor.mode === 'high_assurance_active';
+      const actualRequested = sensor.mode === 'high_assurance_requested';
+      if (toggle) toggle.checked = enabled;
+      if (statusEl) {
+        const requestLabel = enabled ? 'requested for this session' : 'User Visibility requested';
+        statusEl.textContent = detail || sensor.label || requestLabel;
+      }
+      if (actualWarning) {
+        if (actualActive && !enabled) {
+          actualWarning.hidden = false;
+          actualWarning.textContent = 'High Assurance is active in macOS right now, while this session request is off. Saving will send an explicit disable request.';
+        } else if (actualRequested && enabled) {
+          actualWarning.hidden = false;
+          actualWarning.textContent = 'High Assurance is requested; macOS approval or the first OS-backed flow may still be pending.';
+        } else {
+          actualWarning.hidden = true;
+          actualWarning.textContent = '';
+        }
+      }
+      if (defaultToggle) defaultToggle.checked = defaultEnabled;
+      if (defaultStatus) defaultStatus.textContent = defaultEnabled ? 'High Assurance at startup' : 'User Visibility at startup';
+      if (advancedToggle) advancedToggle.checked = advanced;
+	      if (advancedStatus) advancedStatus.textContent = advanced ? 'Advanced controls shown' : 'Simple';
+	      applyInterfaceMode();
 	    }
 
 	    async function loadAppSettings() {
 	      try {
 	        appSettings = await invoke('get_app_settings');
+	        appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
+	        appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
 	        renderAppSettings();
 	      } catch (e) {
 	        renderAppSettings('Settings unavailable');
@@ -4835,9 +5585,21 @@
 	      renderAppSettings();
 	    }
 
-	    function setDraftNetworkSensorEnabled(enabled) {
+		    function setDraftNetworkSensorEnabled(enabled) {
+		      if (!draftSettings) draftSettings = { ...appSettings };
+		      draftSettings.network_sensor_disabled = !enabled;
+		      renderAppSettings('Unsaved');
+		    }
+
+		    function setDraftHighAssuranceDefaultEnabled(enabled) {
+		      if (!draftSettings) draftSettings = { ...appSettings };
+		      draftSettings.high_assurance_default_enabled = !!enabled;
+		      renderAppSettings('Unsaved');
+		    }
+
+	    function setDraftAdvancedControlsEnabled(enabled) {
 	      if (!draftSettings) draftSettings = { ...appSettings };
-	      draftSettings.network_sensor_disabled = !enabled;
+	      draftSettings.advanced_controls_enabled = !!enabled;
 	      renderAppSettings('Unsaved');
 	    }
 
@@ -4846,7 +5608,19 @@
 	        closeSettingsModal();
 	        return;
 	      }
-	      await setNetworkSensorDisabled(!!draftSettings.network_sensor_disabled);
+		      const nextNetworkDisabled = !!draftSettings.network_sensor_disabled;
+		      const nextDefault = !!draftSettings.high_assurance_default_enabled;
+		      const nextAdvanced = !!draftSettings.advanced_controls_enabled;
+		      if (nextAdvanced !== !!appSettings.advanced_controls_enabled) {
+		        await setAdvancedControlsEnabled(nextAdvanced);
+		      }
+		      if (nextDefault !== !!appSettings.high_assurance_default_enabled) {
+		        await setHighAssuranceDefaultEnabled(nextDefault);
+		      }
+		      const actualActive = (latestStatus.sensor || {}).mode === 'high_assurance_active';
+		      if (nextNetworkDisabled !== !!appSettings.network_sensor_disabled || (nextNetworkDisabled && actualActive)) {
+		        await setNetworkSensorDisabled(nextNetworkDisabled);
+		      }
 	      draftSettings = null;
 	      const modal = document.getElementById('settingsModal');
 	      if (modal) modal.classList.remove('open');
@@ -4867,11 +5641,49 @@
 	        appSettings.network_sensor_disabled = previous;
 	        if (draftSettings) draftSettings.network_sensor_disabled = previous;
 	        renderAppSettings('Update failed');
-	        alert('network sensor setting failed: ' + e);
+		        alert('High Assurance setting failed: ' + e);
+		      }
+		    }
+
+		    async function setHighAssuranceDefaultEnabled(enabled) {
+		      const previous = !!appSettings.high_assurance_default_enabled;
+		      appSettings.high_assurance_default_enabled = !!enabled;
+		      if (draftSettings) draftSettings.high_assurance_default_enabled = !!enabled;
+		      renderAppSettings(enabled ? 'Startup default on' : 'Startup default off');
+		      try {
+		        const result = await invoke('set_high_assurance_default_enabled', { enabled: !!enabled });
+		        appSettings = result.settings || appSettings;
+		        renderAppSettings(result.warning || result.detail || '');
+		      } catch (e) {
+		        appSettings.high_assurance_default_enabled = previous;
+		        if (draftSettings) draftSettings.high_assurance_default_enabled = previous;
+		        renderAppSettings('Update failed');
+		        alert('High Assurance default failed: ' + e);
+		      }
+		    }
+
+	    async function setAdvancedControlsEnabled(enabled) {
+	      const previous = !!appSettings.advanced_controls_enabled;
+	      appSettings.advanced_controls_enabled = !!enabled;
+	      if (draftSettings) draftSettings.advanced_controls_enabled = !!enabled;
+	      renderAppSettings('Unsaved');
+
+	      try {
+	        const result = await invoke('set_advanced_controls_enabled', { enabled: !!enabled });
+	        appSettings = result.settings || appSettings;
+	        appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
+	        renderAppSettings(result.detail || '');
+	        renderEvents();
+	      } catch (e) {
+	        appSettings.advanced_controls_enabled = previous;
+	        if (draftSettings) draftSettings.advanced_controls_enabled = previous;
+	        renderAppSettings('Update failed');
+	        alert('interface setting failed: ' + e);
 	      }
 	    }
 
 	    async function clearSession() {
+      if (!confirm('Clear this AgentSnitch session view? This removes the current local events from the app.')) return;
       try {
         await invoke('clear_session');
         events = [];
@@ -4944,11 +5756,28 @@
       textEl.textContent = text;
     }
 
+    function showToast(kind, title, detail = '') {
+      const stack = document.getElementById('toastStack');
+      if (!stack) return;
+      const id = `toast-${Date.now()}-${Math.round(Math.random() * 1000)}`;
+      const cls = kind === 'error' ? 'error' : kind === 'success' ? 'success' : '';
+      const detailHtml = detail ? `<div class="toast-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : '';
+      stack.insertAdjacentHTML('beforeend', `<div id="${id}" class="toast ${cls}">
+        <div class="toast-title">${escapeHtml(title)}</div>
+        ${detailHtml}
+      </div>`);
+      setTimeout(() => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+      }, 5200);
+    }
+
     async function doExport() {
       try {
         const path = await invoke('export_evidence_pack_file');
         const statusEl = document.getElementById('status');
         if (statusEl) statusEl.textContent = `Evidence Pack saved · ${path}`;
+        showToast('success', 'Evidence Pack saved', path);
       } catch (e) {
         try {
           const jsonl = await invoke('export_transcript');
@@ -4961,7 +5790,9 @@
           a.click();
           a.remove();
           URL.revokeObjectURL(url);
+          showToast('success', 'Evidence Pack downloaded', 'agentsnitch-evidence-pack.jsonl');
         } catch (fallbackError) {
+          showToast('error', 'Evidence Pack export failed', String(fallbackError));
           alert('export failed: ' + fallbackError);
         }
       }
@@ -5005,7 +5836,10 @@
 	      listen('settings-changed', (evt) => {
 	        if (evt.payload) {
 	          appSettings = evt.payload;
+	          appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
+	          appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
 	          renderAppSettings();
+	          renderEvents();
 	        }
 	      }).catch(() => {});
 
@@ -5033,6 +5867,7 @@
 	      await loadAppSettings();
 	      await refreshFromBackend();
 	      await refreshStatus();
+	      renderEvents();
       setupLiveUpdates();
 
       // Keyboard niceties (cmd-k etc for power users)
@@ -5045,7 +5880,7 @@
         }
       });
 
-	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, saveSettingsModal, setNetworkSensorDisabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setRawKind, setView, refresh: refreshFromBackend, invoke };
+	      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setDraftNetworkSensorEnabled, setDraftHighAssuranceDefaultEnabled, setDraftAdvancedControlsEnabled, saveSettingsModal, setNetworkSensorDisabled, setHighAssuranceDefaultEnabled, setAdvancedControlsEnabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setTraceZoom, setRawKind, setFilterQuery, clearFilterQuery, showToast, setView, refresh: refreshFromBackend, invoke };
       console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
     }
 

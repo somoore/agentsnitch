@@ -93,6 +93,11 @@ pub struct NetworkFlowEvent {
     pub local: Option<String>,
     pub remote: Option<String>,
     pub sni: Option<String>,
+    pub hostname: Option<String>,
+    #[serde(rename = "hostname_source")]
+    pub hostname_source: Option<String>,
+    #[serde(rename = "ptr_hostname")]
+    pub ptr_hostname: Option<String>,
     pub protocol: Option<String>,
     pub direction: Option<String>,
     #[serde(rename = "bytes_out")]
@@ -289,15 +294,31 @@ struct AppState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppSettings {
+    #[serde(default = "app_settings_schema")]
     schema: String,
+    #[serde(default)]
+    advanced_controls_enabled: bool,
+    #[serde(default = "default_network_sensor_disabled")]
     network_sensor_disabled: bool,
+    #[serde(default)]
+    high_assurance_default_enabled: bool,
+}
+
+fn app_settings_schema() -> String {
+    "agentsnitch.ui_settings.v0".into()
+}
+
+fn default_network_sensor_disabled() -> bool {
+    true
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            schema: "agentsnitch.ui_settings.v0".into(),
+            schema: app_settings_schema(),
+            advanced_controls_enabled: false,
             network_sensor_disabled: true,
+            high_assurance_default_enabled: false,
         }
     }
 }
@@ -333,10 +354,34 @@ pub struct Status {
     pub event_count: usize,
     pub quiet: bool,
     pub paused: bool,
+    pub sensor: SensorStatus,
     pub verdict: Verdict,
     pub summary: SessionSummary,
     pub agents: Vec<AgentInfo>,
     pub recent: Vec<UiEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SensorStatus {
+    pub mode: String,
+    pub label: String,
+    pub detail: String,
+    pub high_assurance_enabled: bool,
+    pub high_assurance_default_enabled: bool,
+    pub network_extension_active: bool,
+    pub observer_sources: Vec<String>,
+    pub trust_boundary: String,
+    pub dns_policy: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct DaemonStatusSnapshot {
+    #[serde(default)]
+    observer_mode: String,
+    #[serde(default)]
+    observer_sources: Vec<String>,
+    #[serde(default)]
+    last_network: Option<NetworkFlowEvent>,
 }
 
 /// Verdict is the one-line, always-visible risk posture for the current session.
@@ -1085,12 +1130,30 @@ fn network_to_ui(id: u64, ev: NetworkFlowEvent) -> UiEvent {
     }
     if let Some(category) = destination_category_for_flow(&ev) {
         detail_parts.push(format!("category: {}", category));
+        if let Some(source) = destination_category_source_for_flow(&ev, &category) {
+            detail_parts.push(format!("category source: {}", source));
+        }
     } else {
         detail_parts.push("category: unknown external".into());
     }
     if let Some(sni) = &ev.sni {
         if !sni.is_empty() {
             detail_parts.push(format!("SNI: {}", sni));
+        }
+    }
+    if let Some(hostname) = &ev.hostname {
+        if !hostname.is_empty() {
+            detail_parts.push(format!("hostname: {}", hostname));
+        }
+    }
+    if let Some(source) = &ev.hostname_source {
+        if !source.is_empty() {
+            detail_parts.push(format!("hostname source: {}", source));
+        }
+    }
+    if let Some(ptr) = &ev.ptr_hostname {
+        if !ptr.is_empty() {
+            detail_parts.push(format!("PTR hint: {}", ptr));
         }
     }
     if let Some(bundle_id) = &ev.process_bundle_id {
@@ -1573,7 +1636,20 @@ fn destination_provenance(
     }
     if let Some(flow) = flow {
         if let Some(sni) = flow.sni.as_ref().filter(|value| !value.is_empty()) {
-            rows.push(detail("SNI / PTR host", sni.clone()));
+            rows.push(detail("SNI", sni.clone()));
+        }
+        if let Some(hostname) = flow.hostname.as_ref().filter(|value| !value.is_empty()) {
+            rows.push(detail("Hostname", hostname.clone()));
+        }
+        if let Some(source) = flow
+            .hostname_source
+            .as_ref()
+            .filter(|value| !value.is_empty())
+        {
+            rows.push(detail("Hostname source", source.clone()));
+        }
+        if let Some(ptr) = flow.ptr_hostname.as_ref().filter(|value| !value.is_empty()) {
+            rows.push(detail("PTR hint", ptr.clone()));
         }
         if let Some(remote) = flow.remote.as_ref().filter(|value| !value.is_empty()) {
             rows.push(detail("Observed endpoint", remote.clone()));
@@ -1583,6 +1659,9 @@ fn destination_provenance(
         }
     }
     rows.push(detail("Category", category.to_string()));
+    if let Some(source) = destination_category_source(semantic, flow, category) {
+        rows.push(detail("Category source", source));
+    }
     rows
 }
 
@@ -1605,20 +1684,31 @@ fn destination_snippet(flow: &NetworkFlowEvent) -> String {
         .clone()
         .unwrap_or_else(|| "unknown destination".into());
     if let Some(sni) = flow.sni.as_ref().filter(|value| !value.is_empty()) {
-        if remote == "unknown destination" || remote == "(unknown remote)" {
-            return sni.clone();
-        }
-        let remote_host = destination_host_from_value(&remote);
-        let sni_host = destination_host_from_value(sni);
-        if !remote_host.is_empty() && remote_host == sni_host {
-            return remote;
-        }
-        if !sni_host.is_empty() {
-            return format!("{} ({})", sni_host, remote);
-        }
-        return format!("{} ({})", sni, remote);
+        return hostname_with_remote(sni, &remote);
+    }
+    if let Some(hostname) = flow.hostname.as_ref().filter(|value| !value.is_empty()) {
+        return hostname_with_remote(hostname, &remote);
     }
     remote_display_without_port_when_named(remote)
+}
+
+fn hostname_with_remote(hostname: &str, remote: &str) -> String {
+    let hostname = hostname.trim();
+    if hostname.is_empty() {
+        return remote.to_string();
+    }
+    if remote == "unknown destination" || remote == "(unknown remote)" {
+        return hostname.to_string();
+    }
+    let remote_host = destination_host_from_value(remote);
+    let hostname_host = destination_host_from_value(hostname);
+    if !remote_host.is_empty() && remote_host == hostname_host {
+        return remote.to_string();
+    }
+    if !hostname_host.is_empty() {
+        return format!("{} ({})", hostname_host, remote);
+    }
+    format!("{} ({})", hostname, remote)
 }
 
 fn destination_snippet_with_semantic(
@@ -1697,6 +1787,46 @@ fn destination_category_for_flow(flow: &NetworkFlowEvent) -> Option<String> {
     destination_category_for_host(&host).or_else(|| destination_category_for_host(&remote))
 }
 
+fn destination_category_source(
+    semantic: Option<&SemanticEvent>,
+    flow: Option<&NetworkFlowEvent>,
+    category: &str,
+) -> Option<String> {
+    if let Some(intent) = semantic_destination_intent(semantic) {
+        if let Some(source) = destination_category_source_for_host(&intent, category) {
+            return Some(format!("semantic intent {}", source));
+        }
+    }
+    flow.and_then(|flow| destination_category_source_for_flow(flow, category))
+}
+
+fn destination_category_source_for_flow(flow: &NetworkFlowEvent, category: &str) -> Option<String> {
+    let host = destination_host(flow);
+    if let Some(source) = destination_category_source_for_host(&host, category) {
+        return Some(source);
+    }
+    let remote = flow
+        .remote
+        .as_ref()
+        .map(|value| destination_host_from_value(value))
+        .unwrap_or_default();
+    destination_category_source_for_host(&remote, category)
+}
+
+fn destination_category_source_for_host(host: &str, category_name: &str) -> Option<String> {
+    let category = heuristics_config()
+        .destination_categories
+        .iter()
+        .find(|category| category.name == category_name)?;
+    if host_matches_any_domain(host, &category.domains) {
+        return Some("known domain match".into());
+    }
+    if host_matches_any_cidr(host, &category.cidrs) {
+        return Some("configured CIDR match".into());
+    }
+    None
+}
+
 fn destination_category_for_host(host: &str) -> Option<String> {
     if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost") {
         return Some("local dev server".into());
@@ -1765,6 +1895,7 @@ fn destination_host(flow: &NetworkFlowEvent) -> String {
         .sni
         .as_ref()
         .filter(|value| !value.is_empty())
+        .or(flow.hostname.as_ref().filter(|value| !value.is_empty()))
         .or(flow.remote.as_ref())
         .map(|value| value.as_str())
         .unwrap_or("")
@@ -2216,6 +2347,19 @@ fn flow_evidence_line(flow: &NetworkFlowEvent) -> String {
         if !sni.is_empty() {
             line.push_str(&format!(" (SNI: {})", sni));
         }
+    } else if let Some(hostname) = &flow.hostname {
+        if !hostname.is_empty() {
+            let source = flow
+                .hostname_source
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("observer");
+            line.push_str(&format!(" (hostname: {} via {})", hostname, source));
+        }
+    } else if let Some(ptr) = &flow.ptr_hostname {
+        if !ptr.is_empty() {
+            line.push_str(&format!(" (PTR hint: {})", ptr));
+        }
     }
     if let Some(bytes) = flow.bytes_out {
         if bytes > 0 {
@@ -2355,7 +2499,7 @@ fn load_app_settings() -> AppSettings {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return apply_network_sensor_env_override(AppSettings::default());
     };
-    let settings = match serde_json::from_str::<AppSettings>(&text) {
+    let mut settings = match serde_json::from_str::<AppSettings>(&text) {
         Ok(mut settings) => {
             if settings.schema.is_empty() {
                 settings.schema = "agentsnitch.ui_settings.v0".into();
@@ -2370,6 +2514,7 @@ fn load_app_settings() -> AppSettings {
             AppSettings::default()
         }
     };
+    settings.network_sensor_disabled = !settings.high_assurance_default_enabled;
     apply_network_sensor_env_override(settings)
 }
 
@@ -2384,6 +2529,24 @@ fn apply_network_sensor_env_override(mut settings: AppSettings) -> AppSettings {
         settings.network_sensor_disabled = true;
     }
     settings
+}
+
+fn runtime_status_path() -> String {
+    if let Ok(path) = std::env::var("AGENTSNITCH_STATUS") {
+        return path;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return format!("{}/.agentsnitch/status.json", home);
+    }
+    std::env::temp_dir()
+        .join("agentsnitch-status.json")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn load_daemon_status_snapshot() -> Option<DaemonStatusSnapshot> {
+    let text = std::fs::read_to_string(runtime_status_path()).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 fn save_app_settings(settings: &AppSettings) -> Result<(), String> {
@@ -3194,7 +3357,7 @@ fn start_unix_socket_listener(_app: AppHandle) {
 }
 
 #[cfg(target_os = "macos")]
-fn request_network_extension_activation() {
+fn request_network_extension_activation(network_sensor_disabled: bool) {
     if network_sensor_env_disabled() {
         println!(
             "[agentsnitch-ui] Network Extension activation skipped: AGENTSNITCH_DISABLE_NETWORK_EXTENSION=1"
@@ -3207,10 +3370,8 @@ fn request_network_extension_activation() {
         }
         return;
     }
-    if load_app_settings().network_sensor_disabled {
-        println!(
-            "[agentsnitch-ui] Network Extension activation skipped: network sensor disabled in settings"
-        );
+    if network_sensor_disabled {
+        println!("[agentsnitch-ui] High Assurance activation skipped: disabled in settings");
         if let Err(err) = set_macos_network_sensor_disabled(true) {
             eprintln!(
                 "[agentsnitch-ui] Network Extension disable request unavailable: {}",
@@ -3232,7 +3393,7 @@ fn request_network_extension_activation() {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn request_network_extension_activation() {
+fn request_network_extension_activation(_network_sensor_disabled: bool) {
     println!("[agentsnitch-ui] NE activation is macOS-only.");
 }
 
@@ -3299,7 +3460,7 @@ mod macos_ne_bridge {
             ));
         }
         Ok(format!(
-            "{}; network sensor {} request submitted",
+            "{}; High Assurance {} request submitted",
             path.display(),
             if disabled { "disable" } else { "enable" }
         ))
@@ -3783,12 +3944,15 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
         &state.runtime.lock().unwrap(),
     );
     let verdict = compute_verdict(active, &summary, &recent);
+    let settings = state.app_settings.lock().unwrap().clone();
+    let sensor = sensor_status(&settings, &recent);
     let status = Status {
         active,
         header: compute_header(&snap, active, &agents),
         event_count: count,
         quiet,
         paused,
+        sensor,
         verdict,
         summary,
         agents,
@@ -3799,6 +3963,78 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
         let _ = app.emit("status-changed", ());
     }
     status
+}
+
+fn sensor_status(settings: &AppSettings, recent: &[UiEvent]) -> SensorStatus {
+    let daemon = load_daemon_status_snapshot();
+    let mut sources = HashSet::new();
+    if let Some(snapshot) = &daemon {
+        for source in &snapshot.observer_sources {
+            if !source.trim().is_empty() {
+                sources.insert(source.trim().to_string());
+            }
+        }
+        if let Some(flow) = &snapshot.last_network {
+            if let Some(observer) = flow.observer.as_ref().filter(|value| !value.is_empty()) {
+                sources.insert(observer.clone());
+            }
+        }
+    }
+    for ev in recent {
+        for tag in &ev.tags {
+            if matches!(
+                tag.as_str(),
+                "network_extension" | "network_statistics" | "lsof"
+            ) {
+                sources.insert(tag.clone());
+            }
+        }
+    }
+    let mut observer_sources = sources.into_iter().collect::<Vec<_>>();
+    observer_sources.sort();
+    let network_extension_active = observer_sources
+        .iter()
+        .any(|source| source == "network_extension")
+        || daemon
+            .as_ref()
+            .map(|snapshot| snapshot.observer_mode == "high_assurance_active")
+            .unwrap_or(false);
+    let high_assurance_enabled = !settings.network_sensor_disabled;
+    let mode = if network_extension_active {
+        "high_assurance_active"
+    } else if high_assurance_enabled {
+        "high_assurance_requested"
+    } else {
+        "user_visibility"
+    };
+    let (label, detail, trust_boundary) = match mode {
+        "high_assurance_active" => (
+            "High Assurance active",
+            "System Extension flow telemetry has been observed in this session.",
+            "Apple-approved System Extension sensor plus user-level hooks and daemon.",
+        ),
+        "high_assurance_requested" => (
+            "High Assurance requested",
+            "High Assurance is enabled, but no OS-backed flow has been observed yet.",
+            "User-level hooks and daemon are active; System Extension activation may still need approval.",
+        ),
+        _ => (
+            "User Visibility",
+            "Default mode: no root requirement; evidence comes from hooks plus userland network/process observers.",
+            "Same-user visibility boundary. Strong against accidental surprise, not against a malicious process already running as this user.",
+        ),
+    };
+    SensorStatus {
+        mode: mode.into(),
+        label: label.into(),
+        detail: detail.into(),
+        high_assurance_enabled,
+        high_assurance_default_enabled: settings.high_assurance_default_enabled,
+        network_extension_active,
+        observer_sources,
+        trust_boundary: trust_boundary.into(),
+        dns_policy: "DNS names are shown only when directly observed; PTR and service/IP classification are labeled separately.".into(),
+    }
 }
 
 #[tauri::command]
@@ -3827,7 +4063,7 @@ fn set_network_sensor_disabled(
             Err(err) => {
                 warning = Some(err.clone());
                 format!(
-                    "network sensor disabled setting saved; live disable failed: {}",
+                    "High Assurance disabled setting saved; live disable failed: {}",
                     err
                 )
             }
@@ -3835,13 +4071,13 @@ fn set_network_sensor_disabled(
     } else {
         match set_macos_network_sensor_disabled(false) {
             Ok(detail) => {
-                request_network_extension_activation();
+                request_network_extension_activation(false);
                 detail
             }
             Err(err) => {
                 warning = Some(err.clone());
                 format!(
-                    "network sensor enabled setting saved; live enable failed: {}",
+                    "High Assurance enabled setting saved; live enable failed: {}",
                     err
                 )
             }
@@ -3857,6 +4093,57 @@ fn set_network_sensor_disabled(
     })
 }
 
+#[tauri::command]
+fn set_high_assurance_default_enabled(
+    enabled: bool,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.high_assurance_default_enabled = enabled;
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+    let _ = app.emit("settings-changed", &settings);
+    let _ = app.emit("status-changed", ());
+    Ok(AppSettingsUpdate {
+        settings,
+        detail: if enabled {
+            "High Assurance will be requested when AgentSnitch starts.".into()
+        } else {
+            "AgentSnitch will start in User Visibility mode.".into()
+        },
+        warning: None,
+    })
+}
+
+#[tauri::command]
+fn set_advanced_controls_enabled(
+    enabled: bool,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.advanced_controls_enabled = enabled;
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+    let _ = app.emit("settings-changed", &settings);
+    Ok(AppSettingsUpdate {
+        settings,
+        detail: if enabled {
+            "advanced controls shown".into()
+        } else {
+            "simple interface saved".into()
+        },
+        warning: None,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn set_macos_network_sensor_disabled(disabled: bool) -> Result<String, String> {
     macos_ne_bridge::set_network_sensor_disabled(disabled)
@@ -3864,7 +4151,7 @@ fn set_macos_network_sensor_disabled(disabled: bool) -> Result<String, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn set_macos_network_sensor_disabled(_disabled: bool) -> Result<String, String> {
-    Ok("network sensor setting saved; Network Extension is macOS-only".into())
+    Ok("High Assurance setting saved; OS-backed network attribution is macOS-only".into())
 }
 
 /// Conservative margin (logical px, scaled by the display's factor below) kept
@@ -4530,7 +4817,9 @@ mod tests {
     #[test]
     fn app_settings_default_keeps_network_sensor_disabled() {
         let settings = AppSettings::default();
+        assert!(!settings.advanced_controls_enabled);
         assert!(settings.network_sensor_disabled);
+        assert!(!settings.high_assurance_default_enabled);
         assert_eq!(settings.schema, "agentsnitch.ui_settings.v0");
     }
 
@@ -4539,7 +4828,9 @@ mod tests {
         std::env::set_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION", "1");
         let settings = apply_network_sensor_env_override(AppSettings {
             schema: "agentsnitch.ui_settings.v0".into(),
+            advanced_controls_enabled: true,
             network_sensor_disabled: false,
+            high_assurance_default_enabled: true,
         });
         std::env::remove_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION");
 
@@ -4592,6 +4883,9 @@ mod tests {
                 "local",
                 "remote",
                 "sni",
+                "hostname",
+                "hostname_source",
+                "ptr_hostname",
                 "protocol",
                 "direction",
                 "bytes_out",
@@ -4876,6 +5170,9 @@ mod tests {
                 local: None,
                 remote: Some("93.184.216.34:443".into()),
                 sni: Some("api.example.com".into()),
+                hostname: None,
+                hostname_source: None,
+                ptr_hostname: None,
                 protocol: Some("tcp".into()),
                 direction: Some("out".into()),
                 bytes_out: Some(128),
@@ -4916,7 +5213,10 @@ mod tests {
                 signing_info: None,
                 local: None,
                 remote: Some("160.79.104.10:443".into()),
-                sni: Some("10.104.79.160.bc.example.invalid".into()),
+                sni: None,
+                hostname: None,
+                hostname_source: None,
+                ptr_hostname: Some("10.104.79.160.bc.example.invalid".into()),
                 protocol: Some("tcp".into()),
                 direction: Some("out".into()),
                 bytes_out: None,
@@ -4925,14 +5225,11 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            ui.destination.as_deref(),
-            Some("10.104.79.160.bc.example.invalid (160.79.104.10:443)")
-        );
-        assert!(ui
-            .detail
-            .unwrap_or_default()
-            .contains("category: known Claude service"));
+        assert_eq!(ui.destination.as_deref(), Some("160.79.104.10:443"));
+        let detail = ui.detail.unwrap_or_default();
+        assert!(detail.contains("PTR hint: 10.104.79.160.bc.example.invalid"));
+        assert!(detail.contains("category: known Claude service"));
+        assert!(detail.contains("category source: configured CIDR match"));
     }
 
     #[test]
@@ -4954,6 +5251,9 @@ mod tests {
                 local: None,
                 remote: Some("160.79.104.10:443".into()),
                 sni: None,
+                hostname: None,
+                hostname_source: None,
+                ptr_hostname: None,
                 protocol: Some("tcp".into()),
                 direction: Some("out".into()),
                 bytes_out: None,
@@ -5044,6 +5344,9 @@ mod tests {
             local: None,
             remote: Some("93.184.216.34:443".into()),
             sni: Some("api.example.com".into()),
+            hostname: None,
+            hostname_source: None,
+            ptr_hostname: None,
             protocol: Some("tcp".into()),
             direction: Some("out".into()),
             bytes_out: Some(2048),
@@ -5091,7 +5394,7 @@ mod tests {
         assert!(evidence
             .destination_provenance
             .iter()
-            .any(|detail| detail.label == "SNI / PTR host" && detail.value == "api.example.com"));
+            .any(|detail| detail.label == "SNI" && detail.value == "api.example.com"));
         assert!(evidence
             .destination_provenance
             .iter()
@@ -5161,6 +5464,9 @@ mod tests {
             local: None,
             remote: Some("93.184.216.34:443".into()),
             sni: None,
+            hostname: None,
+            hostname_source: None,
+            ptr_hostname: None,
             protocol: Some("tcp".into()),
             direction: Some("out".into()),
             bytes_out: Some(42),
@@ -5204,6 +5510,9 @@ mod tests {
             local: None,
             remote: Some("93.184.216.34:443".into()),
             sni: None,
+            hostname: None,
+            hostname_source: None,
+            ptr_hostname: None,
             protocol: Some("tcp".into()),
             direction: Some("out".into()),
             bytes_out: None,
@@ -5257,6 +5566,9 @@ mod tests {
             local: None,
             remote: Some("104.18.32.47:443".into()),
             sni: Some("bridge.claudeusercontent.com".into()),
+            hostname: None,
+            hostname_source: None,
+            ptr_hostname: None,
             protocol: Some("tcp".into()),
             direction: Some("out".into()),
             bytes_out: Some(512),
@@ -5290,6 +5602,23 @@ mod tests {
             destination_category(None, Some(&flow), "Tool call → outbound connection"),
             "known Claude service"
         );
+        assert_eq!(
+            destination_category_source(None, Some(&flow), "known Claude service").as_deref(),
+            Some("configured CIDR match")
+        );
+        let evidence = linked_evidence(
+            Some("Tool call → outbound connection".into()),
+            Some(&sem),
+            Some(&flow),
+            &[],
+            &["within_10s".into(), "parent_match".into()],
+            "medium",
+            0.75,
+        );
+        assert_eq!(evidence.destination_category, "known Claude service");
+        assert!(evidence.destination_provenance.iter().any(|detail| {
+            detail.label == "Category source" && detail.value == "configured CIDR match"
+        }));
         flow.remote = Some("104.18.32.47:443".into());
         flow.sni = Some("api.anthropic.com".into());
         flow.bytes_out = Some(72 * 1024 * 1024);
@@ -6089,6 +6418,9 @@ mod tests {
                 local: None,
                 remote: Some("93.184.216.34:443".into()),
                 sni: Some("example.com".into()),
+                hostname: None,
+                hostname_source: None,
+                ptr_hostname: None,
                 protocol: Some("tcp".into()),
                 direction: Some("out".into()),
                 bytes_out: Some(256),
@@ -6649,6 +6981,8 @@ pub fn run() {
             get_events_json,
             get_status,
             get_app_settings,
+            set_advanced_controls_enabled,
+            set_high_assurance_default_enabled,
             set_network_sensor_disabled,
             resize_main_window,
             clear_session,
@@ -6665,10 +6999,12 @@ pub fn run() {
             println!("AgentSnitch UI starting (tray + popup + event receiver)");
 
             let handle = app.handle().clone();
+            let mut network_sensor_disabled = true;
             if let Some(state) = handle.try_state::<AppState>() {
                 let prefs = load_quiet_preferences();
                 let effective = effective_quieted_patterns(&prefs, &SessionSnapshot::default());
                 let settings = load_app_settings();
+                network_sensor_disabled = settings.network_sensor_disabled;
                 let destination_memory = load_destination_memory();
                 if let Err(err) = save_app_settings(&settings) {
                     eprintln!("[agentsnitch-ui] settings save failed: {}", err);
@@ -6686,7 +7022,7 @@ pub fn run() {
             let h2 = handle.clone();
             start_unix_socket_listener(h2);
 
-            request_network_extension_activation();
+            request_network_extension_activation(network_sensor_disabled);
 
             refresh_tray(&handle, false);
 

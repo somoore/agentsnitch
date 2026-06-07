@@ -93,6 +93,58 @@ func TestNetworkStatisticsObserverEnabledTreatsOnlyExplicitTrueAsDisabled(t *tes
 	}
 }
 
+func TestEnrichNetworkHostnameKeepsReverseDNSOutOfSNI(t *testing.T) {
+	originalLookup := reverseDNSLookup
+	defer func() {
+		reverseDNSLookup = originalLookup
+		reverseDNSCache.Lock()
+		reverseDNSCache.entries = make(map[string]reverseDNSCacheEntry)
+		reverseDNSCache.Unlock()
+	}()
+	reverseDNSCache.Lock()
+	reverseDNSCache.entries = make(map[string]reverseDNSCacheEntry)
+	reverseDNSCache.Unlock()
+	reverseDNSLookup = func(ctx context.Context, addr string) ([]string, error) {
+		if addr != "93.184.216.34" {
+			t.Fatalf("lookup addr = %q", addr)
+		}
+		return []string{"ptr.example.net."}, nil
+	}
+
+	flow := event.NetworkFlowEvent{
+		Remote: "93.184.216.34:443",
+	}
+	enrichNetworkHostname(&flow)
+
+	if flow.SNI != "" {
+		t.Fatalf("SNI = %q, want empty for PTR-only lookup", flow.SNI)
+	}
+	if flow.Hostname != "" || flow.HostnameSource != "" {
+		t.Fatalf("hostname = %q source %q, want empty for PTR-only lookup", flow.Hostname, flow.HostnameSource)
+	}
+	if flow.PTRHostname != "ptr.example.net" {
+		t.Fatalf("PTRHostname = %q, want ptr.example.net", flow.PTRHostname)
+	}
+}
+
+func TestEnrichNetworkHostnameRecordsObserverHostnameSource(t *testing.T) {
+	flow := event.NetworkFlowEvent{
+		Observer: "network_statistics",
+		Remote:   "api.example.com:443",
+	}
+	enrichNetworkHostname(&flow)
+
+	if flow.Hostname != "api.example.com" {
+		t.Fatalf("hostname = %q, want api.example.com", flow.Hostname)
+	}
+	if flow.HostnameSource != "network_statistics" {
+		t.Fatalf("hostname source = %q, want network_statistics", flow.HostnameSource)
+	}
+	if flow.SNI != "" || flow.PTRHostname != "" {
+		t.Fatalf("unexpected SNI/PTR = %q/%q", flow.SNI, flow.PTRHostname)
+	}
+}
+
 func TestRequestLsofBurstPollCoalescesWithoutBlocking(t *testing.T) {
 	ch := make(chan struct{}, 1)
 	requestLsofBurstPoll(ch)
@@ -1146,14 +1198,20 @@ func TestEnrichNetworkHostnameUsesCachedReverseDNS(t *testing.T) {
 
 	first := event.NetworkFlowEvent{Remote: "93.184.216.34:443"}
 	enrichNetworkHostname(&first)
-	if first.SNI != "example.invalid" {
-		t.Fatalf("SNI = %q, want reverse DNS hostname", first.SNI)
+	if first.SNI != "" {
+		t.Fatalf("SNI = %q, want empty for PTR-only lookup", first.SNI)
+	}
+	if first.PTRHostname != "example.invalid" {
+		t.Fatalf("PTRHostname = %q, want reverse DNS hostname", first.PTRHostname)
 	}
 
 	second := event.NetworkFlowEvent{Remote: "93.184.216.34:443"}
 	enrichNetworkHostname(&second)
-	if second.SNI != "example.invalid" {
-		t.Fatalf("cached SNI = %q, want reverse DNS hostname", second.SNI)
+	if second.SNI != "" {
+		t.Fatalf("cached SNI = %q, want empty for PTR-only lookup", second.SNI)
+	}
+	if second.PTRHostname != "example.invalid" {
+		t.Fatalf("cached PTRHostname = %q, want reverse DNS hostname", second.PTRHostname)
 	}
 	if calls != 1 {
 		t.Fatalf("reverse DNS lookups = %d, want 1", calls)
@@ -1171,6 +1229,9 @@ func TestEnrichNetworkHostnameSkipsExistingAndPrivateDestinations(t *testing.T) 
 	enrichNetworkHostname(&existing)
 	if existing.SNI != "api.example.com" {
 		t.Fatalf("existing SNI changed to %q", existing.SNI)
+	}
+	if existing.Hostname != "api.example.com" || existing.HostnameSource != "sni" {
+		t.Fatalf("existing SNI did not populate hostname provenance: %+v", existing)
 	}
 
 	private := event.NetworkFlowEvent{Remote: "192.168.1.10:443"}
@@ -1456,6 +1517,7 @@ func TestIsTrustedNetworkSenderExe(t *testing.T) {
 func TestTrustedSocketPeersUseExecutablePath(t *testing.T) {
 	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "/Users/dev/Library/Application Support/AgentSnitch")
 	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
+	t.Setenv("AGENTSNITCH_TRUSTED_TEAM_ID", "ABCDE12345")
 
 	exeByPID := map[int]string{
 		100: "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter", // real emitter
@@ -1468,6 +1530,15 @@ func TestTrustedSocketPeersUseExecutablePath(t *testing.T) {
 	peerExePath = func(pid int) (string, bool) {
 		p, ok := exeByPID[pid]
 		return p, ok
+	}
+	origIdentity := peerCodeIdentity
+	t.Cleanup(func() { peerCodeIdentity = origIdentity })
+	peerCodeIdentity = func(path string) (codeIdentity, bool) {
+		if strings.HasPrefix(path, "/Users/dev/Library/Application Support/AgentSnitch/") ||
+			strings.HasPrefix(path, "/Applications/AgentSnitch.app/") {
+			return codeIdentity{TeamID: "ABCDE12345", CDHash: "abc"}, true
+		}
+		return codeIdentity{TeamID: "EVILTEAM00", CDHash: "bad"}, true
 	}
 
 	if !trustedSemanticSocketPeer(100, nil) {
@@ -1484,5 +1555,74 @@ func TestTrustedSocketPeersUseExecutablePath(t *testing.T) {
 	}
 	if trustedSemanticSocketPeer(999, nil) {
 		t.Fatal("unresolvable peer PID must NOT be trusted")
+	}
+}
+
+func TestTrustedSocketPeersRejectWrongSignature(t *testing.T) {
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "/Users/dev/Library/Application Support/AgentSnitch")
+	t.Setenv("AGENTSNITCH_TRUSTED_TEAM_ID", "ABCDE12345")
+
+	origExe := peerExePath
+	t.Cleanup(func() { peerExePath = origExe })
+	peerExePath = func(int) (string, bool) {
+		return "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter", true
+	}
+
+	origIdentity := peerCodeIdentity
+	t.Cleanup(func() { peerCodeIdentity = origIdentity })
+	peerCodeIdentity = func(string) (codeIdentity, bool) {
+		return codeIdentity{TeamID: "EVILTEAM00", CDHash: "bad"}, true
+	}
+
+	if trustedSemanticSocketPeer(100, nil) {
+		t.Fatal("path-matching emitter with wrong TeamIdentifier must NOT be trusted")
+	}
+}
+
+func TestTrustedSocketPeersAllowAdHocInstalledPeersWhenDaemonIsAdHoc(t *testing.T) {
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "/Users/dev/Library/Application Support/AgentSnitch")
+	t.Setenv("AGENTSNITCH_TRUSTED_TEAM_ID", "")
+
+	origExe := peerExePath
+	t.Cleanup(func() { peerExePath = origExe })
+	peerExePath = func(int) (string, bool) {
+		return "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter", true
+	}
+
+	origIdentity := peerCodeIdentity
+	t.Cleanup(func() { peerCodeIdentity = origIdentity })
+	peerCodeIdentity = func(string) (codeIdentity, bool) {
+		return codeIdentity{AdHoc: true, CDHash: "abc"}, true
+	}
+
+	daemonCodeIdentity.Lock()
+	origDaemonIdentity := daemonCodeIdentity.value
+	origLoaded := daemonCodeIdentity.loaded
+	daemonCodeIdentity.loaded = true
+	daemonCodeIdentity.value = codeIdentity{AdHoc: true, CDHash: "daemon"}
+	daemonCodeIdentity.Unlock()
+	t.Cleanup(func() {
+		daemonCodeIdentity.Lock()
+		daemonCodeIdentity.value = origDaemonIdentity
+		daemonCodeIdentity.loaded = origLoaded
+		daemonCodeIdentity.Unlock()
+	})
+
+	if !trustedSemanticSocketPeer(100, nil) {
+		t.Fatal("installed ad-hoc emitter should be trusted when daemon is also ad-hoc signed")
+	}
+}
+
+func TestParseCodeIdentity(t *testing.T) {
+	identity, ok := parseCodeIdentity("Executable=/x\nCDHash=abcdef\nTeamIdentifier=ABCDE12345\n")
+	if !ok {
+		t.Fatal("parseCodeIdentity should accept a real team id")
+	}
+	if identity.TeamID != "ABCDE12345" || identity.CDHash != "abcdef" {
+		t.Fatalf("parseCodeIdentity = %+v", identity)
+	}
+	adhoc, ok := parseCodeIdentity("TeamIdentifier=not set\nSignature=adhoc\nCDHash=123456\n")
+	if !ok || !adhoc.AdHoc || adhoc.TeamID != "" || adhoc.CDHash != "123456" {
+		t.Fatalf("parseCodeIdentity should preserve ad-hoc identity, got %+v ok=%v", adhoc, ok)
 	}
 }

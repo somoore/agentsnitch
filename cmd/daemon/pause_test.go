@@ -57,10 +57,16 @@ func TestDispatchControlMessageTogglesPause(t *testing.T) {
 	t.Setenv("AGENTSNITCH_TRANSCRIPTS_DIR", filepath.Join(tmp, "sessions"))
 	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
 	t.Setenv("AGENTSNITCH_SUPPORT_DIR", filepath.Join(tmp, "support"))
+	t.Setenv("AGENTSNITCH_TRUSTED_TEAM_ID", "ABCDE12345")
 	orig := peerExePath
 	t.Cleanup(func() { peerExePath = orig })
 	peerExePath = func(int) (string, bool) {
 		return "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui", true
+	}
+	origIdentity := peerCodeIdentity
+	t.Cleanup(func() { peerCodeIdentity = origIdentity })
+	peerCodeIdentity = func(string) (codeIdentity, bool) {
+		return codeIdentity{TeamID: "ABCDE12345", CDHash: "abc"}, true
 	}
 
 	sessions := newDaemonSessions()
@@ -209,8 +215,17 @@ func TestResumeWritesPauseGapToEachLiveSessionTranscript(t *testing.T) {
 func TestControlMessageRejectedFromUntrustedPeer(t *testing.T) {
 	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
 	t.Setenv("AGENTSNITCH_SUPPORT_DIR", "/tmp/whatever")
+	t.Setenv("AGENTSNITCH_TRUSTED_TEAM_ID", "ABCDE12345")
 	orig := peerExePath
 	t.Cleanup(func() { peerExePath = orig })
+	origIdentity := peerCodeIdentity
+	t.Cleanup(func() { peerCodeIdentity = origIdentity })
+	peerCodeIdentity = func(path string) (codeIdentity, bool) {
+		if path == "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui" {
+			return codeIdentity{TeamID: "ABCDE12345", CDHash: "abc"}, true
+		}
+		return codeIdentity{TeamID: "EVILTEAM00", CDHash: "bad"}, true
+	}
 
 	pause := newPauseController()
 	pauseMsg := `{"schema":"agentsnitch.control.v0","action":"pause"}`

@@ -7,14 +7,14 @@
 
 AgentSnitch gives developers local, explainable evidence when AI coding agents touch sensitive local context and then make outbound network connections.
 
-It is a macOS visibility tool for Claude Code today, with a local daemon, fail-open hook emitter, Tauri UI, default unprivileged process/network observation, and an opt-in Network Sensor for stronger attribution.
+It is a macOS visibility tool for Claude Code today, with a local daemon, fail-open hook emitter, Tauri UI, default unprivileged process/network observation, and an opt-in High Assurance mode for stronger OS-backed attribution.
 
 ## What Is AgentSnitch?
 
 AgentSnitch correlates three local signals:
 
 - **Agent intent:** Claude Code `PreToolUse` and `PostToolUse` hooks report what the agent is doing, including file reads, shell commands, MCP tool use, WebFetch, WebSearch, and subagent activity.
-- **Network activity:** the daemon observes outbound connections from agent-like process trees using NetworkStatistics/`nettop` by default, with `lsof` fallback and an optional macOS Network Extension.
+- **Network activity:** the daemon observes outbound connections from agent-like process trees using NetworkStatistics/`nettop` by default, with `lsof` fallback and optional High Assurance OS-backed telemetry.
 - **Explainable evidence:** the daemon links semantic events to network flows by time, PID, ancestry, session, and destination intent, then shows the result in a compact local UI.
 
 AgentSnitch is not a DLP product, not a SaaS telemetry collector, and not an enforcement gate. Hooks fail open, traffic is not blocked, and product evidence comes from real local sensors.
@@ -71,7 +71,7 @@ flowchart LR
         Emitter["Fail-open hook emitter"]
         NetStats["NetworkStatistics / nettop"]
         Lsof["lsof fallback"]
-        Sensor["Opt-in Network Sensor"]
+        Sensor["High Assurance sensor"]
     end
 
     subgraph C["AgentSnitch"]
@@ -87,8 +87,8 @@ flowchart LR
     Claude --> NetStats
     Children --> NetStats
     NetStats -.-> Lsof
-    Claude -.->|"advanced opt-in"| Sensor
-    Children -.->|"advanced opt-in"| Sensor
+    Claude -.->|"High Assurance opt-in"| Sensor
+    Children -.->|"High Assurance opt-in"| Sensor
     Emitter --> Daemon
     NetStats --> Daemon
     Lsof --> Daemon
@@ -109,7 +109,7 @@ flowchart LR
 - No SaaS backend.
 - No network blocking in the current pre-alpha.
 - Hooks fail open so agent workflows continue if AgentSnitch is not running.
-- The Network Sensor is disabled by default and should be enabled only when you want event-driven Network Extension attribution.
+- High Assurance is disabled by default. User Visibility mode remains the startup default unless you explicitly enable High Assurance as the default in Settings.
 
 ## Documentation
 

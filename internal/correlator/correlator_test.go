@@ -1276,6 +1276,186 @@ func TestSessionState_TryCorrelateSemantic_LinksAlreadyActiveConnection(t *testi
 	}
 }
 
+func TestSessionState_TryCorrelate_DestinationIntentLinksSameAgentNEFlow(t *testing.T) {
+	s := NewSessionState()
+	base := time.Now().UTC()
+
+	s.AddSemanticEvent(event.SemanticEvent{
+		Schema:             event.SchemaSemanticV0,
+		TS:                 base,
+		Agent:              event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		Event:              "PostToolUse",
+		Tool:               "Bash",
+		Target:             "https://example.com",
+		PID:                5100,
+		PPID:               5000,
+		Tags:               []string{"external_egress_attempt"},
+		DestinationIntents: []string{"example.com"},
+		ToolUseID:          "toolu-curl",
+	})
+
+	flow := event.NetworkFlowEvent{
+		Schema:         event.SchemaNetworkV0,
+		TS:             base.Add(500 * time.Millisecond),
+		FlowID:         "nef-example",
+		Observer:       "network_extension",
+		Agent:          &event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		PID:            5200,
+		PPID:           5199,
+		ProcessPath:    "/usr/bin/curl",
+		Remote:         "172.66.147.243:443",
+		Hostname:       "example.com",
+		HostnameSource: "network_extension_remote_hostname",
+		Protocol:       "tcp",
+		Direction:      "out",
+		State:          "new",
+	}
+
+	corrs := s.TryCorrelate(flow)
+	if len(corrs) != 1 {
+		t.Fatalf("expected destination-intent correlation, got %d", len(corrs))
+	}
+	if !contains(corrs[0].Reasons, "destination_intent_match") {
+		t.Fatalf("expected destination_intent_match reason, got %v", corrs[0].Reasons)
+	}
+	if !contains(corrs[0].Reasons, "same_agent_session") {
+		t.Fatalf("expected same_agent_session reason, got %v", corrs[0].Reasons)
+	}
+	if corrs[0].Confidence != "medium" {
+		t.Fatalf("expected medium confidence, got %q", corrs[0].Confidence)
+	}
+	if !strings.Contains(corrs[0].Summary, "example.com") {
+		t.Fatalf("summary should name the requested destination:\n%s", corrs[0].Summary)
+	}
+}
+
+func TestSessionState_TryCorrelateSemantic_DestinationIntentDoesNotBackdateNewFlow(t *testing.T) {
+	s := NewSessionState()
+	base := time.Now().UTC()
+
+	flow := event.NetworkFlowEvent{
+		Schema:         event.SchemaNetworkV0,
+		TS:             base,
+		FlowID:         "nef-earlier",
+		Observer:       "network_extension",
+		Agent:          &event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		PID:            5200,
+		PPID:           5199,
+		ProcessPath:    "/usr/bin/curl",
+		Remote:         "172.66.147.243:443",
+		Hostname:       "example.com",
+		HostnameSource: "network_extension_remote_hostname",
+		Protocol:       "tcp",
+		Direction:      "out",
+		State:          "new",
+	}
+	s.AddNetworkFlow(flow)
+
+	sem := event.SemanticEvent{
+		Schema:             event.SchemaSemanticV0,
+		TS:                 base.Add(3 * time.Second),
+		Agent:              event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		Event:              "PostToolUse",
+		Tool:               "Bash",
+		Target:             "https://example.com",
+		PID:                5100,
+		PPID:               5000,
+		Tags:               []string{"external_egress_attempt"},
+		DestinationIntents: []string{"example.com"},
+		ToolUseID:          "toolu-late-curl",
+	}
+	s.AddSemanticEvent(sem)
+
+	if got := s.TryCorrelateSemantic(sem); len(got) != 0 {
+		t.Fatalf("later semantic event should not backdate a new flow, got %d", len(got))
+	}
+}
+
+func TestSessionState_TryCorrelate_EgressIntentRejectsDifferentHostname(t *testing.T) {
+	s := NewSessionState()
+	base := time.Now().UTC()
+
+	s.AddSemanticEvent(event.SemanticEvent{
+		Schema:             event.SchemaSemanticV0,
+		TS:                 base,
+		Agent:              event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		Event:              "PostToolUse",
+		Tool:               "Bash",
+		Target:             "https://example.com",
+		PID:                5100,
+		PPID:               5000,
+		Tags:               []string{"external_egress_attempt"},
+		DestinationIntents: []string{"example.com"},
+		ToolUseID:          "toolu-curl",
+	})
+
+	flow := event.NetworkFlowEvent{
+		Schema:         event.SchemaNetworkV0,
+		TS:             base.Add(6 * time.Second),
+		FlowID:         "nef-datadog",
+		Observer:       "network_extension",
+		Agent:          &event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		PID:            5000,
+		PPID:           4999,
+		ProcessPath:    "/Users/me/.local/share/claude/versions/2.1.168",
+		Remote:         "34.149.66.137:443",
+		Hostname:       "http-intake.logs.us5.datadoghq.com",
+		HostnameSource: "network_extension_remote_hostname",
+		Protocol:       "tcp",
+		Direction:      "out",
+		State:          "new",
+	}
+
+	if got := s.TryCorrelate(flow); len(got) != 0 {
+		t.Fatalf("mismatched egress destination should not correlate, got %d", len(got))
+	}
+}
+
+func TestSessionState_TryCorrelate_EgressIntentKeepsPIDMatchForIPOnlyFlow(t *testing.T) {
+	s := NewSessionState()
+	base := time.Now().UTC()
+
+	s.AddSemanticEvent(event.SemanticEvent{
+		Schema:             event.SchemaSemanticV0,
+		TS:                 base,
+		Agent:              event.AgentInfo{ID: "sub_1", PID: 5000, Name: "claude"},
+		Event:              "PostToolUse",
+		Tool:               "Bash",
+		Target:             "https://example.com",
+		PID:                5100,
+		PPID:               5000,
+		Tags:               []string{"external_egress_attempt"},
+		DestinationIntents: []string{"example.com"},
+		ToolUseID:          "toolu-curl",
+	})
+
+	flow := event.NetworkFlowEvent{
+		Schema:      event.SchemaNetworkV0,
+		TS:          base.Add(2 * time.Second),
+		FlowID:      "netstat-ip-only",
+		Observer:    "network_statistics",
+		PID:         5100,
+		PPID:        5000,
+		ProcessPath: "/usr/bin/curl",
+		Remote:      "93.184.216.34:443",
+		PTRHostname: "example.com",
+		Protocol:    "tcp",
+		Direction:   "out",
+		State:       "established",
+	}
+
+	corrs := s.TryCorrelate(flow)
+	if len(corrs) != 1 {
+		t.Fatalf("expected PID correlation for IP-only userland flow, got %d", len(corrs))
+	}
+	if !contains(corrs[0].Reasons, "pid_match") {
+		t.Fatalf("expected pid_match, got %v", corrs[0].Reasons)
+	}
+	if contains(corrs[0].Reasons, "destination_intent_match") {
+		t.Fatalf("IP-only flow should not claim destination_intent_match, got %v", corrs[0].Reasons)
+	}
+}
+
 func TestSessionState_TryCorrelateSemantic_LinksLateWebSearchToActiveConnection(t *testing.T) {
 	s := NewSessionState()
 	base := time.Now().UTC()

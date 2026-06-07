@@ -2,6 +2,7 @@ package correlator
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -338,12 +339,22 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 	hasSensitiveRelated := false
 	for i := len(s.Events) - 1; i >= 0; i-- {
 		e := s.Events[i]
+		intentMatch := destinationIntentMatchesFlow(e, flow)
 		timingReasons := timingReasons(e, flow, now)
 		if len(timingReasons) == 0 {
-			continue
+			timingReasons = destinationIntentTimingReasons(e, flow, now, intentMatch)
+			if len(timingReasons) == 0 {
+				continue
+			}
 		}
 
 		matchReasons := s.processMatchReasonsLocked(e, flow)
+		if isEgressLike(e) && !hasSensitiveTag(e) && len(e.DestinationIntents) > 0 && !intentMatch && flowHasStrongObservedHostname(flow) {
+			continue
+		}
+		if len(matchReasons) == 0 && intentMatch && sameAgentSession(e.Agent, flow.Agent) {
+			matchReasons = append(matchReasons, "same_agent_session")
+		}
 		if len(matchReasons) == 0 {
 			continue
 		}
@@ -354,6 +365,9 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 			}
 			for _, r := range matchReasons {
 				reasonSet[r] = struct{}{}
+			}
+			if intentMatch {
+				reasonSet["destination_intent_match"] = struct{}{}
 			}
 			if hasSensitiveTag(e) {
 				hasSensitiveRelated = true
@@ -376,7 +390,7 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 		reasonSet["high_bytes"] = struct{}{}
 	}
 	reasons := make([]string, 0, len(reasonSet))
-	for _, r := range []string{"within_10s", "existing_connection_active", "pid_match", "parent_match", "ancestor_match", "common_agent_ancestor", "same_agent_session", "known_agent_binary_match", "mcp_server_flow", "first_destination", "high_bytes", "after_sensitive_read"} {
+	for _, r := range []string{"within_10s", "existing_connection_active", "pid_match", "parent_match", "ancestor_match", "common_agent_ancestor", "same_agent_session", "known_agent_binary_match", "mcp_server_flow", "destination_intent_match", "first_destination", "high_bytes", "after_sensitive_read"} {
 		if _, ok := reasonSet[r]; ok {
 			reasons = append(reasons, r)
 		}
@@ -660,6 +674,9 @@ func destinationKey(flow event.NetworkFlowEvent) string {
 	if flow.SNI != "" {
 		return strings.ToLower(strings.TrimSpace(flow.SNI))
 	}
+	if flow.Hostname != "" {
+		return strings.ToLower(strings.TrimSpace(flow.Hostname))
+	}
 	remote := strings.TrimSpace(flow.Remote)
 	if remote == "" {
 		return ""
@@ -673,6 +690,105 @@ func destinationKey(flow event.NetworkFlowEvent) string {
 		host = strings.Trim(remote, "[]")
 	}
 	return strings.ToLower(strings.TrimSpace(strings.Trim(host, "[]")))
+}
+
+func destinationIntentMatchesFlow(e event.SemanticEvent, flow event.NetworkFlowEvent) bool {
+	if len(e.DestinationIntents) == 0 {
+		return false
+	}
+	flowDestinations := flowDestinationCandidates(flow)
+	if len(flowDestinations) == 0 {
+		return false
+	}
+	for _, intent := range e.DestinationIntents {
+		intent = normalizeDestinationHost(intent)
+		if intent == "" {
+			continue
+		}
+		for _, dest := range flowDestinations {
+			if destinationHostMatches(intent, dest) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func flowHasStrongObservedHostname(flow event.NetworkFlowEvent) bool {
+	if host := normalizeDestinationHost(flow.SNI); host != "" && net.ParseIP(host) == nil {
+		return true
+	}
+	host := normalizeDestinationHost(flow.Hostname)
+	if host == "" || net.ParseIP(host) != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(flow.HostnameSource)) {
+	case "network_statistics", "ptr", "reverse_dns":
+		return false
+	default:
+		return true
+	}
+}
+
+func flowDestinationCandidates(flow event.NetworkFlowEvent) []string {
+	candidates := []string{
+		flow.SNI,
+		flow.Hostname,
+		destinationKey(event.NetworkFlowEvent{Remote: flow.Remote}),
+	}
+	out := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		candidate = normalizeDestinationHost(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func normalizeDestinationHost(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.Trim(value, "[]")
+	if before, _, ok := strings.Cut(value, "/"); ok {
+		value = before
+	}
+	if before, _, ok := strings.Cut(value, "?"); ok {
+		value = before
+	}
+	if strings.Count(value, ":") == 1 {
+		if before, _, ok := strings.Cut(value, ":"); ok {
+			value = before
+		}
+	}
+	return strings.Trim(value, ".")
+}
+
+func destinationHostMatches(intent, observed string) bool {
+	if intent == "" || observed == "" {
+		return false
+	}
+	return observed == intent || strings.HasSuffix(observed, "."+intent)
+}
+
+func sameAgentSession(a event.AgentInfo, b *event.AgentInfo) bool {
+	if b == nil {
+		return false
+	}
+	if a.ID != "" && b.ID != "" && a.ID == b.ID {
+		return true
+	}
+	if a.PID > 0 && b.PID > 0 && a.PID == b.PID {
+		return true
+	}
+	return false
 }
 
 func isHighByteFlow(flow event.NetworkFlowEvent) bool {
@@ -690,6 +806,17 @@ func timingReasons(e event.SemanticEvent, flow event.NetworkFlowEvent, now time.
 	}
 	if delta < 0 && -delta <= ExistingConnectionWindow && (hasSensitiveTag(e) || isEgressLike(e)) && isActiveFlow(flow) {
 		return []string{"existing_connection_active"}
+	}
+	return nil
+}
+
+func destinationIntentTimingReasons(e event.SemanticEvent, flow event.NetworkFlowEvent, now time.Time, intentMatch bool) []string {
+	if !intentMatch || e.TS.IsZero() || !isEgressLike(e) || hasSensitiveTag(e) || !strings.EqualFold(flow.State, "new") {
+		return nil
+	}
+	delta := now.Sub(e.TS)
+	if delta >= 0 && delta <= CorrelationWindow {
+		return []string{"within_10s"}
 	}
 	return nil
 }
@@ -785,6 +912,14 @@ func evidenceSummary(related []event.SemanticEvent, flow event.NetworkFlowEvent,
 	flowText := fmt.Sprintf("PID %d connected to %s", flow.PID, remote)
 	if flow.SNI != "" {
 		flowText += fmt.Sprintf(" (SNI: %s)", flow.SNI)
+	} else if flow.Hostname != "" {
+		source := strings.TrimSpace(flow.HostnameSource)
+		if source == "" {
+			source = "observer"
+		}
+		flowText += fmt.Sprintf(" (hostname: %s via %s)", flow.Hostname, source)
+	} else if flow.PTRHostname != "" {
+		flowText += fmt.Sprintf(" (PTR hint: %s)", flow.PTRHostname)
 	}
 	if flow.BytesOut > 0 {
 		flowText += fmt.Sprintf(", %dB out", flow.BytesOut)
@@ -1108,6 +1243,9 @@ func confidenceForReasons(reasons map[string]struct{}) string {
 	if _, ok := reasons["ancestor_match"]; ok {
 		return "medium"
 	}
+	if hasReason(reasons, "destination_intent_match") && hasReason(reasons, "same_agent_session") && hasReason(reasons, "within_10s") {
+		return "medium"
+	}
 	if _, ok := reasons["common_agent_ancestor"]; ok {
 		return "low"
 	}
@@ -1143,6 +1281,9 @@ func scoreForReasons(confidence string, reasons map[string]struct{}) float64 {
 	}
 	if hasReason(reasons, "first_destination") {
 		score += 0.10
+	}
+	if hasReason(reasons, "destination_intent_match") {
+		score += 0.15
 	}
 	if score > 1.0 {
 		return 1.0
@@ -1208,6 +1349,9 @@ func isPlaywrightBridgeFlow(flow event.NetworkFlowEvent) bool {
 
 func flowHost(flow event.NetworkFlowEvent) string {
 	host := strings.TrimSpace(flow.SNI)
+	if host == "" {
+		host = strings.TrimSpace(flow.Hostname)
+	}
 	if host == "" {
 		host = strings.TrimSpace(flow.Remote)
 	}

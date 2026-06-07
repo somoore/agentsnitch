@@ -22,6 +22,9 @@ type Status struct {
 	LastTranscriptPath string    `json:"last_transcript_path,omitempty"`
 	LastTranscriptKind string    `json:"last_transcript_kind,omitempty"`
 	LastTranscriptAt   time.Time `json:"last_transcript_at,omitempty"`
+
+	ObserverMode    string   `json:"observer_mode,omitempty"`
+	ObserverSources []string `json:"observer_sources,omitempty"`
 }
 
 func StatusPath() string {
