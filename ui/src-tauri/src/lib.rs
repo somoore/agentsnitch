@@ -9,10 +9,10 @@
 // Minimal new crates: only added "image-png" to tauri features.
 
 use std::collections::{HashMap, HashSet};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -46,6 +46,8 @@ const MAX_UI_EVENTS: usize = 4000;
 const MAX_UI_STREAM_BYTES: u64 = 4 * 1024 * 1024;
 const DEFAULT_SESSION_IDLE_SECS: u64 = 90;
 const AGENT_PROCESS_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+const HOOK_STATUS_TIMEOUT: Duration = Duration::from_secs(8);
+const HOOK_MUTATION_TIMEOUT: Duration = Duration::from_secs(15);
 const HEURISTICS_JSON: &str = include_str!("../../../config/heuristics.json");
 
 /// Matches internal/event/event.go SemanticEvent JSON shape exactly (for compatibility with parallel Go work).
@@ -2733,21 +2735,56 @@ fn normalize_hook_agent(agent: Option<String>) -> String {
     }
 }
 
+fn command_output_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+    label: &str,
+) -> Result<Output, String> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("run {}: {}", label, err))?;
+    let start = Instant::now();
+    loop {
+        match child
+            .try_wait()
+            .map_err(|err| format!("wait for {}: {}", label, err))?
+        {
+            Some(_) => return child.wait_with_output().map_err(|err| err.to_string()),
+            None if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait_with_output();
+                return Err(format!(
+                    "{} timed out after {} seconds",
+                    label,
+                    timeout.as_secs()
+                ));
+            }
+            None => thread::sleep(Duration::from_millis(25)),
+        }
+    }
+}
+
 fn run_hookctl(action: &str, events: Vec<String>, agent: Option<String>) -> Result<String, String> {
     let hookctl = hookctl_path()?;
     let emitter = emitter_path()?;
     let selected = normalize_hook_events(events)?;
     let agent = normalize_hook_agent(agent);
-    let output = Command::new(&hookctl)
+    let mut command = Command::new(&hookctl);
+    command
         .arg("--agent")
         .arg(&agent)
         .arg("--emitter")
         .arg(&emitter)
         .arg("--events")
         .arg(selected.join(","))
-        .arg(action)
-        .output()
-        .map_err(|err| format!("run hookctl: {}", err))?;
+        .arg(action);
+    let output = command_output_with_timeout(
+        command,
+        HOOK_MUTATION_TIMEOUT,
+        &format!("hookctl {}", action),
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -2769,14 +2806,14 @@ fn load_claude_hooks_status(
     let hookctl = hookctl_path()?;
     let emitter = emitter_path()?;
     let agent = normalize_hook_agent(agent);
-    let output = Command::new(&hookctl)
+    let mut command = Command::new(&hookctl);
+    command
         .arg("--agent")
         .arg(&agent)
         .arg("--emitter")
         .arg(&emitter)
-        .arg("status-json")
-        .output()
-        .map_err(|err| format!("run hookctl status: {}", err))?;
+        .arg("status-json");
+    let output = command_output_with_timeout(command, HOOK_STATUS_TIMEOUT, "hookctl status")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
@@ -4771,46 +4808,56 @@ fn set_advanced_controls_enabled(
 }
 
 #[tauri::command]
-fn get_claude_hooks_status(
+async fn get_claude_hooks_status(
     agent: Option<String>,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<ClaudeHooksStatus, String> {
     let settings = state.app_settings.lock().unwrap().clone();
-    load_claude_hooks_status(&settings, agent)
+    tauri::async_runtime::spawn_blocking(move || load_claude_hooks_status(&settings, agent))
+        .await
+        .map_err(|err| format!("join hook status task: {}", err))?
 }
 
 #[tauri::command]
-fn install_claude_hooks(
+async fn install_claude_hooks(
     events: Vec<String>,
     agent: Option<String>,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<ClaudeHooksStatus, String> {
     let agent = normalize_hook_agent(agent);
-    run_hookctl("install", events, Some(agent.clone()))?;
     let settings = state.app_settings.lock().unwrap().clone();
-    let mut status = load_claude_hooks_status(&settings, Some(agent))?;
-    status.detail = "Selected hooks installed.".into();
-    Ok(status)
+    tauri::async_runtime::spawn_blocking(move || {
+        run_hookctl("install", events, Some(agent.clone()))?;
+        let mut status = load_claude_hooks_status(&settings, Some(agent))?;
+        status.detail = "Selected hooks installed.".into();
+        Ok(status)
+    })
+    .await
+    .map_err(|err| format!("join hook install task: {}", err))?
 }
 
 #[tauri::command]
-fn remove_claude_hooks(
+async fn remove_claude_hooks(
     events: Vec<String>,
     agent: Option<String>,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<ClaudeHooksStatus, String> {
     let agent = normalize_hook_agent(agent);
-    run_hookctl("uninstall", events, Some(agent.clone()))?;
     let settings = state.app_settings.lock().unwrap().clone();
-    let mut status = load_claude_hooks_status(&settings, Some(agent))?;
-    status.detail = "Selected hooks removed.".into();
-    Ok(status)
+    tauri::async_runtime::spawn_blocking(move || {
+        run_hookctl("uninstall", events, Some(agent.clone()))?;
+        let mut status = load_claude_hooks_status(&settings, Some(agent))?;
+        status.detail = "Selected hooks removed.".into();
+        Ok(status)
+    })
+    .await
+    .map_err(|err| format!("join hook remove task: {}", err))?
 }
 
 #[tauri::command]
-fn set_keep_hooks_up_to_date(
+async fn set_keep_hooks_up_to_date(
     enabled: bool,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<AppSettingsUpdate, String> {
     let settings = {
@@ -4822,17 +4869,22 @@ fn set_keep_hooks_up_to_date(
     save_app_settings(&settings)?;
     let mut warning = None;
     if enabled {
-        warning = match load_claude_hooks_status(&settings, Some("all".into())) {
-            Ok(status) => {
-                let warnings = apply_hook_auto_update_plan(&status);
-                if warnings.is_empty() {
-                    None
-                } else {
-                    Some(warnings.join("; "))
+        let settings_for_hooks = settings.clone();
+        warning = tauri::async_runtime::spawn_blocking(move || {
+            match load_claude_hooks_status(&settings_for_hooks, Some("all".into())) {
+                Ok(status) => {
+                    let warnings = apply_hook_auto_update_plan(&status);
+                    if warnings.is_empty() {
+                        None
+                    } else {
+                        Some(warnings.join("; "))
+                    }
                 }
+                Err(err) => Some(err),
             }
-            Err(err) => Some(err),
-        };
+        })
+        .await
+        .map_err(|err| format!("join hook auto-update task: {}", err))?;
     }
     let _ = app.emit("settings-changed", &settings);
     Ok(AppSettingsUpdate {
