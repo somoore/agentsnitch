@@ -201,6 +201,15 @@
         "sni": {
           "type": "string"
         },
+        "hostname": {
+          "type": "string"
+        },
+        "hostname_source": {
+          "type": "string"
+        },
+        "ptr_hostname": {
+          "type": "string"
+        },
         "protocol": {
           "type": "string",
           "enum": [

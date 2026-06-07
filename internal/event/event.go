@@ -362,7 +362,16 @@ type NetworkFlowEvent struct {
 
 	Local  string `json:"local,omitempty"`
 	Remote string `json:"remote,omitempty"`
-	SNI    string `json:"sni,omitempty"`
+	// SNI is only the TLS Server Name Indication captured by a sensor that can
+	// observe it. Do not store reverse-DNS/PTR values here.
+	SNI string `json:"sni,omitempty"`
+	// Hostname is the strongest hostname attached to this flow, when the sensor
+	// produced one directly. HostnameSource explains where it came from.
+	Hostname       string `json:"hostname,omitempty"`
+	HostnameSource string `json:"hostname_source,omitempty"`
+	// PTRHostname is reverse-DNS owner metadata for the remote IP. It is a hint,
+	// not proof that the connection was made to that DNS name.
+	PTRHostname string `json:"ptr_hostname,omitempty"`
 
 	Protocol  string `json:"protocol,omitempty"`  // tcp, udp
 	Direction string `json:"direction,omitempty"` // in, out
@@ -391,6 +400,9 @@ func NormalizeNetworkFlow(f *NetworkFlowEvent) {
 	f.Remote = strings.TrimSpace(f.Remote)
 	f.Local = strings.TrimSpace(f.Local)
 	f.SNI = strings.TrimSpace(f.SNI)
+	f.Hostname = strings.TrimSpace(f.Hostname)
+	f.HostnameSource = strings.ToLower(strings.TrimSpace(f.HostnameSource))
+	f.PTRHostname = strings.TrimSpace(f.PTRHostname)
 	f.Observer = strings.ToLower(strings.TrimSpace(f.Observer))
 	if f.Agent != nil {
 		f.Agent.ID = strings.TrimSpace(f.Agent.ID)

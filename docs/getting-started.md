@@ -10,7 +10,7 @@ AgentSnitch is a local-first macOS pre-alpha. The current release path is built 
 
 Download [AgentSnitch v0.1.0-pre-alpha.4](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.4) and install the macOS `.pkg`.
 
-The installer includes `AgentSnitch.app`, the local daemon, support tools, LaunchAgent registration, and Claude Code hook registration for the console user. The Network Sensor is installed as an optional bundled system extension but stays disabled until explicitly enabled from app Settings.
+The installer includes `AgentSnitch.app`, the local daemon, support tools, LaunchAgent registration, and Claude Code hook registration for the console user. High Assurance mode is available as an optional macOS system-extension-backed path, but User Visibility mode is the default unless explicitly changed in app Settings.
 
 ## Build
 
@@ -35,7 +35,7 @@ make create
 
 This is the one-command build/install path. It builds every Go tool, builds the Tauri app, installs `/Applications/AgentSnitch.app`, embeds and signs the optional Network Extension and host bridge, installs support binaries under `~/Library/Application Support/AgentSnitch/bin`, registers Claude Code hooks against the installed emitter, installs a per-user LaunchAgent for the daemon, starts the daemon, launches the app, and runs `doctor`.
 
-The installed LaunchAgent sets `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=0` and `AGENTSNITCH_DISABLE_LSOF=0` by default. That keeps the shipped/local-install path on semantic hooks plus unprivileged NetworkStatistics/`nettop` process-network correlation, with polling-based `lsof` as a fallback if `nettop` is unavailable. The Network Sensor is disabled by default in the app settings and must be enabled explicitly when you need the stronger event-driven Network Extension path.
+The installed LaunchAgent sets `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=0` and `AGENTSNITCH_DISABLE_LSOF=0` by default. That keeps the shipped/local-install path on semantic hooks plus unprivileged NetworkStatistics/`nettop` process-network correlation, with polling-based `lsof` as a fallback if `nettop` is unavailable. High Assurance is disabled by default and must be enabled explicitly when you need stronger OS-backed attribution.
 
 If a single Developer ID Application signing identity is available in the login keychain, `make create` uses it automatically; otherwise it falls back to ad hoc signing with the development entitlements. It also signs the installed support binaries so the LaunchAgent daemon appears as AgentSnitch instead of a generic unsigned `daemon` process.
 
@@ -80,9 +80,11 @@ Start the daemon:
 make run-daemon
 ```
 
+The source-run target sets `AGENTSNITCH_ALLOW_UNSIGNED_PEERS=1` because `go run` does not execute the installed signed daemon binary. Installed builds do not use that escape hatch; socket peers are expected to match AgentSnitch paths and the daemon's signing Team ID.
+
 In a separate terminal, run the Tauri UI from the built app bundle or with Tauri during development.
 
-For Network Extension verification, first open Settings in the app and turn **Disable Network Sensor** off, then disable the userland NetworkStatistics and `lsof` observers so `doctor` and the UI prove that the real extension is producing network events:
+For High Assurance verification, first open Settings in the app and turn **High Assurance mode** on, then disable the userland NetworkStatistics and `lsof` observers so `doctor` and the UI prove that the OS-backed path is producing network events:
 
 ```sh
 AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1 AGENTSNITCH_DISABLE_LSOF=1 make run-daemon
@@ -131,7 +133,7 @@ flowchart LR
     class UI ui
 ```
 
-The optional Network Sensor path is:
+The optional High Assurance path is:
 
 ```mermaid
 flowchart LR
@@ -141,12 +143,12 @@ flowchart LR
     classDef ui fill:#f6f0ff,stroke:#8c63d8,color:#21133d
 
     Settings["AgentSnitch Settings"]
-    NE["Opt-in macOS Network Extension"]
+    NE["High Assurance macOS sensor"]
     Socket["Daemon Unix socket"]
     Correlator["Daemon / Correlator"]
     UI["Tauri evidence UI"]
 
-    Settings -->|"user enables sensor"| NE
+    Settings -->|"user enables High Assurance"| NE
     NE -->|"metadata-only network_extension FlowEvent"| Socket
     Socket --> Correlator
     Correlator -->|"linked evidence"| UI
@@ -226,14 +228,14 @@ Minimum network flow fields, with optional `sni` shown when a destination host h
 
 By default, the daemon's real OS observer uses `"observer": "network_statistics"`. `doctor` reports which observer produced the latest network event. Installed LaunchAgents created by `make create` keep this path enabled unless `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1` is set. If NetworkStatistics/`nettop` is unavailable, the daemon falls back to `"observer": "lsof"` unless `AGENTSNITCH_DISABLE_LSOF=1` is also set.
 
-For a real Network Extension smoke test, enable the Network Sensor in Settings and then run:
+For a real High Assurance smoke test, enable High Assurance mode in Settings and then run:
 
 ```sh
 AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1 AGENTSNITCH_DISABLE_LSOF=1 make run-daemon
 make doctor
 ```
 
-The expected default healthy path is hooks OK, UI OK, latest network observer `network_statistics`, and linked evidence OK after real Claude Code activity creates a semantic/network pair. In the explicit Network Sensor smoke test, the latest network observer should become `network_extension`.
+The expected default healthy path is hooks OK, UI OK, latest network observer `network_statistics`, and linked evidence OK after real Claude Code activity creates a semantic/network pair. In the explicit High Assurance smoke test, the latest network observer should become `network_extension`.
 
 ## Check Health
 

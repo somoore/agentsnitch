@@ -181,22 +181,22 @@ func checkSourceContracts() []check {
 		"host config excludes local/private routine traffic by default",
 	))
 	checks = append(checks, containsCheck(
-		"UI NE opt-in default",
+		"High Assurance off by default",
 		tauriBackend,
 		"network_sensor_disabled: true",
-		"fresh settings keep Network Sensor off until the user enables it",
+		"fresh settings start in User Visibility until the user enables High Assurance",
 	))
 	checks = append(checks, containsCheck(
-		"Static UI NE opt-in default",
+		"Static UI High Assurance default",
 		uiDist,
-		"appSettings = { network_sensor_disabled: true }",
-		"static UI initializes the Network Sensor as disabled before settings load",
+		"high_assurance_default_enabled: false",
+		"static UI initializes High Assurance startup default as off before settings load",
 	))
 	checks = append(checks, containsCheck(
-		"Static UI NE advanced warning",
+		"Static UI High Assurance warning",
 		uiDist,
-		"Warning: this installs a macOS system network extension",
-		"settings labels Network Sensor as expert-only and warns about connectivity issues",
+		"High Assurance mode",
+		"settings expose High Assurance as the user-facing mode instead of raw Network Extension wording",
 	))
 	checks = append(checks, containsCheck(
 		"Tauri NE env kill switch",

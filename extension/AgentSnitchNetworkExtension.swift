@@ -43,6 +43,9 @@ struct FlowEvent: Codable {
     let local: String?
     let remote: String
     let sni: String?
+    let hostname: String?
+    let hostname_source: String?
+    let ptr_hostname: String?
     let `protocol`: String         // "tcp" | "udp" | ...
     let direction: String          // "out" | "in"
     let bytes_out: Int
@@ -321,6 +324,9 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
         var local: String?
         var remote: String
         var sni: String?
+        var hostname: String?
+        var hostnameSource: String?
+        var ptrHostname: String?
         let proto: String
         let direction: String
         var bytesOut: Int
@@ -455,7 +461,9 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
         var remote: String = "unknown"
         var local: String?
         var sni: String?
-        var remoteHostnameHint: String?
+        var hostname: String?
+        var hostnameSource: String?
+        let ptrHostname: String? = nil
         var protoStr = "tcp"
         let dirStr = directionString(flow.direction)
 
@@ -484,9 +492,12 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
                 }
             }
             if #available(macOS 11.0, *) {
-                remoteHostnameHint = hostnameHint(socketFlow.remoteHostname)
-                if remote == "unknown", let hostname = remoteHostnameHint {
-                    remote = hostname
+                hostname = hostnameHint(socketFlow.remoteHostname)
+                if let hostname {
+                    hostnameSource = "network_extension_remote_hostname"
+                    if remote == "unknown" {
+                        remote = hostname
+                    }
                 }
             }
         } else if !flow.description.isEmpty {
@@ -498,8 +509,8 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
         // local = ...
 
         // === Destination host hint / SNI (best effort, no MITM) ===
-        // remoteHostname is a display hint, not proof that TLS SNI was observed.
-        sni = remoteHostnameHint
+        // remoteHostname is a sensor hostname hint, not proof that TLS SNI was observed.
+        sni = nil
 
         let signing = (teamID != nil || bundleID != nil || processPath != nil)
             ? FlowEvent.SigningInfo(team: teamID, identifier: bundleID, path: processPath)
@@ -514,6 +525,9 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
             local: local,
             remote: remote,
             sni: sni,
+            hostname: hostname,
+            hostnameSource: hostnameSource,
+            ptrHostname: ptrHostname,
             proto: protoStr,
             direction: dirStr,
             bytesOut: 0,
@@ -543,6 +557,9 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
             local: observed.local,
             remote: observed.remote,
             sni: observed.sni,
+            hostname: observed.hostname,
+            hostname_source: observed.hostnameSource,
+            ptr_hostname: observed.ptrHostname,
             protocol: observed.proto,
             direction: observed.direction,
             bytes_out: observed.bytesOut,

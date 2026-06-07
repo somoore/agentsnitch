@@ -27,7 +27,8 @@ type check struct {
 }
 
 type appSettings struct {
-	NetworkSensorDisabled bool `json:"network_sensor_disabled"`
+	NetworkSensorDisabled       bool `json:"network_sensor_disabled"`
+	HighAssuranceDefaultEnabled bool `json:"high_assurance_default_enabled"`
 }
 
 func main() {
@@ -339,11 +340,11 @@ func observerDetail(ev event.NetworkFlowEvent) string {
 
 func checkNetworkExtension() check {
 	if networkSensorDisabledInSettings() {
-		return check{name: "Network Sensor", ok: true, status: "OFF", detail: "disabled in app settings; semantic hooks + userland process/network correlation are primary"}
+		return check{name: "High Assurance", ok: true, status: "OFF", detail: "User Visibility mode; semantic hooks + userland process/network correlation are primary"}
 	}
 	status, err := asruntime.ReadStatus()
 	if err != nil {
-		return check{name: "Network Sensor", ok: true, status: "WAIT", detail: "enabled in app settings, but no daemon status at " + asruntime.StatusPath()}
+		return check{name: "High Assurance", ok: true, status: "WAIT", detail: "requested in app settings, but no daemon status at " + asruntime.StatusPath()}
 	}
 	listed, listErr := systemExtensionListed()
 	return networkExtensionCheckForStatus(status, listed, listErr)
@@ -358,7 +359,7 @@ func networkSensorDisabledInSettings() bool {
 	if err := json.Unmarshal(raw, &settings); err != nil {
 		return true
 	}
-	return settings.NetworkSensorDisabled
+	return settings.NetworkSensorDisabled && !settings.HighAssuranceDefaultEnabled
 }
 
 func appSettingsPath() string {
@@ -372,32 +373,48 @@ func appSettingsPath() string {
 }
 
 func networkExtensionCheckForStatus(status asruntime.Status, listed bool, listErr error) check {
+	if status.ObserverMode == "high_assurance_active" {
+		detail := "OS-backed flow telemetry has been observed"
+		if len(status.ObserverSources) > 0 {
+			detail += "; active observers: " + strings.Join(status.ObserverSources, ", ")
+		}
+		return check{name: "High Assurance", ok: true, detail: detail}
+	}
+	if status.ObserverMode == "high_assurance_requested" {
+		if listErr != nil {
+			return check{name: "High Assurance", ok: true, status: "WARN", detail: "requested, but could not inspect system extension state: " + listErr.Error()}
+		}
+		if listed {
+			return check{name: "High Assurance", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first OS-backed flow"}
+		}
+		return check{name: "High Assurance", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
+	}
 	if status.LastNetwork != nil {
 		ev := *status.LastNetwork
 		event.NormalizeNetworkFlow(&ev)
 		if ev.Observer == "network_extension" {
-			return check{name: "Network Extension", ok: true, detail: formatAge(time.Since(ev.TS)) + " ago; real NE flow observed"}
+			return check{name: "High Assurance", ok: true, detail: formatAge(time.Since(ev.TS)) + " ago; real NE flow observed"}
 		}
 		if ev.Observer == "lsof" {
 			if listErr != nil {
-				return check{name: "Network Extension", ok: true, status: "WARN", detail: "latest network event is lsof fallback; could not inspect system extension state: " + listErr.Error()}
+				return check{name: "High Assurance", ok: true, status: "WARN", detail: "latest network event is lsof fallback; could not inspect system extension state: " + listErr.Error()}
 			}
 			if listed {
-				return check{name: "Network Extension", ok: true, status: "WAIT", detail: "system extension is listed, but latest network event is still lsof fallback"}
+				return check{name: "High Assurance", ok: true, status: "WAIT", detail: "system extension is listed, but latest network event is still lsof fallback"}
 			}
-			return check{name: "Network Extension", ok: true, status: "WARN", detail: "lsof fallback only; " + networkExtensionBundleID + " is not activated/listed"}
+			return check{name: "High Assurance", ok: true, status: "WARN", detail: "lsof fallback only; " + networkExtensionBundleID + " is not activated/listed"}
 		}
 		if ev.Observer != "" {
-			return check{name: "Network Extension", ok: true, status: "WARN", detail: "latest network event came from observer " + ev.Observer}
+			return check{name: "High Assurance", ok: true, status: "WARN", detail: "latest network event came from observer " + ev.Observer}
 		}
 	}
 	if listErr != nil {
-		return check{name: "Network Extension", ok: true, status: "WARN", detail: "could not inspect system extension state: " + listErr.Error()}
+		return check{name: "High Assurance", ok: true, status: "WARN", detail: "could not inspect system extension state: " + listErr.Error()}
 	}
 	if listed {
-		return check{name: "Network Extension", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first NE flow"}
+		return check{name: "High Assurance", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first NE flow"}
 	}
-	return check{name: "Network Extension", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
+	return check{name: "High Assurance", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
 }
 
 func systemExtensionListed() (bool, error) {

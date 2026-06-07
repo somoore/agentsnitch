@@ -149,10 +149,31 @@ func TestNetworkExtensionCheckReportsRealNEObserver(t *testing.T) {
 	}
 }
 
+func TestNetworkExtensionCheckPrefersActiveObserverMode(t *testing.T) {
+	status := asruntime.Status{
+		ObserverMode:    "high_assurance_active",
+		ObserverSources: []string{"network_extension", "network_statistics"},
+		LastNetwork: &event.NetworkFlowEvent{
+			Schema:    event.SchemaNetworkV0,
+			TS:        time.Now().UTC(),
+			Observer:  "network_statistics",
+			PID:       100,
+			Remote:    "93.184.216.34:443",
+			Protocol:  "tcp",
+			Direction: "out",
+			State:     "established",
+		},
+	}
+	got := networkExtensionCheckForStatus(status, true, nil)
+	if got.status != "" || !strings.Contains(got.detail, "OS-backed flow telemetry has been observed") {
+		t.Fatalf("unexpected check: %#v", got)
+	}
+}
+
 func TestNetworkSensorDisabledInSettingsDefaultsToDisabled(t *testing.T) {
 	t.Setenv("AGENTSNITCH_UI_SETTINGS", filepath.Join(t.TempDir(), "missing-settings.json"))
 	if !networkSensorDisabledInSettings() {
-		t.Fatal("missing settings should default Network Sensor to disabled")
+		t.Fatal("missing settings should default High Assurance to off")
 	}
 }
 
@@ -163,7 +184,7 @@ func TestNetworkSensorDisabledInSettingsReadsOptIn(t *testing.T) {
 	}
 	t.Setenv("AGENTSNITCH_UI_SETTINGS", path)
 	if networkSensorDisabledInSettings() {
-		t.Fatal("network_sensor_disabled=false should report Network Sensor enabled")
+		t.Fatal("network_sensor_disabled=false should report High Assurance requested")
 	}
 }
 

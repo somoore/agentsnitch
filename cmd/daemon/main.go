@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,6 +44,20 @@ const ReverseDNSCacheTTL = 6 * time.Hour
 const ReverseDNSNegativeCacheTTL = 30 * time.Minute
 
 var reverseDNSLookup = net.DefaultResolver.LookupAddr
+
+type codeIdentity struct {
+	TeamID string
+	CDHash string
+	AdHoc  bool
+}
+
+var peerCodeIdentity = resolveCodeIdentity
+
+var daemonCodeIdentity = struct {
+	sync.Mutex
+	loaded bool
+	value  codeIdentity
+}{}
 
 type reverseDNSCacheEntry struct {
 	name      string
@@ -352,7 +368,7 @@ func trustedSemanticSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
 	if !ok {
 		return false
 	}
-	return isTrustedEmitterExe(exe)
+	return isTrustedEmitterExe(exe) && trustedPeerSignature(exe)
 }
 
 // trustedNetworkSocketPeer reports whether the socket peer is the installed
@@ -362,7 +378,7 @@ func trustedNetworkSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
 	if !ok {
 		return false
 	}
-	return isTrustedNetworkSenderExe(exe)
+	return isTrustedNetworkSenderExe(exe) && trustedPeerSignature(exe)
 }
 
 // trustedControlSocketPeer reports whether the socket peer may send control
@@ -375,7 +391,118 @@ func trustedControlSocketPeer(pid int) bool {
 	if !ok {
 		return false
 	}
-	return isTrustedNetworkSenderExe(exe)
+	return isTrustedNetworkSenderExe(exe) && trustedPeerSignature(exe)
+}
+
+func trustedPeerSignature(exe string) bool {
+	identity, ok := peerCodeIdentity(exe)
+	if !ok {
+		if unsignedPeerTrustAllowed() {
+			log.Printf("TRUST_WEAK: accepting unsigned peer at %s because AGENTSNITCH_ALLOW_UNSIGNED_PEERS=1", exe)
+			return true
+		}
+		log.Printf("TRUST_INVALID: peer at %s has no verifiable code signature", exe)
+		return false
+	}
+	expectedTeam := trustedTeamID()
+	if expectedTeam == "" {
+		if identity.AdHoc && daemonAdHocIdentity() {
+			log.Printf("TRUST_WEAK: accepting ad-hoc signed installed peer at %s because daemon is also ad-hoc signed", exe)
+			return true
+		}
+		if unsignedPeerTrustAllowed() {
+			log.Printf("TRUST_WEAK: accepting signed peer at %s without daemon TeamIdentifier because AGENTSNITCH_ALLOW_UNSIGNED_PEERS=1", exe)
+			return true
+		}
+		log.Printf("TRUST_INVALID: daemon TeamIdentifier unavailable; refusing peer at %s", exe)
+		return false
+	}
+	if identity.TeamID != expectedTeam {
+		log.Printf("TRUST_INVALID: peer at %s has TeamIdentifier=%q, want %q", exe, identity.TeamID, expectedTeam)
+		return false
+	}
+	return true
+}
+
+func trustedTeamID() string {
+	if team := strings.TrimSpace(os.Getenv("AGENTSNITCH_TRUSTED_TEAM_ID")); team != "" {
+		return team
+	}
+	identity, ok := daemonIdentity()
+	if !ok {
+		return ""
+	}
+	return identity.TeamID
+}
+
+func daemonAdHocIdentity() bool {
+	if strings.TrimSpace(os.Getenv("AGENTSNITCH_TRUSTED_TEAM_ID")) != "" {
+		return false
+	}
+	identity, ok := daemonIdentity()
+	return ok && identity.AdHoc && identity.TeamID == ""
+}
+
+func daemonIdentity() (codeIdentity, bool) {
+	daemonCodeIdentity.Lock()
+	defer daemonCodeIdentity.Unlock()
+	if daemonCodeIdentity.loaded {
+		return daemonCodeIdentity.value, daemonCodeIdentity.value.TeamID != "" || daemonCodeIdentity.value.AdHoc
+	}
+	daemonCodeIdentity.loaded = true
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("TRUST_INVALID: could not resolve daemon executable: %v", err)
+		return codeIdentity{}, false
+	}
+	identity, ok := resolveCodeIdentity(exe)
+	if !ok {
+		log.Printf("TRUST_INVALID: daemon executable has no verifiable code signature: %s", exe)
+		return codeIdentity{}, false
+	}
+	daemonCodeIdentity.value = identity
+	return identity, true
+}
+
+func unsignedPeerTrustAllowed() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("AGENTSNITCH_ALLOW_UNSIGNED_PEERS")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func resolveCodeIdentity(path string) (codeIdentity, bool) {
+	if runtime.GOOS != "darwin" {
+		if unsignedPeerTrustAllowed() {
+			return codeIdentity{TeamID: "unsigned-dev"}, true
+		}
+		return codeIdentity{}, false
+	}
+	out, err := exec.Command("codesign", "-dvvv", path).CombinedOutput()
+	if err != nil {
+		return codeIdentity{}, false
+	}
+	return parseCodeIdentity(string(out))
+}
+
+func parseCodeIdentity(text string) (codeIdentity, bool) {
+	var identity codeIdentity
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "Signature="); ok {
+			identity.AdHoc = strings.EqualFold(strings.TrimSpace(value), "adhoc")
+			continue
+		}
+		if value, ok := strings.CutPrefix(line, "TeamIdentifier="); ok {
+			value = strings.TrimSpace(value)
+			if value != "" && value != "not set" {
+				identity.TeamID = value
+			}
+			continue
+		}
+		if value, ok := strings.CutPrefix(line, "CDHash="); ok {
+			identity.CDHash = strings.TrimSpace(value)
+		}
+	}
+	return identity, identity.TeamID != "" || identity.AdHoc
 }
 
 // agentSnitchSupportBins returns the canonical installed support-binary
@@ -513,7 +640,12 @@ func annotatedNetworkFlowForSession(nf event.NetworkFlowEvent, session *daemonSe
 }
 
 func enrichNetworkHostname(nf *event.NetworkFlowEvent) {
-	if nf == nil || nf.SNI != "" {
+	if nf == nil {
+		return
+	}
+	if nf.SNI != "" {
+		nf.Hostname = nf.SNI
+		nf.HostnameSource = "sni"
 		return
 	}
 	host := remoteHost(nf.Remote)
@@ -521,12 +653,40 @@ func enrichNetworkHostname(nf *event.NetworkFlowEvent) {
 		return
 	}
 	addr, err := netip.ParseAddr(host)
-	if err != nil || !publicAddrForDNS(addr) {
+	if err != nil {
+		if nf.Hostname == "" && looksLikeHostname(host) {
+			nf.Hostname = host
+			nf.HostnameSource = hostnameSourceForObserver(nf.Observer)
+		}
+		return
+	}
+	if !publicAddrForDNS(addr) {
 		return
 	}
 	if name := cachedReverseDNS(addr.String(), time.Now()); name != "" {
-		nf.SNI = name
+		nf.PTRHostname = name
 	}
+}
+
+func looksLikeHostname(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return false
+	}
+	for _, ch := range host {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func hostnameSourceForObserver(observer string) string {
+	observer = strings.ToLower(strings.TrimSpace(observer))
+	if observer == "" {
+		return "observer"
+	}
+	return observer
 }
 
 func remoteHost(endpoint string) string {
@@ -670,6 +830,9 @@ func (sessions *daemonSessions) shouldForwardUnattributedRawNetworkToUI(nf event
 
 func rawNetworkVisibilityKey(nf event.NetworkFlowEvent) string {
 	host := strings.TrimSpace(nf.SNI)
+	if host == "" {
+		host = strings.TrimSpace(nf.Hostname)
+	}
 	if host == "" {
 		host = remoteHost(nf.Remote)
 	}
@@ -1339,16 +1502,20 @@ func splitLsofEndpoint(name string) (local, remote string) {
 }
 
 type statusReporter struct {
-	mu     sync.Mutex
-	status asruntime.Status
+	mu      sync.Mutex
+	status  asruntime.Status
+	sources map[string]struct{}
 }
 
 func newStatusReporter() *statusReporter {
 	now := time.Now().UTC()
 	return &statusReporter{
+		sources: make(map[string]struct{}),
 		status: asruntime.Status{
 			DaemonStartedAt: now,
 			UpdatedAt:       now,
+			ObserverMode:    "user_visibility",
+			ObserverSources: []string{},
 		},
 	}
 }
@@ -1364,6 +1531,11 @@ func (r *statusReporter) recordNetwork(ev event.NetworkFlowEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.status.LastNetwork = &ev
+	if source := strings.TrimSpace(ev.Observer); source != "" {
+		r.sources[source] = struct{}{}
+	}
+	r.status.ObserverSources = sortedObserverSources(r.sources)
+	r.status.ObserverMode = observerModeForSources(r.status.ObserverSources)
 	r.writeLocked()
 }
 
@@ -1390,10 +1562,31 @@ func (r *statusReporter) write() {
 }
 
 func (r *statusReporter) writeLocked() {
+	if r.status.ObserverMode == "" {
+		r.status.ObserverMode = observerModeForSources(r.status.ObserverSources)
+	}
 	r.status.UpdatedAt = time.Now().UTC()
 	if err := asruntime.WriteStatus(r.status); err != nil {
 		log.Printf("status write failed: %v", err)
 	}
+}
+
+func sortedObserverSources(sources map[string]struct{}) []string {
+	out := make([]string, 0, len(sources))
+	for source := range sources {
+		out = append(out, source)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func observerModeForSources(sources []string) string {
+	for _, source := range sources {
+		if source == "network_extension" {
+			return "high_assurance_active"
+		}
+	}
+	return "user_visibility"
 }
 
 func forwardSubagentEventsToUI(events subagentEvents) {

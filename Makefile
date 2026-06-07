@@ -78,9 +78,10 @@ package-macos-dev:
 run-daemon:
 	@echo "==> Running daemon (listens on ~/.agentsnitch/events.sock by default)"
 	@echo "    Use AGENTSNITCH_SOCK=/tmp/agentsnitch-dev.sock for /tmp testing."
+	@echo "    Development run allows unsigned AgentSnitch peers; installed builds verify TeamIdentifier."
 	@echo "    In another shell: run Claude Code normally with hooks installed."
 	@mkdir -p bin
-	go run ./cmd/daemon
+	AGENTSNITCH_ALLOW_UNSIGNED_PEERS=1 go run ./cmd/daemon
 
 doctor:
 	go run ./cmd/doctor
