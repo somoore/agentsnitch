@@ -33,6 +33,7 @@ const LsofHookBurstPolls = 5
 const LsofHookBurstInterval = 250 * time.Millisecond
 const MaxDaemonSocketConnections = 64
 const DaemonSocketReadIdleTimeout = 30 * time.Second
+const DaemonSocketAckWriteTimeout = 150 * time.Millisecond
 const MaxDaemonSocketLineBytes = 2 * 1024 * 1024
 const SubagentDelegationWindow = 30 * time.Second
 const SubagentSessionWindow = 2 * time.Minute
@@ -223,10 +224,17 @@ func handleConn(ctx context.Context, c net.Conn, sessions *daemonSessions, statu
 			continue
 		}
 		dispatch(line, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests, pause)
+		ackSocketLine(c)
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
 		log.Printf("SOCKET_READ_INVALID: peer pid %d (hasPeerPID=%t) stream failed: %v", peerPID, hasPeerPID, err)
 	}
+}
+
+func ackSocketLine(c net.Conn) {
+	_ = c.SetWriteDeadline(time.Now().Add(DaemonSocketAckWriteTimeout))
+	_, _ = c.Write([]byte("ok\n"))
+	_ = c.SetWriteDeadline(time.Time{})
 }
 
 func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}, pause *pauseController) {

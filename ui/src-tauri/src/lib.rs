@@ -3337,13 +3337,24 @@ fn handle_unix_stream(
 fn peer_pid_for_unix_stream(stream: &UnixStream) -> Option<i32> {
     const SOL_LOCAL: libc::c_int = 0;
     const LOCAL_PEERPID: libc::c_int = 0x002;
+    const LOCAL_PEEREPID: libc::c_int = 0x003;
+    peer_pid_for_unix_stream_option(stream, SOL_LOCAL, LOCAL_PEERPID)
+        .or_else(|| peer_pid_for_unix_stream_option(stream, SOL_LOCAL, LOCAL_PEEREPID))
+}
+
+#[cfg(target_os = "macos")]
+fn peer_pid_for_unix_stream_option(
+    stream: &UnixStream,
+    level: libc::c_int,
+    option: libc::c_int,
+) -> Option<i32> {
     let mut pid: libc::c_int = 0;
     let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
     let rc = unsafe {
         libc::getsockopt(
             stream.as_raw_fd(),
-            SOL_LOCAL,
-            LOCAL_PEERPID,
+            level,
+            option,
             (&mut pid as *mut libc::c_int).cast(),
             &mut len,
         )
@@ -3945,8 +3956,8 @@ mod macos_ne_bridge {
             }
         }
 
+        #[cfg(debug_assertions)]
         if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
-            #[cfg(debug_assertions)]
             paths.push(
                 PathBuf::from(manifest_dir)
                     .join("..")

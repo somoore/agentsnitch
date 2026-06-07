@@ -31,8 +31,9 @@ func resolvePeerExePath(pid int) (string, bool) {
 }
 
 const (
-	solLocal     = 0
-	localPeerPID = 0x002
+	solLocal      = 0
+	localPeerPID  = 0x002
+	localPeerEPID = 0x003
 )
 
 func peerPIDForConn(conn net.Conn) (int, bool) {
@@ -48,6 +49,9 @@ func peerPIDForConn(conn net.Conn) (int, bool) {
 	var sysErr error
 	if err := raw.Control(func(fd uintptr) {
 		pid, sysErr = syscall.GetsockoptInt(int(fd), solLocal, localPeerPID)
+		if sysErr != nil || pid <= 0 {
+			pid, sysErr = syscall.GetsockoptInt(int(fd), solLocal, localPeerEPID)
+		}
 	}); err != nil || sysErr != nil || pid <= 0 {
 		return 0, false
 	}

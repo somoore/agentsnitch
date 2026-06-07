@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
@@ -33,6 +34,7 @@ var socketPath = func() string {
 const (
 	connectTimeout = 75 * time.Millisecond // keep emitter fast; fail open
 	writeTimeout   = 50 * time.Millisecond
+	ackTimeout     = 150 * time.Millisecond
 	maxHookPayload = 1 << 20 // 1 MiB; hook payloads should be compact metadata.
 )
 
@@ -474,6 +476,8 @@ func emitToSocket(sem event.SemanticEvent) {
 		log.Printf("emitter: socket write: %v", err)
 		return
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(ackTimeout))
+	_, _ = bufio.NewReader(conn).ReadString('\n')
 }
 
 // simpleTitle uppercases the first letter of each space-separated word.
