@@ -2673,21 +2673,10 @@ fn support_binary_path(env_key: &str, name: &str) -> Option<String> {
             }
         }
     }
-    if let Some(path) = executable_candidate(
-        std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin").join(name),
-    ) {
-        return Some(path);
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            if let Some(path) = executable_candidate(
-                std::path::PathBuf::from(home)
-                    .join("Library")
-                    .join("Application Support")
-                    .join("AgentSnitch")
-                    .join("bin")
-                    .join(name),
-            ) {
+    #[cfg(unix)]
+    {
+        for bin in agent_snitch_support_bins() {
+            if let Some(path) = executable_candidate(bin.join(name)) {
                 return Some(path);
             }
         }
@@ -3755,22 +3744,64 @@ fn agent_snitch_support_bins() -> Vec<std::path::PathBuf> {
             return vec![std::path::PathBuf::from(trimmed).join("bin")];
         }
     }
+    let home = std::env::var("HOME").ok();
+    let user_plist = home
+        .as_deref()
+        .filter(|home| !home.trim().is_empty())
+        .map(user_launch_agent_plist);
+    ordered_support_bins_for_launch_agents(
+        home.as_deref(),
+        user_plist.as_deref().and_then(modified_time),
+        modified_time(std::path::Path::new(
+            "/Library/LaunchAgents/com.somoore.agentsnitch.daemon.plist",
+        )),
+    )
+}
+
+#[cfg(unix)]
+fn ordered_support_bins_for_launch_agents(
+    home: Option<&str>,
+    user_plist_modified: Option<SystemTime>,
+    system_plist_modified: Option<SystemTime>,
+) -> Vec<std::path::PathBuf> {
+    let user_bin = home.filter(|home| !home.trim().is_empty()).map(|home| {
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("AgentSnitch")
+            .join("bin")
+    });
+    let system_bin = std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin");
+    let system_first = match (user_plist_modified, system_plist_modified) {
+        (Some(user), Some(system)) => system > user,
+        (None, Some(_)) => true,
+        _ => false,
+    };
+
     let mut bins = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            bins.push(
-                std::path::PathBuf::from(home)
-                    .join("Library")
-                    .join("Application Support")
-                    .join("AgentSnitch")
-                    .join("bin"),
-            );
-        }
+    if system_first {
+        bins.push(system_bin.clone());
     }
-    bins.push(std::path::PathBuf::from(
-        "/Library/Application Support/AgentSnitch/bin",
-    ));
+    if let Some(bin) = user_bin {
+        bins.push(bin);
+    }
+    if !system_first {
+        bins.push(system_bin);
+    }
     bins
+}
+
+#[cfg(unix)]
+fn user_launch_agent_plist(home: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(home)
+        .join("Library")
+        .join("LaunchAgents")
+        .join("com.somoore.agentsnitch.daemon.plist")
+}
+
+#[cfg(unix)]
+fn modified_time(path: &std::path::Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 #[cfg(unix)]
@@ -5528,6 +5559,44 @@ mod tests {
         status.hooks = vec![hook_status_fixture("PreToolUse", true, false)];
 
         assert!(hook_auto_update_plan(&status).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn support_bins_prefer_newer_system_launch_agent() {
+        let bins = ordered_support_bins_for_launch_agents(
+            Some("/Users/example"),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(2)),
+        );
+
+        assert_eq!(
+            bins[0],
+            std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin")
+        );
+        assert_eq!(
+            bins[1],
+            std::path::PathBuf::from("/Users/example/Library/Application Support/AgentSnitch/bin")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn support_bins_prefer_newer_user_launch_agent() {
+        let bins = ordered_support_bins_for_launch_agents(
+            Some("/Users/example"),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(2)),
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+        );
+
+        assert_eq!(
+            bins[0],
+            std::path::PathBuf::from("/Users/example/Library/Application Support/AgentSnitch/bin")
+        );
+        assert_eq!(
+            bins[1],
+            std::path::PathBuf::from("/Library/Application Support/AgentSnitch/bin")
+        );
     }
 
     #[test]
