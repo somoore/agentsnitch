@@ -111,7 +111,5 @@ notarytool*.json
 *.tmp
 Session.vim
 
-# Release doc kept local-only (untracked)
-docs/release.md
 docs/creature-animation-rive-plan.md
 docs/creature-rive-editor-guide.md
