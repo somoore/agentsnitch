@@ -1550,11 +1550,95 @@ func TestTrustedSocketPeersUseExecutablePath(t *testing.T) {
 	if !trustedNetworkSocketPeer(102, nil) {
 		t.Fatal("installed UI should be trusted for network forwarding")
 	}
+	if !trustedControlSocketPeer(102) {
+		t.Fatal("installed UI should be trusted for control messages")
+	}
 	if trustedNetworkSocketPeer(103, nil) {
 		t.Fatal("impostor outside the app bundle must NOT be trusted")
 	}
+	if trustedControlSocketPeer(103) {
+		t.Fatal("impostor outside the app bundle must NOT be trusted for control")
+	}
 	if trustedSemanticSocketPeer(999, nil) {
 		t.Fatal("unresolvable peer PID must NOT be trusted")
+	}
+}
+
+func TestTrustedControlSocketPeerRejectsNetworkExtension(t *testing.T) {
+	t.Setenv("AGENTSNITCH_APP_PATH", "/Applications/AgentSnitch.app")
+	t.Setenv("AGENTSNITCH_TRUSTED_TEAM_ID", "ABCDE12345")
+
+	origExe := peerExePath
+	t.Cleanup(func() { peerExePath = origExe })
+	peerExePath = func(pid int) (string, bool) {
+		switch pid {
+		case 200:
+			return "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui", true
+		case 201:
+			return "/Library/SystemExtensions/AB12CD34-0000/com.somoore.agentsnitch.network-extension.systemextension/Contents/MacOS/AgentSnitchNetworkExtension", true
+		default:
+			return "", false
+		}
+	}
+
+	origIdentity := peerCodeIdentity
+	t.Cleanup(func() { peerCodeIdentity = origIdentity })
+	peerCodeIdentity = func(string) (codeIdentity, bool) {
+		return codeIdentity{TeamID: "ABCDE12345", CDHash: "abc"}, true
+	}
+
+	if !trustedControlSocketPeer(200) {
+		t.Fatal("UI binary should be trusted for daemon control")
+	}
+	if !trustedNetworkSocketPeer(201, nil) {
+		t.Fatal("Network Extension should remain trusted for network forwarding")
+	}
+	if trustedControlSocketPeer(201) {
+		t.Fatal("Network Extension must not be trusted for pause/resume control")
+	}
+}
+
+func TestSocketIngressRejectsMissingPeerIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("AGENTSNITCH_STATUS", filepath.Join(tmp, "status.json"))
+	t.Setenv("AGENTSNITCH_TRANSCRIPTS_DIR", filepath.Join(tmp, "sessions"))
+
+	sessions := newDaemonSessions()
+	status := newStatusReporter()
+	transcripts := asruntime.NewTranscriptWriter()
+	base := time.Now().UTC()
+
+	handleSocketSemantic(semanticForSessionTest("socket-no-peer", 123, 122, base), 0, false, sessions, status, transcripts, nil)
+	if got := sessions.list(); len(got) != 0 {
+		t.Fatalf("socket semantic without peer creds created sessions: %+v", got)
+	}
+
+	handleSocketNetwork(networkFlowForSessionTest(123, 122, "192.0.2.1:50000", base), 0, false, sessions, status, transcripts)
+	if got := sessions.pendingCount(); got != 0 {
+		t.Fatalf("socket network without peer creds created pending flows: %d", got)
+	}
+}
+
+func TestTrustedSemanticHookOriginRequiresCLIAncestor(t *testing.T) {
+	semantic := semanticForSessionTest("socket-origin", 300, 200, time.Now().UTC())
+	processes := map[int]correlator.ProcessInfo{
+		100: {PID: 100, PPID: 1, Name: "/opt/homebrew/bin/claude"},
+		200: {PID: 200, PPID: 100, Name: "/bin/sh -c agentsnitch-emitter"},
+		300: {PID: 300, PPID: 200, Name: "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter"},
+	}
+	if !trustedSemanticHookOrigin(semantic, 300, processes) {
+		t.Fatal("emitter under a CLI agent ancestor should be accepted")
+	}
+}
+
+func TestTrustedSemanticHookOriginRejectsUnrelatedShell(t *testing.T) {
+	semantic := semanticForSessionTest("socket-origin", 300, 200, time.Now().UTC())
+	processes := map[int]correlator.ProcessInfo{
+		200: {PID: 200, PPID: 1, Name: "/bin/zsh"},
+		300: {PID: 300, PPID: 200, Name: "/Users/dev/Library/Application Support/AgentSnitch/bin/emitter"},
+	}
+	if trustedSemanticHookOrigin(semantic, 300, processes) {
+		t.Fatal("emitter without a CLI agent ancestor must not be accepted as hook-origin evidence")
 	}
 }
 

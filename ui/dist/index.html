@@ -2508,6 +2508,10 @@
         .replaceAll("'", '&#039;');
     }
 
+    function jsStringArg(value) {
+      return escapeHtml(JSON.stringify(String(value ?? '')));
+    }
+
     function displayTimestamp(value) {
       const raw = String(value || '');
       const isoTime = raw.match(/T(\d{2}:\d{2}:\d{2})/);
@@ -2636,7 +2640,7 @@
       if (!agent || !agent.id) return '';
       const label = agentLabel(agent);
       const type = agentType(agent) === 'sub' ? 'sub' : 'main';
-      return `<button class="agent-badge ${escapeHtml(type)}" title="Filter to ${escapeHtml(label)}" onclick="filterAgent('${escapeHtml(agent.id)}')">${escapeHtml(label)}</button>`;
+      return `<button class="agent-badge ${escapeHtml(type)}" title="Filter to ${escapeHtml(label)}" onclick="filterAgent(${jsStringArg(agent.id)})">${escapeHtml(label)}</button>`;
     }
 
     function filterAgent(agentId) {
@@ -3696,7 +3700,7 @@
       const meta = [pid ? `PID ${pid}` : 'PID inferred', method, eventCount === 1 ? '1 event' : `${eventCount} events`].filter(Boolean).join(' · ');
       const children = expanded ? renderCompactSubagents(group) : '';
       return `<div class="agent-main-group">
-        <button class="agent-main-summary${expandedClass}${activeClass}" title="${escapeHtml(agentLabel(main))}" onclick="toggleMainGroup('${escapeHtml(groupId)}')">
+        <button class="agent-main-summary${expandedClass}${activeClass}" title="${escapeHtml(agentLabel(main))}" onclick="toggleMainGroup(${jsStringArg(groupId)})">
           <span class="agent-main-copy">
             <span class="agent-main-name"><span>Main</span><span class="agent-child-count">(${childCount})</span></span>
             <span class="agent-main-meta">${escapeHtml(meta)}</span>
@@ -3716,7 +3720,7 @@
         const pid = agentPid(agent);
         const activeClass = activeAgentFilter === agent.id ? ' active' : '';
         const meta = [pid ? `PID ${pid}` : agentMethodLabel(agent), count ? `${count}` : '0'].filter(Boolean).join(' · ');
-        return `<button class="agent-subagent-chip${activeClass}" title="${escapeHtml(agentLabel(agent))}" onclick="showAgentDetail('${escapeHtml(agent.id)}')">
+        return `<button class="agent-subagent-chip${activeClass}" title="${escapeHtml(agentLabel(agent))}" onclick="showAgentDetail(${jsStringArg(agent.id)})">
           <span>${escapeHtml(agentShortName(agent))}</span><small>${escapeHtml(meta)}</small>
         </button>`;
       }).join('');
@@ -3811,13 +3815,13 @@
         // <button> (Inspect, or a child subagent row) so those keep their own
         // action — event.target.closest('button') catches them before the card
         // handler runs, preventing a double-fire.
-        return `${header}<section class="agent-tree-group" role="button" tabindex="0" data-card-main="${escapeHtml(main.id)}" title="Inspect ${escapeHtml(baseLabel)}" onclick="if (!event.target.closest('button')) showAgentDetail('${escapeHtml(main.id)}')" onkeydown="if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) { event.preventDefault(); showAgentDetail('${escapeHtml(main.id)}'); }">
+        return `${header}<section class="agent-tree-group" role="button" tabindex="0" data-card-main="${escapeHtml(main.id)}" title="Inspect ${escapeHtml(baseLabel)}" onclick="if (!event.target.closest('button')) showAgentDetail(${jsStringArg(main.id)})" onkeydown="if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) { event.preventDefault(); showAgentDetail(${jsStringArg(main.id)}); }">
           <div class="agent-tree-main">
             <div>
               <strong title="${escapeHtml(String(main.cwd || ''))}">${escapeHtml(mainLabel)}</strong>
               <span>${escapeHtml(mainMeta)}</span>
             </div>
-            <button class="mini-button" onclick="showAgentDetail('${escapeHtml(main.id)}')">Inspect</button>
+            <button class="mini-button" onclick="showAgentDetail(${jsStringArg(main.id)})">Inspect</button>
           </div>
           ${children}
         </section>`;
@@ -3837,7 +3841,7 @@
       // Full subagent name/prompt on hover (T3); the visible name stays single-line
       // and truncates via CSS so long task descriptions don't wrap.
       const fullName = String(agent.name || agentShortName(agent));
-      return `<button class="agent-tree-child${activeClass}" title="${escapeHtml(fullName)}" onclick="showAgentDetail('${escapeHtml(agent.id)}')">
+      return `<button class="agent-tree-child${activeClass}" title="${escapeHtml(fullName)}" onclick="showAgentDetail(${jsStringArg(agent.id)})">
         <span class="agent-card-body">
           <span class="agent-card-name">${escapeHtml(agentShortName(agent))}</span>
           <span class="agent-card-meta">${escapeHtml(meta)}</span>
@@ -4693,7 +4697,7 @@
       const hasUsefulReasonChoice = reasonEntries.length > 1;
       if (!hasUsefulReasonChoice && !activeReasonFilter && !activeAgentFilter) return '';
       const reasonRows = hasUsefulReasonChoice
-        ? reasonEntries.map(([reason, count]) => `<button class="attention-chip ${activeReasonFilter === reason ? 'active' : ''}" onclick="filterAttentionReason('${escapeHtml(reason)}')" title="Show ${escapeHtml(reason)} rows">
+        ? reasonEntries.map(([reason, count]) => `<button class="attention-chip ${activeReasonFilter === reason ? 'active' : ''}" onclick="filterAttentionReason(${jsStringArg(reason)})" title="Show ${escapeHtml(reason)} rows">
             <span>${escapeHtml(reason)}</span><strong>${count}</strong>
           </button>`).join('')
         : '';
@@ -4754,7 +4758,7 @@
               <div class="agent-lane-name">${escapeHtml(agentShortName(agent))}</div>
               <div class="agent-lane-meta">${escapeHtml(meta)}</div>
             </div>
-            <button class="agent-lane-action" onclick="filterAgent('${escapeHtml(agent.id)}')">Inspect</button>
+            <button class="agent-lane-action" onclick="filterAgent(${jsStringArg(agent.id)})">Inspect</button>
           </div>
           <div class="agent-lane-events">${empty}</div>
         </section>`;
@@ -4932,7 +4936,7 @@
             <span class="network-group-title" title="${escapeHtml(destinationLabel)}">Routine network traffic · ${count} ${escapeHtml(pluralize(count, 'flow'))}</span>
             <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
             <span class="network-group-meta" title="${escapeHtml(destinationLabel)}">${escapeHtml(primaryDestination)} ${memory}</span>
-            <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">Details</button>
+            <button class="mini-button" onclick="toggleKnownGroup(${jsStringArg(key)})">Details</button>
           </div>
           <div class="network-group-meta">${escapeHtml(sourceState)} · grouped because destination/category already look routine</div>
           ${expanded ? `<div class="network-group-members">${memberRows || '<div class="network-group-meta">No member details</div>'}</div>` : ''}
@@ -5044,8 +5048,8 @@
             <span class="category-pill" title="${escapeHtml(categoryExplanation(category))}">${escapeHtml(categoryDisplayName(category))}</span>
             <span class="risk-chip low">Risk low</span>
             <span class="evidence-actions">
-              <button class="mini-button" onclick="toggleKnownGroup('${escapeHtml(key)}')">Details</button>
-              <button class="mini-button advanced-only" title="Quiet this destination category" onclick="quietCategory('${escapeHtml(category)}')">Quiet</button>
+              <button class="mini-button" onclick="toggleKnownGroup(${jsStringArg(key)})">Details</button>
+              <button class="mini-button advanced-only" title="Quiet this destination category" onclick="quietCategory(${jsStringArg(category)})">Quiet</button>
               <button class="mini-button" onclick="doExport()">Evidence Pack</button>
             </span>
           </div>

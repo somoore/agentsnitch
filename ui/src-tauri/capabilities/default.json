@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default permissions for AgentSnitch (tray, window, events, menu)",
-  "windows": ["*"],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:tray:default",

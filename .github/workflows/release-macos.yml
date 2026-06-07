@@ -39,8 +39,15 @@ jobs:
           fetch-depth: 0
 
       - name: Validate release ref
+        env:
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${RELEASE_GPG_PUBLIC_KEY:-}" ]; then
+            echo "::error::Missing required secret/env: RELEASE_GPG_PUBLIC_KEY"
+            exit 1
+          fi
+          printf '%s' "$RELEASE_GPG_PUBLIC_KEY" | gpg --batch --import
           case "$TAG_NAME" in
             v*) ;;
             *)
@@ -63,6 +70,11 @@ jobs:
             echo "::error::$TAG_NAME must point to a commit reachable from origin/main"
             exit 1
           fi
+          if [ "$(git cat-file -t "refs/tags/$TAG_NAME")" != "tag" ]; then
+            echo "::error::$TAG_NAME must be an annotated, signed tag"
+            exit 1
+          fi
+          git verify-tag "$TAG_NAME"
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -77,6 +89,15 @@ jobs:
           components: clippy, rustfmt
           cache: false
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version 2.11.2 --locked
+
+      - name: Build Go support tools
+        run: make build
+
+      - name: Build Tauri app bundle
+        run: cd ui && cargo tauri build
+
       - name: Validate required release secrets
         env:
           APP_P12: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
@@ -88,6 +109,7 @@ jobs:
           APPLE_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLE_KEY_P8: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           missing=0
@@ -102,7 +124,8 @@ jobs:
             EXT_PROFILE \
             APPLE_KEY_ID \
             APPLE_ISSUER_ID \
-            APPLE_KEY_P8; do
+            APPLE_KEY_P8 \
+            RELEASE_GPG_PUBLIC_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required secret/env: $name"
               missing=1
@@ -129,8 +152,8 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$APP_P12_PATH" -k "$KEYCHAIN_PATH" -P "$APP_P12_PASSWORD" -A -t cert -f pkcs12
-          security import "$INSTALLER_P12_PATH" -k "$KEYCHAIN_PATH" -P "$INSTALLER_P12_PASSWORD" -A -t cert -f pkcs12
+          security import "$APP_P12_PATH" -k "$KEYCHAIN_PATH" -P "$APP_P12_PASSWORD" -t cert -f pkcs12 -T /usr/bin/codesign -T /usr/bin/productsign
+          security import "$INSTALLER_P12_PATH" -k "$KEYCHAIN_PATH" -P "$INSTALLER_P12_PASSWORD" -t cert -f pkcs12 -T /usr/bin/codesign -T /usr/bin/productsign
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -149,15 +172,6 @@ jobs:
           printf '%s' "$EXT_PROFILE" | base64 -D > "$RUNNER_TEMP/agentsnitch-extension.provisionprofile"
           printf '%s' "$APPLE_KEY_P8" | base64 -D > "$RUNNER_TEMP/AuthKey_${APPLE_KEY_ID}.p8"
           chmod 600 "$RUNNER_TEMP/AuthKey_${APPLE_KEY_ID}.p8"
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version 2.11.2 --locked
-
-      - name: Build Go support tools
-        run: make build
-
-      - name: Build Tauri app bundle
-        run: cd ui && cargo tauri build
 
       - name: Embed extension and sign app bundle
         env:
@@ -207,7 +221,7 @@ jobs:
           EOF
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" "$pkg" "$checksum" --clobber
-          else
-            gh release create "$TAG_NAME" "$pkg" "$checksum" --verify-tag --title "AgentSnitch $TAG_NAME" --notes-file "$notes" --prerelease
+            echo "::error::Release $TAG_NAME already exists; refusing to overwrite signed artifacts"
+            exit 1
           fi
+          gh release create "$TAG_NAME" "$pkg" "$checksum" --verify-tag --title "AgentSnitch $TAG_NAME" --notes-file "$notes" --prerelease

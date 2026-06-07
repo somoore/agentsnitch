@@ -12,6 +12,7 @@ tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-pn
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+libc = "0.2"
 
 # Future (when implementing the XPC / activation bridge for the Network Extension):
 # [target.'cfg(target_os = "macos")'.dependencies]

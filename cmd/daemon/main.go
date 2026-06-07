@@ -33,12 +33,16 @@ const LsofHookBurstPolls = 5
 const LsofHookBurstInterval = 250 * time.Millisecond
 const MaxDaemonSocketConnections = 64
 const DaemonSocketReadIdleTimeout = 30 * time.Second
+const DaemonSocketAckWriteTimeout = 150 * time.Millisecond
+const MaxDaemonSocketLineBytes = 2 * 1024 * 1024
 const SubagentDelegationWindow = 30 * time.Second
 const SubagentSessionWindow = 2 * time.Minute
 const SubagentBurstWindow = 15 * time.Second
 const SubagentBurstThreshold = 3
 const SidechainDiscoveryInterval = 10 * time.Second
 const SidechainDiscoveryWindow = 6 * time.Hour
+const SidechainDiscoveryMaxFiles = 128
+const SidechainTranscriptMaxBytes = 4 * 1024 * 1024
 const ReverseDNSLookupTimeout = 150 * time.Millisecond
 const ReverseDNSCacheTTL = 6 * time.Hour
 const ReverseDNSNegativeCacheTTL = 30 * time.Minute
@@ -209,6 +213,7 @@ func handleConn(ctx context.Context, c net.Conn, sessions *daemonSessions, statu
 	}
 	refreshReadDeadline()
 	sc := bufio.NewScanner(c)
+	sc.Buffer(make([]byte, 64*1024), MaxDaemonSocketLineBytes)
 	for sc.Scan() {
 		refreshReadDeadline()
 		if ctx.Err() != nil {
@@ -219,8 +224,17 @@ func handleConn(ctx context.Context, c net.Conn, sessions *daemonSessions, statu
 			continue
 		}
 		dispatch(line, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests, pause)
+		ackSocketLine(c)
 	}
-	_ = sc.Err()
+	if err := sc.Err(); err != nil && ctx.Err() == nil {
+		log.Printf("SOCKET_READ_INVALID: peer pid %d (hasPeerPID=%t) stream failed: %v", peerPID, hasPeerPID, err)
+	}
+}
+
+func ackSocketLine(c net.Conn) {
+	_ = c.SetWriteDeadline(time.Now().Add(DaemonSocketAckWriteTimeout))
+	_, _ = c.Write([]byte("ok\n"))
+	_ = c.SetWriteDeadline(time.Time{})
 }
 
 func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}, pause *pauseController) {
@@ -261,7 +275,7 @@ func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSession
 	}
 	var se event.SemanticEvent
 	if json.Unmarshal(raw, &se) == nil && (se.PID != 0 || se.Tool != "" || strings.Contains(line, "agentsnitch.semantic")) {
-		handleSemantic(se, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests)
+		handleSocketSemantic(se, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests)
 		return
 	}
 	// fallback try network anyway
@@ -271,6 +285,34 @@ func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSession
 		return
 	}
 	log.Printf("UNRECOGNIZED LINE: %s", line)
+}
+
+func handleSocketSemantic(se event.SemanticEvent, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}) {
+	if !hasPeerPID || peerPID <= 0 {
+		log.Printf("SEMANTIC_INVALID: socket peer identity unavailable (pid=%d hasPeerPID=%t); rejecting semantic event", peerPID, hasPeerPID)
+		return
+	}
+	processes := snapshotProcessTable()
+	if !trustedSemanticHookOrigin(se, peerPID, processes) {
+		log.Printf("SEMANTIC_INVALID: socket peer pid %d is the emitter, but no CLI agent ancestor was observed; rejecting semantic event", peerPID)
+		return
+	}
+	handleSemantic(se, peerPID, hasPeerPID, sessions, status, transcripts, lsofBurstRequests)
+}
+
+func trustedSemanticHookOrigin(_ event.SemanticEvent, peerPID int, processes map[int]correlator.ProcessInfo) bool {
+	if peerPID <= 0 || len(processes) == 0 {
+		return false
+	}
+	if proc, ok := processes[peerPID]; ok && isTrustedHookInvoker(proc) {
+		return true
+	}
+	return hasProcessAncestor(processes, peerPID, isTrustedHookInvoker)
+}
+
+func isTrustedHookInvoker(proc correlator.ProcessInfo) bool {
+	_, kind, ok := correlator.IdentifyAgentProcess(proc.Name)
+	return ok && strings.HasSuffix(kind, "_cli")
 }
 
 func handleSemantic(se event.SemanticEvent, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}) {
@@ -334,17 +376,18 @@ func handleSemantic(se event.SemanticEvent, peerPID int, hasPeerPID bool, sessio
 }
 
 func handleSocketNetwork(nf event.NetworkFlowEvent, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) {
+	if !hasPeerPID || peerPID <= 0 {
+		log.Printf("NETFLOW_INVALID: socket peer identity unavailable (pid=%d hasPeerPID=%t); rejecting network event", peerPID, hasPeerPID)
+		return
+	}
 	var processes map[int]correlator.ProcessInfo
-	if hasPeerPID && peerPID > 0 {
-		processes = snapshotProcessTable()
-		if !trustedNetworkSocketPeer(peerPID, processes) {
-			log.Printf("NETFLOW_INVALID: socket peer pid %d is not an AgentSnitch network sender", peerPID)
-			return
-		}
+	processes = snapshotProcessTable()
+	if !trustedNetworkSocketPeer(peerPID, processes) {
+		log.Printf("NETFLOW_INVALID: socket peer pid %d is not an AgentSnitch network sender", peerPID)
+		return
 	}
 	// Reuse the snapshot taken for the trust check above so handleNetwork does
-	// not take a second one. When there was no peer PID to verify, processes is
-	// nil and handleNetwork falls back to snapshotting itself.
+	// not take a second one.
 	handleNetworkWithProcesses(nf, processes, sessions, status, transcripts)
 }
 
@@ -382,16 +425,15 @@ func trustedNetworkSocketPeer(pid int, _ map[int]correlator.ProcessInfo) bool {
 }
 
 // trustedControlSocketPeer reports whether the socket peer may send control
-// messages (pause/resume). Only the installed AgentSnitch UI drives Pause, so we
-// reuse the network-sender path validator (which accepts the installed .app
-// bundle). The Network Extension store path also passes, which is harmless: the
-// NE never sends control messages.
+// messages (pause/resume). Only the installed AgentSnitch UI drives Pause, so
+// control trust is narrower than network-sender trust and deliberately excludes
+// the Network Extension store path.
 func trustedControlSocketPeer(pid int) bool {
 	exe, ok := peerExePath(pid)
 	if !ok {
 		return false
 	}
-	return isTrustedNetworkSenderExe(exe) && trustedPeerSignature(exe)
+	return isTrustedControlSenderExe(exe) && trustedPeerSignature(exe)
 }
 
 func trustedPeerSignature(exe string) bool {
@@ -476,7 +518,9 @@ func resolveCodeIdentity(path string) (codeIdentity, bool) {
 		}
 		return codeIdentity{}, false
 	}
-	out, err := exec.Command("codesign", "-dvvv", path).CombinedOutput()
+	cmd := exec.Command("/usr/bin/codesign", "-dvvv", path)
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return codeIdentity{}, false
 	}
@@ -576,6 +620,18 @@ func isTrustedNetworkSenderExe(exe string) bool {
 		return true
 	}
 	return false
+}
+
+func isTrustedControlSenderExe(exe string) bool {
+	exe = filepath.Clean(strings.TrimSpace(exe))
+	if exe == "" {
+		return false
+	}
+	app := filepath.Clean(agentSnitchAppPath())
+	if app == "" {
+		return false
+	}
+	return exe == filepath.Join(app, "Contents", "MacOS", "agentsnitch-ui")
 }
 
 func handleNetwork(nf event.NetworkFlowEvent, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) {
@@ -1381,7 +1437,8 @@ func shouldAppendNetworkRefreshTranscript(last map[string]time.Time, key string,
 
 func snapshotEstablishedTCP() ([]event.NetworkFlowEvent, error) {
 	processes := snapshotProcessTable()
-	cmd := exec.Command("lsof", "-nP", "-F", "pcnT", "-iTCP", "-sTCP:ESTABLISHED")
+	cmd := exec.Command("/usr/sbin/lsof", "-nP", "-F", "pcnT", "-iTCP", "-sTCP:ESTABLISHED")
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
@@ -1441,7 +1498,9 @@ func snapshotEstablishedTCP() ([]event.NetworkFlowEvent, error) {
 }
 
 func snapshotProcessTable() map[int]correlator.ProcessInfo {
-	out, err := exec.Command("ps", "-axo", "pid=,ppid=,lstart=,command=").Output()
+	cmd := exec.Command("/bin/ps", "-axo", "pid=,ppid=,lstart=,command=")
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
