@@ -388,6 +388,7 @@ struct ClaudeHooksStatus {
     all_up_to_date: bool,
     needs_update: bool,
     hooks: Vec<ClaudeHookStatus>,
+    #[serde(default)]
     keep_hooks_up_to_date: bool,
     #[serde(default)]
     detail: String,
