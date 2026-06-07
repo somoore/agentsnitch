@@ -1,7 +1,7 @@
 # AgentSnitch Makefile
 # Targets for development, building, and packaging.
 
-.PHONY: help create build build-emitter build-daemon build-doctor build-hookctl build-neready build-extension package-macos-dev build-ui install uninstall clean test fmt lint run-daemon doctor ne-ready ne-typecheck dev-receiver
+.PHONY: help create build build-emitter build-daemon build-doctor build-hookctl build-neready build-extension package-macos-dev build-ui install uninstall clean test fmt lint run-daemon doctor ne-ready ne-typecheck dev-receiver release-gpg-check
 
 help:
 	@echo "AgentSnitch development targets"
@@ -25,6 +25,7 @@ help:
 	@echo "  make test              - Run unit tests"
 	@echo "  make fmt               - Format code"
 	@echo "  make lint              - Lint (golangci, clippy, etc.)"
+	@echo "  make release-gpg-check - Verify release GPG secret/config prerequisites"
 	@echo "  make clean             - Remove build artifacts"
 	@echo ""
 	@echo "  AGENTSNITCH_SOCK=/tmp/agentsnitch-dev.sock make run-daemon   # for dev socket"
@@ -70,6 +71,14 @@ build-neready:
 build-extension:
 	@echo "==> Building Network Extension bundle scaffold and host bridge dylib"
 	extension/build-extension.sh
+
+release-gpg-check:
+	@echo "==> Checking release GPG prerequisites"
+	@gh secret list --env release-signing | grep -q '^RELEASE_GPG_PUBLIC_KEY[[:space:]]' || { echo "Missing GitHub environment secret: release-signing/RELEASE_GPG_PUBLIC_KEY" >&2; exit 1; }
+	@test "$$(git config --get gpg.format)" = "openpgp" || { echo "Expected git config gpg.format=openpgp" >&2; exit 1; }
+	@test -n "$$(git config --get user.signingkey)" || { echo "Missing git config user.signingkey" >&2; exit 1; }
+	@gpg --batch --list-secret-keys "$$(git config --get user.signingkey)" >/dev/null || { echo "Configured GPG signing key is not available locally" >&2; exit 1; }
+	@echo "Release GPG prerequisites look ready."
 
 package-macos-dev:
 	@echo "==> Packaging local macOS app with embedded System Extension"

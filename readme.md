@@ -52,6 +52,10 @@ make build
 make run-daemon
 ```
 
+Release builds are created from annotated GPG-signed tags. See
+[Release Process](docs/release.md) for the release key setup, GitHub
+`release-signing` environment secret, and tag-cutting flow.
+
 ## How It Works
 
 ```mermaid
