@@ -8,7 +8,7 @@ AgentSnitch is a local-first macOS pre-alpha. The current release path is built 
 
 ## Install The Latest Pre-Alpha
 
-Download [AgentSnitch v0.1.0-pre-alpha.4](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.4) and install the macOS `.pkg`.
+Download [AgentSnitch v0.1.0-pre-alpha.5](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.5) and install the macOS `.pkg`.
 
 The installer includes `AgentSnitch.app`, the local daemon, support tools, and LaunchAgent registration. Claude Code hook tooling is included, but hooks are not installed automatically; open AgentSnitch Settings -> Hooks to install or update them explicitly. High Assurance mode is available as an optional macOS system-extension-backed path, but User Visibility mode is the default unless explicitly changed in app Settings.
 

@@ -1786,8 +1786,11 @@
 	      display: grid;
 	    }
 	    .settings-modal {
-	      width: min(720px, 100%);
+	      width: min(720px, calc(100vw - 36px));
       max-height: min(720px, calc(100vh - 36px));
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      min-width: 0;
 	      border: 1px solid var(--border);
 	      border-radius: 8px;
 	      background: #202022;
@@ -1813,6 +1816,7 @@
       gap: 10px;
       padding: 12px;
       overflow: auto;
+      min-height: 0;
     }
     .settings-tabs {
       display: flex;
@@ -1832,6 +1836,7 @@
     .settings-pane {
       display: none;
       gap: 10px;
+      min-height: 0;
     }
     .settings-pane.active {
       display: grid;
@@ -1890,6 +1895,7 @@
       flex-wrap: wrap;
       justify-content: flex-end;
       gap: 8px;
+      min-width: 0;
     }
     .hook-toolbar select {
       min-height: 24px;
@@ -2035,8 +2041,15 @@
       cursor: pointer;
       flex-shrink: 0;
     }
-    button:hover { background: #4a4a4c; }
+	    button:hover { background: #4a4a4c; }
     button.primary { background: var(--accent); border-color: var(--accent); }
+    button:disabled,
+    input:disabled,
+    select:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    button:disabled:hover { background: #3a3a3c; }
     /* Pause/Live toggle: Live = neutral; Paused = loud amber so it reads as a held,
        security-relevant state, not just another footer button. */
     .pause-toggle {
@@ -2538,16 +2551,16 @@
 	              <select id="hookAgentSelect" onchange="setHookAgent(this.value)" title="Choose coding agent hook target">
 	                <option value="all">All</option>
 	              </select>
-	              <button onclick="selectAllHooks(true)">Select All</button>
-	              <button onclick="selectAllHooks(false)">Select None</button>
-	              <button onclick="refreshHookStatus()">Refresh</button>
+	              <button id="hookSelectAllButton" onclick="selectAllHooks(true)">Select All</button>
+	              <button id="hookSelectNoneButton" onclick="selectAllHooks(false)">Select None</button>
+	              <button id="hookRefreshButton" onclick="refreshHookStatus()">Refresh</button>
 	            </div>
 	          </div>
 	          <div id="hookList" class="hook-list"></div>
 	          <p id="hooksChangedWarning" class="settings-warning" hidden></p>
 	          <div class="hook-toolbar">
-	            <button onclick="removeSelectedHooks()">Remove Hooks</button>
-	            <button onclick="installSelectedHooks()" class="primary">Install/Update Hooks</button>
+	            <button id="hookRemoveButton" onclick="removeSelectedHooks()">Remove Hooks</button>
+	            <button id="hookInstallButton" onclick="installSelectedHooks()" class="primary">Install/Update Hooks</button>
 	          </div>
 	        </div>
 	      </div>
@@ -2580,6 +2593,8 @@
 	    let draftSettings = null;
     let settingsTab = 'general';
     let hooksStatus = null;
+    let hookStatusLoading = false;
+    let hookActionInFlight = false;
     let selectedHookAgent = 'all';
     const selectedHookEvents = new Set(['PreToolUse', 'PostToolUse']);
     const expandedIds = new Set();
@@ -4952,6 +4967,26 @@
       const screenHeight = Number(window.screen?.availHeight || 900);
       const maxWidth = Math.max(700, Math.min(1080, screenWidth - 72));
       const maxHeight = Math.max(560, Math.min(900, screenHeight - 72));
+      const settingsModal = document.getElementById('settingsModal');
+      const modalCard = settingsModal && settingsModal.classList.contains('open')
+        ? settingsModal.querySelector('.settings-modal')
+        : null;
+      if (modalCard) {
+        const modalHeight = Math.ceil(Math.max(modalCard.scrollHeight || 0, modalCard.offsetHeight || 0, 620));
+        const modalWidth = Math.ceil(Math.max(modalCard.scrollWidth || 0, modalCard.offsetWidth || 0, 720));
+        const width = Math.min(maxWidth, Math.max(720, modalWidth + 36));
+        const height = Math.min(maxHeight, Math.max(620, modalHeight + 36));
+        if (Math.abs(width - lastAutoResize.width) < 18 && Math.abs(height - lastAutoResize.height) < 18) {
+          return;
+        }
+        lastAutoResize = { width, height };
+        try {
+          await invoke('resize_main_window', { width, height });
+        } catch (e) {
+          console.warn('settings auto resize failed', e);
+        }
+        return;
+      }
       let width = 660;
       if (teamCount >= 3) width = 760;
       if (teamCount >= 5) width = 920;
@@ -5721,6 +5756,7 @@
         if (paneEl) paneEl.classList.toggle('active', active);
       }
       if (settingsTab === 'hooks') refreshHookStatus();
+      scheduleAutoResize();
     }
 
     function hookStatusClass(hook) {
@@ -5733,6 +5769,32 @@
       if (hook && hook.up_to_date) return 'Installed';
       if (hook && hook.stale) return 'Update needed';
       return 'Missing';
+    }
+
+    function updateHookControlState() {
+      const busy = hookStatusLoading || hookActionInFlight;
+      const hooks = hooksStatus && Array.isArray(hooksStatus.hooks) ? hooksStatus.hooks : [];
+      const hasSelection = selectedHookEvents.size > 0;
+      const disabledIds = [
+        'hookAgentSelect',
+        'hookSelectAllButton',
+        'hookSelectNoneButton',
+        'hookRefreshButton',
+        'hookInstallButton',
+        'hookRemoveButton',
+      ];
+      for (const id of disabledIds) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const needsHookSelection = id === 'hookInstallButton' || id === 'hookRemoveButton';
+        el.disabled = busy || (needsHookSelection && (!hooks.length || !hasSelection));
+      }
+      const refreshButton = document.getElementById('hookRefreshButton');
+      if (refreshButton) refreshButton.textContent = hookStatusLoading ? 'Refreshing...' : 'Refresh';
+      const installButton = document.getElementById('hookInstallButton');
+      if (installButton) installButton.textContent = hookActionInFlight ? 'Working...' : 'Install/Update Hooks';
+      const removeButton = document.getElementById('hookRemoveButton');
+      if (removeButton) removeButton.textContent = hookActionInFlight ? 'Working...' : 'Remove Hooks';
     }
 
     function renderHooksStatus() {
@@ -5750,10 +5812,11 @@
           claudeBadge.textContent = 'Checking';
           claudeBadge.className = 'status-pill warn';
         }
-        if (summary) summary.textContent = 'Loading';
+        if (summary) summary.textContent = hookStatusLoading ? 'Loading hook status' : 'Hook status unavailable';
         if (agentSelect) agentSelect.innerHTML = '<option value="all">All</option>';
         list.innerHTML = '';
         if (warning) warning.hidden = true;
+        updateHookControlState();
         return;
       }
 
@@ -5788,7 +5851,8 @@
         claudeBadge.className = `status-pill ${found ? 'ok' : 'bad'}`;
       }
       if (summary) {
-        if (hooksStatus.detail && !(hooksStatus.hooks || []).length) summary.textContent = hooksStatus.detail;
+        if (hookStatusLoading) summary.textContent = 'Refreshing hook status';
+        else if (hooksStatus.detail && !(hooksStatus.hooks || []).length) summary.textContent = hooksStatus.detail;
         else if (!hooksStatus.emitter_executable) summary.textContent = 'AgentSnitch emitter helper is missing';
         else if (hooksStatus.all_up_to_date) summary.textContent = 'All AgentSnitch hooks are up to date';
         else if (hooksStatus.all_installed) summary.textContent = 'Hooks are installed but need an update';
@@ -5815,14 +5879,21 @@
         const stale = hooks.filter((hook) => hook.stale);
         const missing = hooks.filter((hook) => !hook.installed);
         const messages = [];
+        const currentSummary = summary ? summary.textContent : '';
+        if (hooksStatus.detail && hooksStatus.detail !== currentSummary) messages.push(hooksStatus.detail);
         if (stale.length) messages.push(`${stale.map((hook) => hook.label).join(', ')} changed and should be updated.`);
         if (missing.length) messages.push(`${missing.map((hook) => hook.label).join(', ')} not installed.`);
         warning.hidden = messages.length === 0;
         warning.textContent = messages.join(' ');
       }
+      updateHookControlState();
+      scheduleAutoResize();
     }
 
     async function refreshHookStatus() {
+      if (hookStatusLoading) return;
+      hookStatusLoading = true;
+      renderHooksStatus();
       try {
         hooksStatus = await invoke('get_claude_hooks_status', { agent: selectedHookAgent });
         selectedHookAgent = hooksStatus.selected_agent_id || selectedHookAgent || 'all';
@@ -5841,11 +5912,14 @@
         const summary = document.getElementById('hooksSummaryStatus');
         if (summary) summary.textContent = 'Hook status unavailable';
         console.warn('hook status failed', e);
+      } finally {
+        hookStatusLoading = false;
       }
       renderHooksStatus();
     }
 
     async function setHookAgent(agent) {
+      if (hookStatusLoading || hookActionInFlight) return;
       selectedHookAgent = agent || 'all';
       await refreshHookStatus();
     }
@@ -5853,6 +5927,7 @@
     function setHookSelected(event, selected) {
       if (selected) selectedHookEvents.add(event);
       else selectedHookEvents.delete(event);
+      updateHookControlState();
     }
 
     function selectAllHooks(selected) {
@@ -5871,11 +5946,14 @@
     }
 
     async function installSelectedHooks() {
+      if (hookStatusLoading || hookActionInFlight) return;
       const events = selectedHooks();
       if (!events.length) {
         alert('Select at least one hook to install.');
         return;
       }
+      hookActionInFlight = true;
+      renderHooksStatus();
       try {
         hooksStatus = await invoke('install_claude_hooks', { events, agent: selectedHookAgent });
         selectedHookAgent = hooksStatus.selected_agent_id || selectedHookAgent || 'all';
@@ -5883,15 +5961,21 @@
       } catch (e) {
         alert('install hooks failed: ' + e);
         await refreshHookStatus();
+      } finally {
+        hookActionInFlight = false;
+        renderHooksStatus();
       }
     }
 
     async function removeSelectedHooks() {
+      if (hookStatusLoading || hookActionInFlight) return;
       const events = selectedHooks();
       if (!events.length) {
         alert('Select at least one hook to remove.');
         return;
       }
+      hookActionInFlight = true;
+      renderHooksStatus();
       try {
         hooksStatus = await invoke('remove_claude_hooks', { events, agent: selectedHookAgent });
         selectedHookAgent = hooksStatus.selected_agent_id || selectedHookAgent || 'all';
@@ -5899,12 +5983,17 @@
       } catch (e) {
         alert('remove hooks failed: ' + e);
         await refreshHookStatus();
+      } finally {
+        hookActionInFlight = false;
+        renderHooksStatus();
       }
     }
 
     async function setKeepHooksUpToDate(enabled) {
+      if (hookStatusLoading || hookActionInFlight) return;
       const previous = !!appSettings.keep_hooks_up_to_date;
       appSettings.keep_hooks_up_to_date = !!enabled;
+      hookActionInFlight = true;
       renderAppSettings(enabled ? 'Hook auto-update on' : 'Hook auto-update off');
       try {
         const result = await invoke('set_keep_hooks_up_to_date', { enabled: !!enabled });
@@ -5916,6 +6005,9 @@
         appSettings.keep_hooks_up_to_date = previous;
         renderAppSettings('Update failed');
         alert('hook auto-update setting failed: ' + e);
+      } finally {
+        hookActionInFlight = false;
+        renderHooksStatus();
       }
     }
 
@@ -5934,10 +6026,11 @@
 
 	    function openNetworkSensorSettings() {
 	      draftSettings = { ...appSettings };
-	      const modal = document.getElementById('settingsModal');
-	      if (modal) modal.classList.add('open');
-	      setSettingsTab(settingsTab || 'general');
-	      renderAppSettings();
+      const modal = document.getElementById('settingsModal');
+      if (modal) modal.classList.add('open');
+      setSettingsTab(settingsTab || 'general');
+      renderAppSettings();
+      scheduleAutoResize();
 	    }
 
 	    function closeSettingsModal() {
@@ -5945,6 +6038,7 @@
 	      const modal = document.getElementById('settingsModal');
 	      if (modal) modal.classList.remove('open');
 	      renderAppSettings();
+      scheduleAutoResize();
 	    }
 
 		    function setDraftNetworkSensorEnabled(enabled) {
@@ -6225,7 +6319,140 @@
       }, 1200);
     }
 
+    function decodeInlineString(raw) {
+      const value = String(raw || '').trim();
+      if (!value) return '';
+      if (value.startsWith('"')) {
+        try { return JSON.parse(value); } catch (_) { return value.slice(1, -1); }
+      }
+      if (value.startsWith("'")) {
+        return value.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+      }
+      return value;
+    }
+
+    function decodeInlineNumber(raw) {
+      const value = Number(String(raw || '').trim());
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function runWhitelistedInlineAction(source, target, event) {
+      const action = String(source || '').trim().replace(/;$/, '');
+      if (!action) return false;
+
+      if (action === 'togglePaused()') { togglePaused(); return true; }
+      if (action === 'quietKnownServices()') { quietKnownServices(); return true; }
+      if (action === 'quietSession()') { quietSession(); return true; }
+      if (action === 'clearSession()') { clearSession(); return true; }
+      if (action === 'doExport()') { doExport(); return true; }
+      if (action === 'closeSettingsModal()') { closeSettingsModal(); return true; }
+      if (action === 'saveSettingsModal()') { saveSettingsModal(); return true; }
+      if (action === 'refreshHookStatus()') { refreshHookStatus(); return true; }
+      if (action === 'installSelectedHooks()') { installSelectedHooks(); return true; }
+      if (action === 'removeSelectedHooks()') { removeSelectedHooks(); return true; }
+      if (action === 'clearAgentFilter()') { clearAgentFilter(); return true; }
+      if (action === 'clearAgentDetail()') { clearAgentDetail(); return true; }
+      if (action === 'clearTraceSelection()') { clearTraceSelection(); return true; }
+      if (action === 'clearAttentionReason()') { clearAttentionReason(); return true; }
+
+      let match = action.match(/^setView\((.+)\)$/);
+      if (match) { setView(decodeInlineString(match[1])); return true; }
+      match = action.match(/^setSettingsTab\((.+)\)$/);
+      if (match) { setSettingsTab(decodeInlineString(match[1])); return true; }
+      match = action.match(/^selectAllHooks\((true|false)\)$/);
+      if (match) { selectAllHooks(match[1] === 'true'); return true; }
+      match = action.match(/^filterAgent\((.+)\)$/);
+      if (match) { filterAgent(decodeInlineString(match[1])); return true; }
+      match = action.match(/^clearFilterQuery\((.+)\)$/);
+      if (match) { clearFilterQuery(decodeInlineString(match[1])); return true; }
+      match = action.match(/^toggleMainGroup\((.+)\)$/);
+      if (match) { toggleMainGroup(decodeInlineString(match[1])); return true; }
+      match = action.match(/^showAgentDetail\((.+)\)$/);
+      if (match) { showAgentDetail(decodeInlineString(match[1])); return true; }
+      match = action.match(/^setAgentDetailKind\((.+)\)$/);
+      if (match) { setAgentDetailKind(decodeInlineString(match[1])); return true; }
+      match = action.match(/^setTraceMode\((.+)\)$/);
+      if (match) { setTraceMode(decodeInlineString(match[1])); return true; }
+      match = action.match(/^setTraceZoom\((.+)\)$/);
+      if (match) { setTraceZoom(decodeInlineString(match[1])); return true; }
+      match = action.match(/^setRawKind\((.+)\)$/);
+      if (match) { setRawKind(decodeInlineString(match[1])); return true; }
+      match = action.match(/^filterAttentionReason\((.+)\)$/);
+      if (match) { filterAttentionReason(decodeInlineString(match[1])); return true; }
+      match = action.match(/^selectTrace\((.+),\s*this\.getAttribute\('data-key'\)\)$/);
+      if (match) { selectTrace(decodeInlineString(match[1]), target.getAttribute('data-key')); return true; }
+      match = action.match(/^toggleRawDetails\((.+)\)$/);
+      if (match) { toggleRawDetails(decodeInlineNumber(match[1])); return true; }
+      match = action.match(/^toggleKnownGroup\((.+)\)$/);
+      if (match) { toggleKnownGroup(decodeInlineString(match[1])); return true; }
+      match = action.match(/^quietCategory\((.+)\)$/);
+      if (match) { quietCategory(decodeInlineString(match[1])); return true; }
+      match = action.match(/^toggleWhy\((.+)\)$/);
+      if (match) { toggleWhy(decodeInlineNumber(match[1])); return true; }
+      match = action.match(/^quietPattern\((.+)\)$/);
+      if (match) { quietPattern(decodeInlineNumber(match[1])); return true; }
+      match = action.match(/^toggleDetails\((.+)\)$/);
+      if (match) { toggleDetails(decodeInlineNumber(match[1])); return true; }
+      match = action.match(/^dismissEvent\((.+)\)$/);
+      if (match) { dismissEvent(decodeInlineNumber(match[1])); return true; }
+
+      match = action.match(/^if \(!event\.target\.closest\('button'\)\) showAgentDetail\((.+)\)$/);
+      if (match) {
+        if (!event.target.closest('button')) showAgentDetail(decodeInlineString(match[1]));
+        return true;
+      }
+      return false;
+    }
+
+    function runWhitelistedInlineChange(source, target) {
+      const action = String(source || '').trim().replace(/;$/, '');
+      let match = action.match(/^setDraftAdvancedControlsEnabled\(this\.checked\)$/);
+      if (match) { setDraftAdvancedControlsEnabled(target.checked); return true; }
+      match = action.match(/^setDraftNetworkSensorEnabled\(this\.checked\)$/);
+      if (match) { setDraftNetworkSensorEnabled(target.checked); return true; }
+      match = action.match(/^setDraftHighAssuranceDefaultEnabled\(this\.checked\)$/);
+      if (match) { setDraftHighAssuranceDefaultEnabled(target.checked); return true; }
+      match = action.match(/^setKeepHooksUpToDate\(this\.checked\)$/);
+      if (match) { setKeepHooksUpToDate(target.checked); return true; }
+      match = action.match(/^setHookAgent\(this\.value\)$/);
+      if (match) { setHookAgent(target.value); return true; }
+      match = action.match(/^setHookSelected\((.+),\s*this\.checked\)$/);
+      if (match) { setHookSelected(decodeInlineString(match[1]), target.checked); return true; }
+      return false;
+    }
+
+    function installDelegatedControls() {
+      if (window.__AGENTSNITCH_DELEGATED_CONTROLS__) return;
+      window.__AGENTSNITCH_DELEGATED_CONTROLS__ = true;
+      document.addEventListener('click', (event) => {
+        const target = event.target && event.target.closest ? event.target.closest('[onclick]') : null;
+        if (!target) return;
+        if (runWhitelistedInlineAction(target.getAttribute('onclick'), target, event)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+      document.addEventListener('change', (event) => {
+        const target = event.target && event.target.closest ? event.target.closest('[onchange]') : null;
+        if (!target) return;
+        if (runWhitelistedInlineChange(target.getAttribute('onchange'), target)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const target = event.target && event.target.closest ? event.target.closest('[onclick]') : null;
+        if (!target) return;
+        if (runWhitelistedInlineAction(target.getAttribute('onclick'), target, event)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    }
+
 	    async function boot() {
+      installDelegatedControls();
 	      // initial load
 	      await loadAppSettings();
 	      await refreshFromBackend();

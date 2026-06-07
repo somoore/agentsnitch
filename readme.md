@@ -1,6 +1,6 @@
 # AgentSnitch
 
-[![pre-alpha release](https://img.shields.io/badge/pre--alpha-v0.1.0--pre--alpha.4-blue)](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.4)
+[![pre-alpha release](https://img.shields.io/badge/pre--alpha-v0.1.0--pre--alpha.5-blue)](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.5)
 [![supply-chain](https://github.com/somoore/agentsnitch/actions/workflows/supply-chain.yml/badge.svg)](https://github.com/somoore/agentsnitch/actions/workflows/supply-chain.yml)
 [![macOS release](https://github.com/somoore/agentsnitch/actions/workflows/release-macos.yml/badge.svg)](https://github.com/somoore/agentsnitch/actions/workflows/release-macos.yml)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
@@ -29,7 +29,7 @@ AgentSnitch is not a DLP product, not a SaaS telemetry collector, and not an enf
 
 ## Quick Start
 
-Download the latest pre-alpha package from [AgentSnitch v0.1.0-pre-alpha.4](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.4), then install the macOS `.pkg`. The package installs:
+Download the latest pre-alpha package from [AgentSnitch v0.1.0-pre-alpha.5](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.5), then install the macOS `.pkg`. The package installs:
 
 - `AgentSnitch.app`
 - the local daemon and support tools
