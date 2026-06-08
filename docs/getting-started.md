@@ -274,7 +274,7 @@ The process-scoped trust path is preferred. AgentSnitch can expose proxy and CA 
 ~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect run -- claude
 ```
 
-The `inspect run` form is the automatic process-scoped path. It starts the target command with AgentSnitch's proxy and CA environment so child tools can inherit it. Hooks keep providing tool-span timing and intent, but they cannot inject proxy variables into an already-running Claude process.
+The `inspect run` form is the automatic process-scoped path. It starts the target command with AgentSnitch's proxy and CA environment so child tools can inherit it. Hooks keep providing tool-span timing and intent, but they cannot inject proxy variables into an already-running Claude process. The process-scoped trust path is tested for curl, Python `requests`, Node TLS clients, and Git HTTPS clients.
 
 System trust is optional and broader. Installing or removing the AgentSnitch CA from the macOS System keychain requires administrator approval, such as Touch ID when configured:
 
@@ -290,6 +290,8 @@ For status and cleanup:
 ~/Library/Application\ Support/AgentSnitch/bin/doctor inspect
 ~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect disable --remove-process-trust=true --purge-data=true
 ```
+
+When the daemon is running, `inspect status` and `doctor inspect` report the live managed proxy listener and last inspected host from daemon status.
 
 ## Check Health
 

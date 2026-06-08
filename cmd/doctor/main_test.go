@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/somoore/agentsnitch/internal/event"
+	"github.com/somoore/agentsnitch/internal/inspect"
 	asruntime "github.com/somoore/agentsnitch/internal/runtime"
 )
 
@@ -70,6 +71,52 @@ func TestPreferredEmitterPathHonorsExplicitEmitterOverride(t *testing.T) {
 
 	if got := preferredEmitterPath(); got != override {
 		t.Fatalf("preferredEmitterPath() = %q, want %q", got, override)
+	}
+}
+
+func TestCurrentInspectStatusUsesLiveDaemonProxy(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("AGENTSNITCH_UI_SETTINGS", filepath.Join(base, "settings.json"))
+	t.Setenv("AGENTSNITCH_INSPECT_DIR", filepath.Join(base, "inspect"))
+	t.Setenv("AGENTSNITCH_STATUS", filepath.Join(base, "status.json"))
+
+	settings := inspect.DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	if err := inspect.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	if _, err := inspect.NewCertManager(inspect.DefaultPaths()).EnsureCA(); err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	if err := asruntime.WriteStatus(asruntime.Status{
+		UpdatedAt: time.Now().UTC(),
+		Inspect: inspect.Status{
+			Proxy: inspect.ProxyStatus{
+				Enabled:   true,
+				Listening: true,
+				Address:   "127.0.0.1:49152",
+			},
+			ProcessEnv: map[string]string{"HTTPS_PROXY": "http://agentsnitch:token@127.0.0.1:49152"},
+		},
+		LastInspectedHTTP: &event.InspectedHTTPExchange{
+			Request: event.InspectedHTTPRequest{Host: "api.example.com"},
+		},
+	}); err != nil {
+		t.Fatalf("WriteStatus: %v", err)
+	}
+
+	got := currentInspectStatus()
+	if !got.Proxy.Listening || got.Proxy.Address != "127.0.0.1:49152" {
+		t.Fatalf("live proxy status not used: %+v", got.Proxy)
+	}
+	if got.ProcessEnv["HTTPS_PROXY"] == "" {
+		t.Fatalf("process env not preserved: %+v", got.ProcessEnv)
+	}
+	if got.LastInspection != "api.example.com" {
+		t.Fatalf("last inspection = %q", got.LastInspection)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("unexpected warnings from live proxy status: %+v", got.Warnings)
 	}
 }
 
