@@ -24,6 +24,7 @@ func ProcessScopedEnv(bundlePath, proxyURL string) map[string]string {
 		"CURL_CA_BUNDLE":            bundlePath,
 		"GIT_SSL_CAINFO":            bundlePath,
 		"NODE_EXTRA_CA_CERTS":       bundlePath,
+		"NPM_CONFIG_CAFILE":         bundlePath,
 		"npm_config_cafile":         bundlePath,
 		"PNPM_CONFIG_CAFILE":        bundlePath,
 		"YARN_CA_FILE":              bundlePath,
@@ -32,6 +33,10 @@ func ProcessScopedEnv(bundlePath, proxyURL string) map[string]string {
 		env["HTTP_PROXY"] = proxyURL
 		env["HTTPS_PROXY"] = proxyURL
 		env["ALL_PROXY"] = proxyURL
+		env["npm_config_proxy"] = proxyURL
+		env["npm_config_https_proxy"] = proxyURL
+		env["NPM_CONFIG_PROXY"] = proxyURL
+		env["NPM_CONFIG_HTTPS_PROXY"] = proxyURL
 		env["NO_PROXY"] = "localhost,127.0.0.1,::1,.local"
 	}
 	return env

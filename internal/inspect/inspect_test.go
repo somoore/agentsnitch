@@ -129,8 +129,13 @@ func TestScopeBypassAndDomainControls(t *testing.T) {
 
 func TestProcessScopedEnvIncludesTrustAndProxy(t *testing.T) {
 	env := ProcessScopedEnv("/tmp/ca.pem", "http://127.0.0.1:12345")
-	for _, key := range []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS", "npm_config_cafile", "PNPM_CONFIG_CAFILE", "YARN_CA_FILE"} {
+	for _, key := range []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS", "NPM_CONFIG_CAFILE", "npm_config_cafile", "PNPM_CONFIG_CAFILE", "YARN_CA_FILE"} {
 		if env[key] != "/tmp/ca.pem" {
+			t.Fatalf("%s = %q", key, env[key])
+		}
+	}
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "npm_config_proxy", "npm_config_https_proxy", "NPM_CONFIG_PROXY", "NPM_CONFIG_HTTPS_PROXY"} {
+		if env[key] != "http://127.0.0.1:12345" {
 			t.Fatalf("%s = %q", key, env[key])
 		}
 	}
@@ -504,6 +509,66 @@ func TestProcessScopedGitTrustsInspectCAWhenAvailable(t *testing.T) {
 	waitForEvents(t, seen, 1)
 	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
 		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
+func TestProcessScopedNPMTrustsInspectCAWhenAvailable(t *testing.T) {
+	npm := findExecutableForTest(t, "npm")
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/-/ping") {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	paths := testPaths(t)
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectCapturePreviews = true
+	seen := []event.InspectedHTTPExchange{}
+	manager := NewCertManager(paths)
+	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
+		seen = append(seen, exchange)
+	})
+	proxy.paths = paths
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	proxy.upstreamTLSConfig = &tls.Config{InsecureSkipVerify: true}
+	if err := proxy.Start(); err != nil {
+		upstream.Close()
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	tmp := t.TempDir()
+	userConfig := filepath.Join(tmp, ".npmrc")
+	if err := os.WriteFile(userConfig, nil, 0o600); err != nil {
+		t.Fatalf("write npmrc: %v", err)
+	}
+	cmd := exec.Command(
+		npm,
+		"ping",
+		"--registry=https://api.example.com/",
+		"--fetch-timeout=5000",
+		"--fetch-retries=0",
+		"--loglevel=error",
+		"--userconfig="+userConfig,
+	)
+	env := ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL())
+	env["HOME"] = tmp
+	env["npm_config_cache"] = filepath.Join(tmp, "cache")
+	cmd.Env = append(os.Environ(), envPairs(env)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("npm ping failed: %v\n%s", err, out)
+	}
+	waitForEvents(t, &seen, 1)
+	if seen[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", seen[0].TLS.InspectionMode)
 	}
 }
 
