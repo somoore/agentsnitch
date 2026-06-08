@@ -5505,8 +5505,9 @@ fn set_debug_mode_settings(
     })
 }
 
-#[tauri::command]
-fn set_https_inspect_settings(
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HttpsInspectSettingsRequest {
     enabled: bool,
     process_scoped: bool,
     allow_system_trust: bool,
@@ -5514,27 +5515,32 @@ fn set_https_inspect_settings(
     capture_full_payloads: bool,
     preview_bytes: u32,
     full_retention: String,
+}
+
+#[tauri::command]
+fn set_https_inspect_settings(
+    request: HttpsInspectSettingsRequest,
     state: State<AppState>,
     app: AppHandle,
 ) -> Result<AppSettingsUpdate, String> {
     let settings = {
         let mut guard = state.app_settings.lock().unwrap();
-        guard.https_inspect_enabled = enabled;
-        guard.https_inspect_process_scoped = process_scoped;
-        guard.https_inspect_allow_system_trust = allow_system_trust;
-        guard.https_inspect_capture_previews = capture_previews;
-        guard.https_inspect_capture_full_payloads = capture_full_payloads;
-        guard.https_inspect_preview_bytes = preview_bytes.max(256);
-        guard.https_inspect_full_retention = if full_retention.trim().is_empty() {
+        guard.https_inspect_enabled = request.enabled;
+        guard.https_inspect_process_scoped = request.process_scoped;
+        guard.https_inspect_allow_system_trust = request.allow_system_trust;
+        guard.https_inspect_capture_previews = request.capture_previews;
+        guard.https_inspect_capture_full_payloads = request.capture_full_payloads;
+        guard.https_inspect_preview_bytes = request.preview_bytes.max(256);
+        guard.https_inspect_full_retention = if request.full_retention.trim().is_empty() {
             default_full_payload_retention()
         } else {
-            full_retention
+            request.full_retention
         };
         guard.schema = app_settings_schema();
         guard.clone()
     };
     save_app_settings(&settings)?;
-    let detail = if enabled {
+    let detail = if request.enabled {
         match run_inspect_cli(&["create-ca"], Duration::from_secs(12)) {
             Ok(_) => "HTTPS Inspect Mode saved. Restart AgentSnitch daemon to start or refresh the managed proxy.".into(),
             Err(err) => format!("HTTPS Inspect Mode saved, but CA creation failed: {}", err),

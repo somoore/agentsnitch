@@ -6639,7 +6639,7 @@
       });
       renderAppSettings('Saving HTTPS Inspect Mode', 'https_inspect');
       try {
-        const result = await invoke('set_https_inspect_settings', next);
+        const result = await invoke('set_https_inspect_settings', { request: next });
         appSettings = normalizeAppSettings(result.settings || appSettings);
         if (draftSettings) draftSettings = { ...draftSettings, ...appSettings };
         renderAppSettings(result.warning || result.detail || '', 'https_inspect');
