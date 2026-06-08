@@ -25,7 +25,7 @@ For managed proxy traffic, AgentSnitch can record:
 - Header names and redacted selected header values.
 - Body SHA-256 hashes.
 - Redacted request/response previews when preview capture is enabled.
-- Full payloads only when full payload capture is explicitly enabled.
+- Redacted full payload records only when full payload capture is explicitly enabled.
 
 ## What It Cannot See
 
@@ -36,7 +36,7 @@ AgentSnitch cannot inspect:
 - All system traffic.
 - Clients that reject the AgentSnitch CA due to certificate pinning or custom trust stores.
 - Non-HTTP protocols inside TLS, except as metadata-only evidence.
-- Raw prompts or model responses unless that specific traffic is routed through the managed proxy, the client accepts the AgentSnitch CA/trust configuration, and payload preview or full payload capture is enabled.
+- Raw prompts or model responses unless that specific traffic is routed through the managed proxy, the client accepts the AgentSnitch CA/trust configuration, and payload preview or full payload capture is enabled. Even in full payload mode, AgentSnitch writes redacted local payload records and evidence exports include payload references rather than inlining the retained bodies.
 
 Put differently: OS Sensor mode and the default NetworkStatistics observer can prove that a process contacted a destination, but they do not break TLS. HTTPS Inspect can break and inspect TLS only for managed proxy traffic that honors the proxy and trust configuration.
 
@@ -62,6 +62,7 @@ Defaults:
 - Metadata: retained with normal session evidence.
 - Redacted previews: enabled, capped at 2048 bytes.
 - Full payloads: disabled.
+- Full payload mode: writes redacted local payload records under the HTTPS Inspect payload store and includes request/response payload refs in the inspected exchange.
 - Authorization, Proxy-Authorization, Cookie, Set-Cookie, API key, auth token, AWS session token, GitHub token, OpenAI key, and Anthropic key headers are never stored raw by default.
 
 `agentsnitchctl inspect purge-data` removes captured payload data.

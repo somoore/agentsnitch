@@ -558,6 +558,7 @@ type InspectedHTTPExchange struct {
 	Request     InspectedHTTPRequest     `json:"request"`
 	Response    InspectedHTTPResponse    `json:"response"`
 	TLS         InspectedHTTPTLS         `json:"tls"`
+	Network     InspectedHTTPNetwork     `json:"network"`
 	Retention   InspectedHTTPRetention   `json:"retention"`
 	Correlation InspectedHTTPCorrelation `json:"correlation"`
 }
@@ -575,6 +576,7 @@ type InspectedHTTPRequest struct {
 	Preview          string                `json:"preview,omitempty"`
 	PreviewTruncated bool                  `json:"preview_truncated"`
 	RedactionCount   int                   `json:"redaction_count"`
+	PayloadRef       string                `json:"payload_ref,omitempty"`
 }
 
 type InspectedHTTPResponse struct {
@@ -585,6 +587,7 @@ type InspectedHTTPResponse struct {
 	Preview          string `json:"preview,omitempty"`
 	PreviewTruncated bool   `json:"preview_truncated"`
 	RedactionCount   int    `json:"redaction_count"`
+	PayloadRef       string `json:"payload_ref,omitempty"`
 }
 
 type InspectedHTTPHeader struct {
@@ -600,6 +603,15 @@ type InspectedHTTPTLS struct {
 	CAFingerprint      string `json:"ca_fingerprint,omitempty"`
 	LeafCertGenerated  bool   `json:"leaf_cert_generated"`
 	UpstreamTLSVersion string `json:"upstream_tls_version,omitempty"`
+}
+
+type InspectedHTTPNetwork struct {
+	Remote     string `json:"remote,omitempty"`
+	RemoteIP   string `json:"remote_ip,omitempty"`
+	RemotePort int    `json:"remote_port,omitempty"`
+	BytesOut   int64  `json:"bytes_out"`
+	BytesIn    int64  `json:"bytes_in"`
+	DurationMS int64  `json:"duration_ms"`
 }
 
 type InspectedHTTPRetention struct {
@@ -687,9 +699,13 @@ func NormalizeInspectedHTTPExchange(x *InspectedHTTPExchange) {
 	x.Request.Path = strings.TrimSpace(x.Request.Path)
 	x.Request.ContentType = strings.TrimSpace(x.Request.ContentType)
 	x.Response.ContentType = strings.TrimSpace(x.Response.ContentType)
+	x.Request.PayloadRef = strings.TrimSpace(x.Request.PayloadRef)
+	x.Response.PayloadRef = strings.TrimSpace(x.Response.PayloadRef)
 	x.TLS.InspectionMode = strings.TrimSpace(x.TLS.InspectionMode)
 	x.TLS.CAFingerprint = strings.TrimSpace(x.TLS.CAFingerprint)
 	x.TLS.UpstreamTLSVersion = strings.TrimSpace(x.TLS.UpstreamTLSVersion)
+	x.Network.Remote = strings.TrimSpace(x.Network.Remote)
+	x.Network.RemoteIP = strings.TrimSpace(x.Network.RemoteIP)
 	x.Retention.PayloadMode = strings.TrimSpace(x.Retention.PayloadMode)
 	x.Retention.Retention = strings.TrimSpace(x.Retention.Retention)
 	x.Correlation.Confidence = strings.TrimSpace(x.Correlation.Confidence)
@@ -721,6 +737,9 @@ func ValidateInspectedHTTPExchange(x InspectedHTTPExchange) error {
 	}
 	if x.Request.BodySize < 0 || x.Response.BodySize < 0 {
 		return errors.New("inspected HTTP exchange body sizes cannot be negative")
+	}
+	if x.Network.BytesOut < 0 || x.Network.BytesIn < 0 || x.Network.DurationMS < 0 {
+		return errors.New("inspected HTTP exchange network metrics cannot be negative")
 	}
 	switch x.TLS.InspectionMode {
 	case "metadata_only", "local_mitm", "trust_failed", "pinned_or_custom_trust", "unsupported_protocol":

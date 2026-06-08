@@ -60,7 +60,7 @@ The Settings window is organized around the current product surfaces:
 - **Advanced** contains OS Sensor mode, the OS Sensor startup default, Reverse DNS / PTR labels, and PTR "Always On". Reverse DNS is disabled by default and may ask the local resolver for PTR labels when enabled.
 - **Developer** contains HTTPS Inspect Mode, local CA actions, optional macOS system trust actions, payload capture controls, and the Debug button. The Debug button is hidden by default; enable it here only when you need the footer Debug snapshot control. Its "Always On" child setting keeps the Debug button visible after AgentSnitch restarts.
 
-HTTPS Inspect Mode is intentionally in **Developer** because it can create local CA material and, when full payload capture is explicitly enabled, can retain raw request and response bodies for inspected managed traffic. The normal app install, package install, daemon start, hook install, and OS Sensor activation never install a trusted root certificate.
+HTTPS Inspect Mode is intentionally in **Developer** because it can create local CA material and, when full payload capture is explicitly enabled, can retain redacted request and response payload records for inspected managed traffic. The normal app install, package install, daemon start, hook install, and OS Sensor activation never install a trusted root certificate.
 
 ## Install Claude Hooks
 
@@ -256,7 +256,7 @@ The expected default healthy path is hooks OK, UI OK, latest network observer `n
 
 ## HTTPS Inspect Mode
 
-HTTPS Inspect Mode is an advanced Developer feature for managed traffic routed through AgentSnitch's local proxy. It is useful for short debugging sessions where method/path/status/header metadata, redacted previews, hashes, or explicitly enabled full payloads are worth the CA/proxy friction.
+HTTPS Inspect Mode is an advanced Developer feature for managed traffic routed through AgentSnitch's local proxy. It is useful for short debugging sessions where method/path/status/header metadata, remote endpoint and byte-count metadata, redacted previews, hashes, or explicitly enabled redacted full-payload records are worth the CA/proxy friction.
 
 It does not inspect:
 

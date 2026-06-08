@@ -595,7 +595,7 @@ Session end detection: combination of `Stop` / `SessionEnd` hooks + polling or k
 - **SNI vs. reality.** SNI is helpful but can be absent or misleading (ECH, IP-only, etc.).
 - **Semantic transformation.** An agent that reads `.env`, then later makes a "normal" API call that happens to include paraphrased secret data may not produce an obvious mechanical link. We surface the pattern; the human judges intent.
 - **System Extension UX tax.** Users must approve it. Some corporate MDM environments restrict extensions. We must make the value obvious quickly.
-- **No content visibility inside TLS by default.** The default NetworkStatistics/`nettop`, `lsof`, and OS Sensor paths are metadata/process attribution paths. Advanced HTTPS Inspect Mode is a separate Settings -> Developer feature for managed proxy traffic only; it uses local CA material, process-scoped trust by default, optional administrator-approved macOS System trust, redacted previews by default, and full payload capture only when explicitly enabled.
+- **No content visibility inside TLS by default.** The default NetworkStatistics/`nettop`, `lsof`, and OS Sensor paths are metadata/process attribution paths. Advanced HTTPS Inspect Mode is a separate Settings -> Developer feature for managed proxy traffic only; it uses local CA material, process-scoped trust by default, optional administrator-approved macOS System trust, redacted previews by default, metadata-only CONNECT endpoint/byte/duration evidence when decryption is unavailable, and redacted full-payload records only when explicitly enabled.
 
 These are accepted for Phase 1. Many of them become more tractable once we have real data and user feedback.
 
