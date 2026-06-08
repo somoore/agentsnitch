@@ -5566,6 +5566,7 @@ fn set_https_inspect_settings(
     state: State<AppState>,
     app: AppHandle,
 ) -> Result<AppSettingsUpdate, String> {
+    let was_enabled = state.app_settings.lock().unwrap().https_inspect_enabled;
     let settings = {
         let mut guard = state.app_settings.lock().unwrap();
         guard.https_inspect_enabled = request.enabled;
@@ -5583,10 +5584,33 @@ fn set_https_inspect_settings(
         guard.clone()
     };
     save_app_settings(&settings)?;
+    let mut settings = settings;
     let detail = if request.enabled {
         match run_inspect_cli(&["create-ca"], Duration::from_secs(12)) {
             Ok(_) => "HTTPS Inspect Mode saved. Restart AgentSnitch daemon to start or refresh the managed proxy.".into(),
             Err(err) => format!("HTTPS Inspect Mode saved, but CA creation failed: {}", err),
+        }
+    } else if was_enabled {
+        match run_inspect_cli(
+            &[
+                "disable",
+                "--remove-process-trust=true",
+                "--purge-data=true",
+            ],
+            Duration::from_secs(15),
+        ) {
+            Ok(_) => {
+                settings = load_app_settings();
+                {
+                    let mut guard = state.app_settings.lock().unwrap();
+                    *guard = settings.clone();
+                }
+                "HTTPS Inspect Mode disabled. Process-scoped trust files and captured payload data were removed.".into()
+            }
+            Err(err) => format!(
+                "HTTPS Inspect Mode disabled for new sessions, but cleanup failed: {}",
+                err
+            ),
         }
     } else {
         "HTTPS Inspect Mode disabled for new sessions.".into()

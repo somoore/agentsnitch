@@ -53,6 +53,8 @@ agentsnitchctl inspect env
 agentsnitchctl inspect run -- <command> [args...]
 ```
 
+`agentsnitchctl inspect run -- claude` is the managed-session launch path: Claude and tools it starts inherit the process-scoped proxy and CA environment. Existing Claude sessions that were already running before this command will not be retroactively reconfigured, because Claude hooks observe tool activity but cannot mutate the parent process environment.
+
 ## Retention
 
 Metadata and redacted previews are separate from full payload capture.

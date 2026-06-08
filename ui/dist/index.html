@@ -6415,6 +6415,23 @@
 
     function setDraftHttpsInspectEnabled(enabled) {
       if (!draftSettings) draftSettings = { ...appSettings };
+      const wasEnabled = !!appSettings.https_inspect_enabled;
+      if (enabled && !wasEnabled) {
+        const accepted = confirm([
+          'Enable HTTPS Inspect Mode?',
+          '',
+          'AgentSnitch will inspect only managed traffic routed through its local proxy.',
+          'A local AgentSnitch certificate authority may be created.',
+          'Process-scoped trust is the default; macOS System trust is a separate administrator-approved action.',
+          'Payload capture can retain prompts, model responses, tool output, and secrets for inspected traffic.',
+          'Restart the AgentSnitch daemon or launch a managed session for the proxy settings to take effect.'
+        ].join('\n'));
+        if (!accepted) {
+          draftSettings.https_inspect_enabled = false;
+          renderAppSettings('', 'https_inspect');
+          return;
+        }
+      }
       draftSettings.https_inspect_enabled = !!enabled;
       renderAppSettings('Unsaved', 'https_inspect');
     }

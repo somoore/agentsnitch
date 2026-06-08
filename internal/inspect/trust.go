@@ -17,13 +17,15 @@ type TrustStatus struct {
 
 func ProcessScopedEnv(bundlePath, proxyURL string) map[string]string {
 	env := map[string]string{
-		"SSL_CERT_FILE":       bundlePath,
-		"REQUESTS_CA_BUNDLE":  bundlePath,
-		"CURL_CA_BUNDLE":      bundlePath,
-		"GIT_SSL_CAINFO":      bundlePath,
-		"NODE_EXTRA_CA_CERTS": bundlePath,
-		"npm_config_cafile":   bundlePath,
-		"YARN_CA_FILE":        bundlePath,
+		"AGENTSNITCH_MANAGED_PROXY": "1",
+		"AGENTSNITCH_INSPECT_MODE":  "process_scoped",
+		"SSL_CERT_FILE":             bundlePath,
+		"REQUESTS_CA_BUNDLE":        bundlePath,
+		"CURL_CA_BUNDLE":            bundlePath,
+		"GIT_SSL_CAINFO":            bundlePath,
+		"NODE_EXTRA_CA_CERTS":       bundlePath,
+		"npm_config_cafile":         bundlePath,
+		"YARN_CA_FILE":              bundlePath,
 	}
 	if strings.TrimSpace(proxyURL) != "" {
 		env["HTTP_PROXY"] = proxyURL

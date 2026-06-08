@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,6 +136,9 @@ func TestProcessScopedEnvIncludesTrustAndProxy(t *testing.T) {
 	}
 	if env["HTTPS_PROXY"] == "" || !strings.Contains(env["NO_PROXY"], "localhost") {
 		t.Fatalf("proxy env missing: %+v", env)
+	}
+	if env["AGENTSNITCH_MANAGED_PROXY"] != "1" || env["AGENTSNITCH_INSPECT_MODE"] != "process_scoped" {
+		t.Fatalf("managed inspect labels missing: %+v", env)
 	}
 }
 
@@ -380,6 +384,52 @@ func TestProxyTrustFailureDowngradesToMetadata(t *testing.T) {
 	}
 }
 
+func TestProcessScopedCurlTrustsInspectCAWhenAvailable(t *testing.T) {
+	curl := findExecutableForTest(t, "curl")
+	upstream, proxy, seen := processScopedClientFixture(t)
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	cmd := exec.Command(curl, "-fsS", "--max-time", "5", "--resolve", "api.example.com:443:"+upstream.Listener.Addr().(*net.TCPAddr).IP.String(), "https://api.example.com/hello")
+	cmd.Env = append(os.Environ(), envPairs(ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL()))...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("curl failed: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("curl output = %q, want ok", out)
+	}
+	waitForEvents(t, seen, 1)
+	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
+func TestProcessScopedPythonRequestsTrustsInspectCAWhenAvailable(t *testing.T) {
+	python := findExecutableForTest(t, "python3")
+	if _, err := exec.Command(python, "-c", "import requests").CombinedOutput(); err != nil {
+		t.Skip("python requests module is not installed")
+	}
+	upstream, proxy, seen := processScopedClientFixture(t)
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	script := `import requests; print(requests.get("https://api.example.com/hello", timeout=5).text)`
+	cmd := exec.Command(python, "-c", script)
+	cmd.Env = append(os.Environ(), envPairs(ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL()))...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python requests failed: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("python output = %q, want ok", out)
+	}
+	waitForEvents(t, seen, 1)
+	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
 func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int) {
 	t.Helper()
 	deadline := time.Now().Add(500 * time.Millisecond)
@@ -393,4 +443,48 @@ func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int)
 
 func basicProxyToken(token string) string {
 	return base64.StdEncoding.EncodeToString([]byte("agentsnitch:" + token))
+}
+
+func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *[]event.InspectedHTTPExchange) {
+	t.Helper()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	paths := testPaths(t)
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectCapturePreviews = true
+	seen := []event.InspectedHTTPExchange{}
+	manager := NewCertManager(paths)
+	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
+		seen = append(seen, exchange)
+	})
+	proxy.paths = paths
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	proxy.upstreamTLSConfig = &tls.Config{InsecureSkipVerify: true}
+	if err := proxy.Start(); err != nil {
+		upstream.Close()
+		t.Fatalf("proxy start: %v", err)
+	}
+	return upstream, proxy, &seen
+}
+
+func findExecutableForTest(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("%s is not installed", name)
+	}
+	return path
+}
+
+func envPairs(env map[string]string) []string {
+	pairs := make([]string, 0, len(env))
+	for key, value := range env {
+		pairs = append(pairs, key+"="+value)
+	}
+	return pairs
 }
