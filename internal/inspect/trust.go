@@ -25,6 +25,7 @@ func ProcessScopedEnv(bundlePath, proxyURL string) map[string]string {
 		"GIT_SSL_CAINFO":            bundlePath,
 		"NODE_EXTRA_CA_CERTS":       bundlePath,
 		"npm_config_cafile":         bundlePath,
+		"PNPM_CONFIG_CAFILE":        bundlePath,
 		"YARN_CA_FILE":              bundlePath,
 	}
 	if strings.TrimSpace(proxyURL) != "" {

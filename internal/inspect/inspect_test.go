@@ -129,7 +129,7 @@ func TestScopeBypassAndDomainControls(t *testing.T) {
 
 func TestProcessScopedEnvIncludesTrustAndProxy(t *testing.T) {
 	env := ProcessScopedEnv("/tmp/ca.pem", "http://127.0.0.1:12345")
-	for _, key := range []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS", "npm_config_cafile", "YARN_CA_FILE"} {
+	for _, key := range []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS", "npm_config_cafile", "PNPM_CONFIG_CAFILE", "YARN_CA_FILE"} {
 		if env[key] != "/tmp/ca.pem" {
 			t.Fatalf("%s = %q", key, env[key])
 		}
@@ -239,6 +239,9 @@ func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 	exchange := seen[0]
 	if exchange.TLS.InspectionMode != "local_mitm" {
 		t.Fatalf("mode = %q", exchange.TLS.InspectionMode)
+	}
+	if exchange.Network.RemoteIP != "127.0.0.1" || exchange.Network.RemotePort == 0 {
+		t.Fatalf("remote metrics missing for MITM exchange: %+v", exchange.Network)
 	}
 	if exchange.SessionID != "s1" || exchange.ToolUseID != "tool-1" {
 		t.Fatalf("context not preserved: %+v", exchange)
@@ -423,6 +426,80 @@ func TestProcessScopedPythonRequestsTrustsInspectCAWhenAvailable(t *testing.T) {
 	}
 	if strings.TrimSpace(string(out)) != "ok" {
 		t.Fatalf("python output = %q, want ok", out)
+	}
+	waitForEvents(t, seen, 1)
+	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
+func TestProcessScopedNodeTrustsInspectCAWhenAvailable(t *testing.T) {
+	node := findExecutableForTest(t, "node")
+	upstream, proxy, seen := processScopedClientFixture(t)
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	script := `
+const net = require('net');
+const tls = require('tls');
+const proxyUrl = new URL(process.env.HTTPS_PROXY);
+const token = Buffer.from(proxyUrl.username + ':' + proxyUrl.password).toString('base64');
+const socket = net.connect(Number(proxyUrl.port), proxyUrl.hostname);
+socket.setTimeout(5000);
+socket.once('connect', () => {
+  socket.write('CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\nProxy-Authorization: Basic ' + token + '\r\n\r\n');
+});
+let prelude = '';
+socket.on('data', function onPrelude(chunk) {
+  prelude += chunk.toString('utf8');
+  if (!prelude.includes('\r\n\r\n')) return;
+  socket.off('data', onPrelude);
+  if (!prelude.startsWith('HTTP/1.1 200')) throw new Error(prelude);
+  const secure = tls.connect({ socket, servername: 'api.example.com' }, () => {
+    secure.write('GET /hello HTTP/1.1\r\nHost: api.example.com\r\nConnection: close\r\n\r\n');
+  });
+  let body = '';
+  secure.on('data', (chunk) => { body += chunk.toString('utf8'); });
+  secure.on('end', () => {
+    if (!body.includes('\r\n\r\nok')) throw new Error(body);
+    console.log('ok');
+  });
+});
+`
+	cmd := exec.Command(node, "-e", script)
+	cmd.Env = append(os.Environ(), envPairs(ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL()))...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node failed: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("node output = %q, want ok", out)
+	}
+	waitForEvents(t, seen, 1)
+	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
+func TestProcessScopedGitTrustsInspectCAWhenAvailable(t *testing.T) {
+	git := findExecutableForTest(t, "git")
+	upstream, proxy, seen := processScopedClientFixture(t)
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, git, "-c", "protocol.version=0", "ls-remote", "https://api.example.com/repo.git")
+	cmd.Env = append(os.Environ(), envPairs(ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL()))...)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("git timed out: %v\n%s", ctx.Err(), out)
+	}
+	lower := strings.ToLower(string(out))
+	for _, bad := range []string{"certificate", "x509", "ssl certificate problem"} {
+		if strings.Contains(lower, bad) {
+			t.Fatalf("git failed before trusting inspect CA: %v\n%s", err, out)
+		}
 	}
 	waitForEvents(t, seen, 1)
 	if (*seen)[0].TLS.InspectionMode != "local_mitm" {

@@ -76,7 +76,7 @@ func main() {
 }
 
 func printInspectDoctor() {
-	status := inspect.CurrentStatus(inspect.ProxyStatus{})
+	status := currentInspectStatus()
 	fmt.Printf("HTTPS Inspect Mode: %s\n", onOff(status.Enabled))
 	fmt.Printf("Managed proxy: %s\n", onOff(status.Proxy.Listening))
 	if status.Proxy.Address != "" {
@@ -97,11 +97,7 @@ func printInspectDoctor() {
 }
 
 func checkInspectMode() check {
-	proxyStatus := inspect.ProxyStatus{}
-	if status, err := asruntime.ReadStatus(); err == nil {
-		proxyStatus = status.Inspect.Proxy
-	}
-	status := inspect.CurrentStatus(proxyStatus)
+	status := currentInspectStatus()
 	if !status.Enabled && !status.CA.Present && !status.Trust.SystemTrusted {
 		return check{name: "HTTPS Inspect", ok: true, status: "OFF", detail: "off by default; no local CA trusted"}
 	}
@@ -118,6 +114,22 @@ func checkInspectMode() check {
 		return check{name: "HTTPS Inspect", ok: true, status: "WARN", detail: strings.Join(append(detail, status.Warnings...), "; ")}
 	}
 	return check{name: "HTTPS Inspect", ok: true, status: onOff(status.Enabled), detail: strings.Join(detail, "; ")}
+}
+
+func currentInspectStatus() inspect.Status {
+	if runtimeStatus, err := asruntime.ReadStatus(); err == nil {
+		status := inspect.CurrentStatus(runtimeStatus.Inspect.Proxy)
+		status.ProcessEnv = runtimeStatus.Inspect.ProcessEnv
+		if runtimeStatus.LastInspectedHTTP != nil {
+			host := runtimeStatus.LastInspectedHTTP.Request.Host
+			if host == "" {
+				host = runtimeStatus.LastInspectedHTTP.Network.Remote
+			}
+			status.LastInspection = strings.TrimSpace(host)
+		}
+		return status
+	}
+	return inspect.CurrentStatus(inspect.ProxyStatus{})
 }
 
 func onOff(value bool) string {

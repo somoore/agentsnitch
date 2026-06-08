@@ -40,7 +40,7 @@ func runInspect(args []string) {
 	}
 	switch args[0] {
 	case "status":
-		printJSON(inspect.CurrentStatus(inspect.ProxyStatus{}))
+		printJSON(currentInspectStatus())
 	case "env":
 		printInspectEnv()
 	case "run":
@@ -116,6 +116,22 @@ func runInspect(args []string) {
 		usage()
 		os.Exit(2)
 	}
+}
+
+func currentInspectStatus() inspect.Status {
+	if runtimeStatus, err := asruntime.ReadStatus(); err == nil {
+		status := inspect.CurrentStatus(runtimeStatus.Inspect.Proxy)
+		status.ProcessEnv = runtimeStatus.Inspect.ProcessEnv
+		if runtimeStatus.LastInspectedHTTP != nil {
+			host := runtimeStatus.LastInspectedHTTP.Request.Host
+			if host == "" {
+				host = runtimeStatus.LastInspectedHTTP.Network.Remote
+			}
+			status.LastInspection = strings.TrimSpace(host)
+		}
+		return status
+	}
+	return inspect.CurrentStatus(inspect.ProxyStatus{})
 }
 
 func liveInspectEnv() map[string]string {

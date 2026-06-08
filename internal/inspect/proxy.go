@@ -156,21 +156,20 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Co
 		http.Error(w, "bad proxy request", http.StatusBadRequest)
 		return
 	}
-	resp, respBody, err := p.roundTrip(upstream, nil)
+	resp, respBody, network, err := p.roundTrip(upstream, nil)
 	if err != nil {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	copyResponse(w, resp, respBody)
+	network.BytesOut = int64(len(body))
+	network.BytesIn = int64(len(respBody))
+	network.DurationMS = time.Since(started).Milliseconds()
 	p.emit(ExchangeFromHTTP(ctx, Capture{
 		Settings: p.settings,
 		Paths:    p.paths,
-		Network: event.InspectedHTTPNetwork{
-			BytesOut:   int64(len(body)),
-			BytesIn:    int64(len(respBody)),
-			DurationMS: time.Since(started).Milliseconds(),
-		},
+		Network:  network,
 	}, req, body, resp, respBody, "metadata_only", "", false))
 }
 
@@ -242,7 +241,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		return
 	}
 	var tlsState *tls.ConnectionState
-	resp, respBody, err := p.roundTrip(upstreamReq, &tlsState)
+	resp, respBody, network, err := p.roundTrip(upstreamReq, &tlsState)
 	if err != nil {
 		_, _ = io.WriteString(tlsClient, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
 		return
@@ -256,15 +255,14 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		upstreamVersion = tlsVersionName(tlsState.Version)
 	}
 	info, _ := p.certs.Info()
+	network.BytesOut = int64(len(reqBody))
+	network.BytesIn = int64(len(respBody))
+	network.DurationMS = time.Since(started).Milliseconds()
 	exchange := ExchangeFromHTTP(ctx, Capture{
 		Settings:      p.settings,
 		CAFingerprint: info.Fingerprint,
 		Paths:         p.paths,
-		Network: event.InspectedHTTPNetwork{
-			BytesOut:   int64(len(reqBody)),
-			BytesIn:    int64(len(respBody)),
-			DurationMS: time.Since(started).Milliseconds(),
-		},
+		Network:       network,
 	}, clientReq, reqBody, resp, respBody, "local_mitm", upstreamVersion, true)
 	p.emit(exchange)
 }
@@ -430,15 +428,25 @@ func constantTimeStringEqual(a, b string) bool {
 	return diff == 0
 }
 
-func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*http.Response, []byte, error) {
+func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*http.Response, []byte, event.InspectedHTTPNetwork, error) {
+	var remote net.Addr
+	var remoteMu sync.Mutex
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = p.dial
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := p.dial(ctx, network, addr)
+		if err == nil && conn != nil {
+			remoteMu.Lock()
+			remote = conn.RemoteAddr()
+			remoteMu.Unlock()
+		}
+		return conn, err
+	}
 	if p.upstreamTLSConfig != nil {
 		transport.TLSClientConfig = p.upstreamTLSConfig
 	}
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, event.InspectedHTTPNetwork{}, err
 	}
 	if tlsState != nil && resp.TLS != nil {
 		state := *resp.TLS
@@ -446,11 +454,15 @@ func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*h
 	}
 	body, err := io.ReadAll(limitReader(resp.Body, 16<<20))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, event.InspectedHTTPNetwork{}, err
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
-	return resp, body, nil
+	remoteMu.Lock()
+	network := networkFromRemote(remote, time.Now())
+	remoteMu.Unlock()
+	network.DurationMS = 0
+	return resp, body, network, nil
 }
 
 func copyResponse(w http.ResponseWriter, resp *http.Response, body []byte) {
