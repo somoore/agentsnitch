@@ -93,7 +93,44 @@ func TestNetworkStatisticsObserverEnabledTreatsOnlyExplicitTrueAsDisabled(t *tes
 	}
 }
 
+func TestReverseDNSLookupEnabledDefaultsOff(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"1", true},
+		{"true", true},
+		{"yes", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("AGENTSNITCH_ENABLE_REVERSE_DNS", tc.value)
+			if got := reverseDNSLookupEnabled(); got != tc.want {
+				t.Fatalf("reverseDNSLookupEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnrichNetworkHostnameSkipsReverseDNSByDefault(t *testing.T) {
+	resetReverseDNSCacheForTest(t)
+	reverseDNSLookup = func(context.Context, string) ([]string, error) {
+		t.Fatal("reverse DNS should be opt-in")
+		return nil, nil
+	}
+
+	flow := event.NetworkFlowEvent{Remote: "93.184.216.34:443"}
+	enrichNetworkHostname(&flow)
+	if flow.PTRHostname != "" {
+		t.Fatalf("PTRHostname = %q, want empty when reverse DNS is disabled", flow.PTRHostname)
+	}
+}
+
 func TestEnrichNetworkHostnameKeepsReverseDNSOutOfSNI(t *testing.T) {
+	t.Setenv("AGENTSNITCH_ENABLE_REVERSE_DNS", "1")
 	originalLookup := reverseDNSLookup
 	defer func() {
 		reverseDNSLookup = originalLookup
@@ -306,6 +343,53 @@ func TestDaemonSessionsPruneIdleSessionsWithoutLiveAgentPID(t *testing.T) {
 	got := sessions.list()
 	if len(got) != 1 || got[0].id != "live" {
 		t.Fatalf("sessions after prune = %+v, want only live session", got)
+	}
+}
+
+func TestReconcileInspectCorrelationRequiresActiveToolSpan(t *testing.T) {
+	sessions := newDaemonSessions()
+	session := sessions.getOrCreate("session-1")
+	session.state.AddSemanticEvent(event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "session-1"},
+		Event:     "PreToolUse",
+		Tool:      "Bash",
+		Tags:      []string{"external_egress_attempt"},
+		ToolUseID: "tool-1",
+		TS:        time.Now().UTC(),
+	})
+
+	exchange := event.InspectedHTTPExchange{
+		Schema:    event.SchemaInspectedHTTPV0,
+		TS:        time.Now().UTC(),
+		SessionID: "session-1",
+		ToolUseID: "tool-1",
+		Request: event.InspectedHTTPRequest{
+			Method: "POST",
+			Scheme: "https",
+			Host:   "api.example.com",
+			Path:   "/upload",
+		},
+		TLS: event.InspectedHTTPTLS{InspectionMode: "local_mitm"},
+		Correlation: event.InspectedHTTPCorrelation{
+			Basis:      []string{"managed_proxy", "exact_requested_host"},
+			Confidence: "medium",
+		},
+	}
+	got := reconcileInspectCorrelation(exchange, sessions)
+	if got.SpanID != "tool-1" || got.Correlation.Confidence != "high" || !containsString(got.Correlation.Basis, "active_tool_span") {
+		t.Fatalf("active span not attached: %+v", got)
+	}
+
+	session.state.AddSemanticEvent(event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "session-1"},
+		Event:     "PostToolUse",
+		Tool:      "Bash",
+		ToolUseID: "tool-1",
+		TS:        time.Now().UTC().Add(time.Second),
+	})
+	got = reconcileInspectCorrelation(exchange, sessions)
+	if containsString(got.Correlation.Basis, "active_tool_span") || got.Correlation.Confidence != "medium" {
+		t.Fatalf("closed span should not be active basis: %+v", got)
 	}
 }
 
@@ -1186,6 +1270,7 @@ func TestShouldForwardRawNetworkToUIAllowsAgentRelevantNewFlow(t *testing.T) {
 }
 
 func TestEnrichNetworkHostnameUsesCachedReverseDNS(t *testing.T) {
+	t.Setenv("AGENTSNITCH_ENABLE_REVERSE_DNS", "1")
 	resetReverseDNSCacheForTest(t)
 	calls := 0
 	reverseDNSLookup = func(_ context.Context, ip string) ([]string, error) {

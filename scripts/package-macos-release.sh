@@ -91,6 +91,7 @@ require_file "$ROOT_DIR/bin/daemon"
 require_file "$ROOT_DIR/bin/doctor"
 require_file "$ROOT_DIR/bin/hookctl"
 require_file "$ROOT_DIR/bin/neready"
+require_file "$ROOT_DIR/bin/agentsnitchctl"
 
 mkdir -p "$DIST_DIR"
 require_agentsnitch_path_for_delete "$WORK_DIR"
@@ -110,6 +111,7 @@ cp -X "$ROOT_DIR/bin/emitter" "$PKGROOT/Library/Application Support/AgentSnitch/
 cp -X "$ROOT_DIR/bin/doctor" "$PKGROOT/Library/Application Support/AgentSnitch/bin/doctor"
 cp -X "$ROOT_DIR/bin/hookctl" "$PKGROOT/Library/Application Support/AgentSnitch/bin/hookctl"
 cp -X "$ROOT_DIR/bin/neready" "$PKGROOT/Library/Application Support/AgentSnitch/bin/neready"
+cp -X "$ROOT_DIR/bin/agentsnitchctl" "$PKGROOT/Library/Application Support/AgentSnitch/bin/agentsnitchctl"
 chmod 0755 "$PKGROOT/Library/Application Support/AgentSnitch/bin/"*
 
 if [[ -n "$APP_SIGN_IDENTITY" && "$APP_SIGN_IDENTITY" != "-" ]]; then
@@ -117,9 +119,10 @@ if [[ -n "$APP_SIGN_IDENTITY" && "$APP_SIGN_IDENTITY" != "-" ]]; then
   for binary in \
     "$PKGROOT/Library/Application Support/AgentSnitch/bin/AgentSnitch" \
     "$PKGROOT/Library/Application Support/AgentSnitch/bin/emitter" \
-    "$PKGROOT/Library/Application Support/AgentSnitch/bin/doctor" \
-    "$PKGROOT/Library/Application Support/AgentSnitch/bin/hookctl" \
-    "$PKGROOT/Library/Application Support/AgentSnitch/bin/neready"; do
+	    "$PKGROOT/Library/Application Support/AgentSnitch/bin/doctor" \
+	    "$PKGROOT/Library/Application Support/AgentSnitch/bin/hookctl" \
+	    "$PKGROOT/Library/Application Support/AgentSnitch/bin/neready" \
+	    "$PKGROOT/Library/Application Support/AgentSnitch/bin/agentsnitchctl"; do
     codesign --force --sign "$APP_SIGN_IDENTITY" --options runtime --timestamp "$binary"
   done
 fi

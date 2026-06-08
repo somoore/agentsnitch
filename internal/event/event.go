@@ -10,10 +10,11 @@ import (
 
 // Schema versions for wire stability.
 const (
-	SchemaSemanticV0   = "agentsnitch.semantic.v0"
-	SchemaNetworkV0    = "agentsnitch.network.v0"
-	SchemaCorrelatedV0 = "agentsnitch.correlated.v0"
-	SchemaAgentV0      = "agentsnitch.agent.v0"
+	SchemaSemanticV0      = "agentsnitch.semantic.v0"
+	SchemaNetworkV0       = "agentsnitch.network.v0"
+	SchemaCorrelatedV0    = "agentsnitch.correlated.v0"
+	SchemaAgentV0         = "agentsnitch.agent.v0"
+	SchemaInspectedHTTPV0 = "agentsnitch.inspected_http.v0"
 	// SchemaControlV0 is a UI->daemon control message (e.g. pause/resume sensing).
 	// It is not product evidence; it never produces a card.
 	SchemaControlV0 = "agentsnitch.control.v0"
@@ -544,6 +545,75 @@ type AgentLifecycleEvent struct {
 	Agent  AgentInfo `json:"agent"`
 }
 
+// InspectedHTTPExchange is local HTTPS Inspect Mode evidence. It is emitted only
+// by the managed localhost proxy and is deliberately narrower than a raw packet
+// capture: secret-bearing headers are redacted, body previews are retention-bound,
+// and correlation language stays limited to what the proxy actually observed.
+type InspectedHTTPExchange struct {
+	Schema      string                   `json:"schema"`
+	TS          time.Time                `json:"ts"`
+	SessionID   string                   `json:"session_id,omitempty"`
+	SpanID      string                   `json:"span_id,omitempty"`
+	ToolUseID   string                   `json:"tool_use_id,omitempty"`
+	Request     InspectedHTTPRequest     `json:"request"`
+	Response    InspectedHTTPResponse    `json:"response"`
+	TLS         InspectedHTTPTLS         `json:"tls"`
+	Retention   InspectedHTTPRetention   `json:"retention"`
+	Correlation InspectedHTTPCorrelation `json:"correlation"`
+}
+
+type InspectedHTTPRequest struct {
+	Method           string                `json:"method"`
+	Scheme           string                `json:"scheme"`
+	Host             string                `json:"host"`
+	Path             string                `json:"path"`
+	QueryRedacted    bool                  `json:"query_redacted"`
+	Headers          []InspectedHTTPHeader `json:"headers"`
+	ContentType      string                `json:"content_type,omitempty"`
+	BodySize         int64                 `json:"body_size"`
+	BodySHA256       string                `json:"body_sha256,omitempty"`
+	Preview          string                `json:"preview,omitempty"`
+	PreviewTruncated bool                  `json:"preview_truncated"`
+	RedactionCount   int                   `json:"redaction_count"`
+}
+
+type InspectedHTTPResponse struct {
+	Status           int    `json:"status"`
+	ContentType      string `json:"content_type,omitempty"`
+	BodySize         int64  `json:"body_size"`
+	BodySHA256       string `json:"body_sha256,omitempty"`
+	Preview          string `json:"preview,omitempty"`
+	PreviewTruncated bool   `json:"preview_truncated"`
+	RedactionCount   int    `json:"redaction_count"`
+}
+
+type InspectedHTTPHeader struct {
+	Name        string `json:"name"`
+	Present     bool   `json:"present"`
+	Redacted    bool   `json:"redacted"`
+	ValueSHA256 string `json:"value_sha256,omitempty"`
+	Preview     string `json:"preview,omitempty"`
+}
+
+type InspectedHTTPTLS struct {
+	InspectionMode     string `json:"inspection_mode"`
+	CAFingerprint      string `json:"ca_fingerprint,omitempty"`
+	LeafCertGenerated  bool   `json:"leaf_cert_generated"`
+	UpstreamTLSVersion string `json:"upstream_tls_version,omitempty"`
+}
+
+type InspectedHTTPRetention struct {
+	PayloadMode       string `json:"payload_mode"`
+	PreviewBytes      int    `json:"preview_bytes"`
+	FullPayloadStored bool   `json:"full_payload_stored"`
+	Retention         string `json:"retention"`
+}
+
+type InspectedHTTPCorrelation struct {
+	Basis      []string `json:"basis"`
+	Confidence string   `json:"confidence"`
+}
+
 // ValidateCorrelatedEvent enforces the linked-evidence contract shown by the UI
 // and doctor. Correlation is a derived claim, so it must carry both source
 // events, explain why they were linked, and avoid stronger language than the
@@ -594,6 +664,76 @@ func ValidateCorrelatedEvent(c CorrelatedEvent) error {
 		if err := ValidateNetworkFlow(flow); err != nil {
 			return fmt.Errorf("correlated flow[%d] invalid: %w", i, err)
 		}
+	}
+	return nil
+}
+
+func NormalizeInspectedHTTPExchange(x *InspectedHTTPExchange) {
+	if x == nil {
+		return
+	}
+	if x.Schema == "" {
+		x.Schema = SchemaInspectedHTTPV0
+	}
+	if x.TS.IsZero() {
+		x.TS = time.Now().UTC()
+	}
+	x.SessionID = strings.TrimSpace(x.SessionID)
+	x.SpanID = strings.TrimSpace(x.SpanID)
+	x.ToolUseID = strings.TrimSpace(x.ToolUseID)
+	x.Request.Method = strings.ToUpper(strings.TrimSpace(x.Request.Method))
+	x.Request.Scheme = strings.ToLower(strings.TrimSpace(x.Request.Scheme))
+	x.Request.Host = strings.ToLower(strings.TrimSpace(x.Request.Host))
+	x.Request.Path = strings.TrimSpace(x.Request.Path)
+	x.Request.ContentType = strings.TrimSpace(x.Request.ContentType)
+	x.Response.ContentType = strings.TrimSpace(x.Response.ContentType)
+	x.TLS.InspectionMode = strings.TrimSpace(x.TLS.InspectionMode)
+	x.TLS.CAFingerprint = strings.TrimSpace(x.TLS.CAFingerprint)
+	x.TLS.UpstreamTLSVersion = strings.TrimSpace(x.TLS.UpstreamTLSVersion)
+	x.Retention.PayloadMode = strings.TrimSpace(x.Retention.PayloadMode)
+	x.Retention.Retention = strings.TrimSpace(x.Retention.Retention)
+	x.Correlation.Confidence = strings.TrimSpace(x.Correlation.Confidence)
+	x.Correlation.Basis = normalizeStringSlice(x.Correlation.Basis)
+	for i := range x.Request.Headers {
+		x.Request.Headers[i].Name = strings.ToLower(strings.TrimSpace(x.Request.Headers[i].Name))
+	}
+}
+
+func ValidateInspectedHTTPExchange(x InspectedHTTPExchange) error {
+	NormalizeInspectedHTTPExchange(&x)
+	if x.Schema != SchemaInspectedHTTPV0 {
+		return fmt.Errorf("unsupported inspected HTTP schema %q", x.Schema)
+	}
+	if x.TS.IsZero() {
+		return errors.New("inspected HTTP exchange missing timestamp")
+	}
+	if x.Request.Method == "" {
+		return errors.New("inspected HTTP exchange missing request method")
+	}
+	if x.Request.Scheme != "http" && x.Request.Scheme != "https" {
+		return fmt.Errorf("unsupported inspected HTTP scheme %q", x.Request.Scheme)
+	}
+	if x.Request.Host == "" {
+		return errors.New("inspected HTTP exchange missing request host")
+	}
+	if x.Request.Path == "" {
+		return errors.New("inspected HTTP exchange missing request path")
+	}
+	if x.Request.BodySize < 0 || x.Response.BodySize < 0 {
+		return errors.New("inspected HTTP exchange body sizes cannot be negative")
+	}
+	switch x.TLS.InspectionMode {
+	case "metadata_only", "local_mitm", "trust_failed", "pinned_or_custom_trust", "unsupported_protocol":
+	default:
+		return fmt.Errorf("unsupported inspected HTTP TLS mode %q", x.TLS.InspectionMode)
+	}
+	switch x.Correlation.Confidence {
+	case "low", "medium", "high":
+	default:
+		return fmt.Errorf("unsupported inspected HTTP confidence %q", x.Correlation.Confidence)
+	}
+	if len(x.Correlation.Basis) == 0 {
+		return errors.New("inspected HTTP exchange missing correlation basis")
 	}
 	return nil
 }

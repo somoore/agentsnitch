@@ -1,0 +1,115 @@
+- generic [ref=e1] [box=0,0,1200,773]:
+  - generic [ref=e2] [box=0,0,1200,773]:
+    - generic [ref=e3] [box=1,1,1198,42]:
+      - generic [ref=e4] [box=11,13,1132,17]: AgentSnitch
+      - generic [ref=e5] [box=1151,14,30,15]: idle
+    - generic [ref=e8] [box=36,50,1144,14]: No sensitive context has left this machine.
+    - generic [ref=e9] [box=1,77,1198,37]:
+      - button "Overview" [ref=e10] [cursor=pointer] [box=7,83,234,24]
+      - button "Agents 0" [ref=e11] [cursor=pointer] [box=245,83,234,24]
+      - button "Evidence 0" [ref=e12] [cursor=pointer] [box=483,83,234,24]
+      - button "Raw 0" [ref=e13] [cursor=pointer] [box=721,83,234,24]
+      - button "Flow Trace 0" [ref=e14] [cursor=pointer] [box=959,83,234,24]
+    - generic [ref=e329] [box=7,118,1186,345]:
+      - generic [ref=e330] [box=7,118,1186,29]:
+        - generic [ref=e331] [box=15,125,1124,15]: Watching Claude Code on this Mac for the first real hook or network observation.
+        - generic [ref=e332] [box=1147,125,38,15]: All local
+      - generic [ref=e333] [box=7,163,1186,83]:
+        - generic [ref=e334] [box=7,163,1186,14]: Ready for a Claude Code session
+        - generic [ref=e335] [box=7,184,1186,62]:
+          - generic [ref=e336] [box=7,184,391,62]:
+            - generic [ref=e337] [box=16,193,373,14]: Local observer ready
+            - generic [ref=e338] [box=16,210,373,27]: "Idle · Hooks installed · Network ready · User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic [ref=e339] [box=404,184,391,62]:
+            - generic [ref=e340] [box=413,193,373,14]: Waiting for real activity
+            - generic [ref=e341] [box=413,210,373,27]: Run Claude Code on this Mac and use a tool such as Read, Bash, WebFetch, or MCP. No demo evidence is injected.
+          - generic [ref=e342] [box=802,184,391,62]:
+            - generic [ref=e343] [box=811,193,373,14]: What will appear
+            - generic [ref=e344] [box=811,210,373,27]: Agents, subagents, tool calls, outbound flows, linked evidence, and destination paths will populate as they are observed.
+      - generic [ref=e345] [box=7,256,1186,83]:
+        - generic [ref=e346] [box=7,256,1186,14]: What AgentSnitch can prove
+        - generic [ref=e347] [box=7,276,1186,62]:
+          - generic "Known Claude destinations are lower surprise by default, so ordinary API traffic does not dominate the review surface." [ref=e348] [box=7,276,292,62]:
+            - generic [ref=e349] [box=16,285,274,14]: Known Claude traffic
+            - generic [ref=e350] [box=16,302,274,14]: Claude/API traffic is grouped when observed
+          - generic "First-time external hosts, cloud providers, raw IPs, and large transfers are promoted above routine traffic." [ref=e351] [box=305,276,292,62]:
+            - generic [ref=e352] [box=314,285,274,14]: Unexpected destinations
+            - generic [ref=e353] [box=314,302,274,14]: New external destinations will stand out
+          - generic "AgentSnitch shows observed evidence only; short-lived flows can be missed by the default observer." [ref=e354] [box=603,276,292,62]:
+            - generic [ref=e355] [box=612,285,274,14]: Coverage
+            - generic [ref=e356] [box=612,302,274,27]: "User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic "The app is local visibility for Claude Code/macOS today, with exportable evidence when you need to share a session." [ref=e357] [box=901,276,292,62]:
+            - generic [ref=e358] [box=910,285,274,14]: Scope
+            - generic [ref=e359] [box=910,302,274,14]: Claude Code on this Mac
+      - generic [ref=e360] [box=7,348,1186,53]:
+        - generic [ref=e361] [box=7,348,1186,14]: Agents
+        - generic [ref=e362] [box=7,369,1186,32]: No Claude Code agents detected yet — running sessions and their subagents will appear here.
+      - generic [ref=e363] [box=7,411,1186,53]:
+        - generic [ref=e364] [box=7,411,1186,14]: Needs a look
+        - generic [ref=e365] [box=7,431,1186,32]: Nothing needs a look. New external destinations, sensitive-context reads, and large transfers would surface here.
+    - generic [ref=e53] [box=1,744,1198,29]:
+      - generic [ref=e54] [box=9,752,810,13]: Idle · Hooks installed · Network ready · all local
+      - button "Pause" [ref=e55] [cursor=pointer] [box=825,749,47,20]
+      - button "Quiet known" [ref=e56] [cursor=pointer] [box=878,749,74,20]
+      - button "Quiet" [ref=e57] [cursor=pointer] [box=958,749,42,20]
+      - button "Clear" [ref=e58] [cursor=pointer] [box=1005,749,42,20]
+      - button "Debug" [ref=e59] [cursor=pointer] [box=1053,749,47,20]
+      - button "Evidence Pack" [ref=e60] [cursor=pointer] [box=1107,749,84,20]
+  - dialog "Settings" [ref=e61] [box=0,0,1200,773]:
+    - generic [ref=e62] [box=220,134,760,504]:
+      - generic [ref=e63] [box=221,135,758,41]:
+        - generic [ref=e64] [box=233,147,54,17]: Settings
+        - button "Close" [ref=e65] [cursor=pointer] [box=923,145,44,20]
+      - tablist "Settings sections" [ref=e66] [box=221,176,758,28]:
+        - tab "General" [ref=e67] [cursor=pointer] [box=233,184,82,20]
+        - tab "Hooks" [active] [selected] [ref=e68] [cursor=pointer] [box=321,184,82,20]
+        - tab "Advanced" [ref=e69] [cursor=pointer] [box=409,184,82,20]
+        - tab "Developer" [ref=e70] [cursor=pointer] [box=497,184,82,20]
+      - tabpanel "Hooks" [ref=e285] [box=233,215,734,370]:
+        - generic [ref=e286] [box=233,215,734,128]:
+          - generic [ref=e287] [box=233,217,734,12]: Claude Code
+          - generic [ref=e288] [box=233,237,734,44]:
+            - generic [ref=e289] [box=233,237,660,44]:
+              - generic [ref=e290] [box=233,237,660,14]: Hook integration
+              - generic [ref=e291] [box=233,253,660,13]: No supported coding agents were found
+              - paragraph [ref=e292] [box=233,268,520,13]: Choose which Claude Code hooks AgentSnitch should install and keep current.
+            - generic [ref=e293] [box=903,249,64,20]: Not found
+          - generic [ref=e294] [box=247,289,720,52]:
+            - generic [ref=e295] [box=260,297,677,44]:
+              - generic [ref=e296] [box=260,297,677,14]: Keep hooks up to date
+              - generic [ref=e297] [box=260,314,677,13]: Automatic updates on
+              - paragraph [ref=e298] [box=260,329,520,13]: Refresh installed hook commands when AgentSnitch starts.
+            - generic "Automatically update AgentSnitch Claude Code hooks" [ref=e299] [box=947,297,20,20]:
+              - checkbox [checked] [ref=e300] [box=951,300,13,13]
+        - generic [ref=e301] [box=233,356,734,230]:
+          - generic [ref=e302] [box=233,369,734,12]: Installed hooks
+          - generic [ref=e303] [box=233,388,734,29]:
+            - generic [ref=e304] [box=233,388,449,29]:
+              - generic [ref=e305] [box=233,388,449,14]: Hook set
+              - generic [ref=e306] [box=233,405,449,13]: AgentSnitch emitter helper is missing
+            - generic [ref=e307] [box=692,388,275,24]:
+              - combobox "Choose coding agent hook target" [ref=e308] [box=692,388,67,24]:
+                - option "All" [selected] [box=0,0,0,0]
+              - button "Select All" [ref=e309] [cursor=pointer] [box=766,388,59,24]
+              - button "Select None" [ref=e310] [cursor=pointer] [box=834,388,72,24]
+              - button "Refresh" [ref=e311] [cursor=pointer] [box=914,388,53,24]
+          - generic [ref=e312] [box=233,418,734,115]:
+            - generic [ref=e313] [box=233,418,734,53]:
+              - checkbox "Select PreToolUse" [checked] [ref=e314] [box=246,429,13,13]
+              - generic [ref=e315] [box=272,427,619,35]:
+                - generic [ref=e316] [box=272,427,619,14]: PreToolUse
+                - generic [ref=e317] [box=272,443,619,13]: Before tool calls
+              - generic [ref=e318] [box=901,427,57,20]: Installed
+            - generic [ref=e319] [box=233,479,734,53]:
+              - checkbox "Select PostToolUse" [checked] [ref=e320] [box=246,490,13,13]
+              - generic [ref=e321] [box=272,488,619,35]:
+                - generic [ref=e322] [box=272,488,619,14]: PostToolUse
+                - generic [ref=e323] [box=272,504,619,13]: After tool calls
+              - generic [ref=e324] [box=901,488,57,20]: Installed
+          - paragraph [ref=e325] [box=233,536,734,28]: Hooks are current
+          - generic [ref=e326] [box=233,564,734,20]:
+            - button "Remove Hooks" [ref=e327] [cursor=pointer] [box=762,564,86,20]
+            - button "Install/Update Hooks" [ref=e328] [cursor=pointer] [box=857,564,110,20]
+      - generic [ref=e124] [box=221,597,758,41]:
+        - button "Cancel" [ref=e125] [cursor=pointer] [box=869,608,49,20]
+        - button "Save" [ref=e126] [cursor=pointer] [box=926,608,41,20]

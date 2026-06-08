@@ -203,6 +203,7 @@ install_support_binaries() {
   install -m 0755 "$ROOT/bin/doctor" "$SUPPORT_BIN/doctor"
   install -m 0755 "$ROOT/bin/hookctl" "$SUPPORT_BIN/hookctl"
   install -m 0755 "$ROOT/bin/neready" "$SUPPORT_BIN/neready"
+  install -m 0755 "$ROOT/bin/agentsnitchctl" "$SUPPORT_BIN/agentsnitchctl"
 }
 
 sign_support_binaries() {
@@ -222,6 +223,7 @@ sign_support_binaries() {
   codesign --force --sign "$identity" --identifier com.somoore.agentsnitch.doctor --options runtime "${timestamp_args[@]}" "$SUPPORT_BIN/doctor"
   codesign --force --sign "$identity" --identifier com.somoore.agentsnitch.hookctl --options runtime "${timestamp_args[@]}" "$SUPPORT_BIN/hookctl"
   codesign --force --sign "$identity" --identifier com.somoore.agentsnitch.neready --options runtime "${timestamp_args[@]}" "$SUPPORT_BIN/neready"
+  codesign --force --sign "$identity" --identifier com.somoore.agentsnitch.cli --options runtime "${timestamp_args[@]}" "$SUPPORT_BIN/agentsnitchctl"
 }
 
 write_launch_agent() {
@@ -229,13 +231,26 @@ write_launch_agent() {
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.agentsnitch"
   local disable_network_statistics="${AGENTSNITCH_DISABLE_NETWORK_STATISTICS:-0}"
   local disable_lsof="${AGENTSNITCH_DISABLE_LSOF:-0}"
+  local enable_reverse_dns="${AGENTSNITCH_ENABLE_REVERSE_DNS:-0}"
+  local settings_file="$HOME/.agentsnitch/ui-settings.json"
+  if [[ "$enable_reverse_dns" != "1" && -f "$settings_file" ]] \
+    && grep -Eq '"reverse_dns_enabled"[[:space:]]*:[[:space:]]*true' "$settings_file" \
+    && grep -Eq '"reverse_dns_always_on"[[:space:]]*:[[:space:]]*true' "$settings_file"; then
+    enable_reverse_dns="1"
+  fi
+  local reverse_dns_block=""
+  if [[ "$enable_reverse_dns" == "1" ]]; then
+    reverse_dns_block="
+    <key>AGENTSNITCH_ENABLE_REVERSE_DNS</key>
+    <string>1</string>"
+  fi
   local disable_lsof_block="
   <key>EnvironmentVariables</key>
   <dict>
     <key>AGENTSNITCH_DISABLE_NETWORK_STATISTICS</key>
     <string>$disable_network_statistics</string>
     <key>AGENTSNITCH_DISABLE_LSOF</key>
-    <string>$disable_lsof</string>
+    <string>$disable_lsof</string>$reverse_dns_block
   </dict>"
   cat > "$LAUNCH_AGENT_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

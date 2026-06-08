@@ -101,6 +101,19 @@ jobs:
       - name: govulncheck
         run: govulncheck ./...
 
+  network-extension-invariants:
+    name: Network Extension static invariants
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Check Network Extension invariants
+        run: ./scripts/check-network-extension-invariants.sh
+
+      - name: Regression-test Network Extension invariants
+        run: ./scripts/test-network-extension-invariants.sh
+
   rust:
     name: Rust (build / test / clippy / fmt / deny)
     needs: changes

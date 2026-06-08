@@ -10,8 +10,8 @@
 1. **Sensors, not gates.** Hooks exist to emit high-fidelity semantic signals. They do not decide, block, or even slow down the agent. Userland OS observations are the default network signal; the Network Extension is optional, metadata-only observation. Correlation is the value.
 2. **Visibility proves the need.** We are not trying to build the ultimate filter on day one. We are trying to generate undeniable, contextual evidence that makes developers and teams demand better isolation and controls.
 3. **Activate on demand.** The entire observation and UI stack should be cheap or inert when no AI coding agent is running. The product "wakes up" with the agent.
-4. **Local-first and minimal trust.** No component of AgentSnitch should need to phone home. All state is short-lived and session-scoped by default. The only data that ever leaves is what the user explicitly exports.
-5. **Correlation is the product.** Neither raw hook logs nor raw network flows are particularly interesting by themselves. The magic is in linking "the agent just read something sensitive" with "and then bytes actually left the machine toward X".
+4. **Local-first and minimal trust.** No component of AgentSnitch phones home or sends telemetry to a SaaS backend. All state is short-lived and session-scoped by default. The only product data that ever leaves is what the user explicitly exports. Reverse-DNS destination labeling is disabled by default; if a user explicitly enables it from Settings, the daemon may ask the local resolver for PTR labels. The Settings copy treats that as outbound DNS by nature and exposes a separate **Always On** checkbox for persisting the daemon env switch through restarts and reboots.
+5. **Correlation is the product.** Neither raw hook logs nor raw network flows are particularly interesting by themselves. The magic is in linking "the agent just read something sensitive" with "and then bytes actually left the machine toward X". Advanced HTTPS Inspect Mode follows the same rule: inspected HTTP evidence is valuable because it is local, scoped to managed agent proxy traffic, and correlated with session/tool context.
 6. **Embrace the moving target.** Hook surfaces will change and differ per agent. We treat them as best-effort, high-value signals and use the least-privileged OS network observation that produces enough evidence.
 
 ### 1.1 Product Promises
@@ -24,7 +24,9 @@ AgentSnitch has three promises to keep:
 
 That is the product.
 
-Product data must be sensor-derived. The app should not ship demo events, simulated detections, seeded cards, or raw UI/API paths that let arbitrary prepared JSON masquerade as agent evidence. Test fixtures may construct events for unit tests, but product runtime data comes from real agent hooks, OS network observation, and daemon correlation.
+Product data must be sensor-derived. The app should not ship demo events, simulated detections, seeded cards, or raw UI/API paths that let arbitrary prepared JSON masquerade as agent evidence. Test fixtures may construct events for unit tests, but product runtime data comes from real agent hooks, OS network observation, the managed HTTPS inspect proxy when explicitly enabled, and daemon correlation.
+
+AgentSnitch is not an anti-tamper EDR. The daemon hardens local socket peer checks and rejects arbitrary product ingestion paths, but a same-user process that can intentionally invoke the installed emitter or otherwise act with the developer's privileges is still inside the local trust boundary.
 
 ### 1.2 MVP Implementation Order
 
@@ -63,7 +65,7 @@ flowchart TB
             Lsof[lsof fallback]
             NE[Opt-in macOS Network Extension]
             Daemon[Daemon / Correlator<br/>process graph + sidechain index]
-            UI[Tauri Tray + Popup<br/>Attention, Linked, Agents, Hooks, Network, All]
+            UI[Tauri Tray + Popup<br/>Overview, Agents, Evidence, Raw, Flow Trace]
         end
 
         subgraph "Local IPC"
@@ -107,7 +109,7 @@ flowchart TB
     class UI ui
 ```
 
-The observation paths (semantic hooks, Claude sidechain transcripts, default userland network rows, and optional Network Extension flows) converge only in the daemon. The Network Extension path forwards flow records directly to the daemon Unix socket configured by the host app when the user explicitly enables the Network Sensor; the XPC bridge remains for activation, configuration, and fallback forwarding.
+The observation paths (semantic hooks, Claude sidechain transcripts, default userland network rows, and optional Network Extension flows) converge only in the daemon. The Network Extension path forwards flow records directly to the daemon Unix socket configured by the host app when the user explicitly enables OS Sensor mode; the XPC bridge remains for activation, configuration, and fallback forwarding.
 
 ### 2.1 Event & Correlation Flow (Sequence)
 
@@ -134,7 +136,7 @@ sequenceDiagram
     Daemon->>UI: new_subagent + SubagentToolUse
 
     Net->>Daemon: NetworkFlow<br/>{pid:1234, remote, bytes_out, ts}
-    opt Network Sensor enabled
+    opt OS Sensor mode enabled
         NE->>Daemon: NetworkFlow<br/>{pid:1234, remote, sni, bytes_out, ts}<br/>over daemon socket
     end
 
@@ -190,7 +192,7 @@ This sequence illustrates the core "visibility proves the risk" loop. The emitte
 
 **Technology:** macOS System Extension using Network Extension framework.
 
-**Current status:** The pre-alpha ships with the Network Sensor disabled by default. The default network path is daemon-side NetworkStatistics/`nettop` observation filtered to external flows from known or likely AI agent process trees, enriched by periodic `ps` snapshots. If that observer is unavailable, the daemon falls back to `lsof`/process snapshot observation. When a user explicitly enables the Network Sensor, the bundled event-driven `NEFilterDataProvider` emits metadata-only `network_extension` flow events into the daemon.
+**Current status:** The pre-alpha ships with OS Sensor mode disabled by default. The default network path is daemon-side NetworkStatistics/`nettop` observation filtered to external flows from known or likely AI agent process trees, enriched by periodic `ps` snapshots. If that observer is unavailable, the daemon falls back to `lsof`/process snapshot observation. When a user explicitly enables OS Sensor mode, the bundled event-driven `NEFilterDataProvider` emits metadata-only `network_extension` flow events into the daemon.
 
 **Provider choice:**
 - `NEFilterDataProvider` only. AgentSnitch must not use transparent proxy, packet tunnel, DNS proxy, or app proxy providers in the shipped product.
@@ -215,13 +217,14 @@ This sequence illustrates the core "visibility proves the risk" loop. The emitte
 - The containing app must hold the necessary entitlements and be properly signed/notarized for distribution.
 - AgentSnitch must not fabricate sensitive-read or network-flow evidence as a product path.
 
-**Network Sensor safety invariants:**
+**OS Sensor safety invariants:**
 - `NEFilterDataProvider`, not transparent proxy, packet tunnel, app proxy, or DNS proxy.
 - No `filterDataVerdict` byte callbacks by default.
 - No `URLSession`, `NWConnection`, external sockets, remote clients, inbound listeners, blocking/drop decisions, or proxy/forwarding behavior in the extension.
 - Only local IPC to the daemon, bounded payload size, and fail-open behavior when the daemon is absent or unhealthy.
+- `scripts/check-network-extension-invariants.sh` enforces the provider, entitlement, fail-open, no-proxy, no-external-socket, no-inbound-listener, and default byte-capture-off invariants in CI.
 - **Delivery never runs on the flow-decision path.** `handleNewFlow` returns `.allow()` synchronously; flow events are enqueued to a bounded background queue and the blocking socket `connect`/`write` happens off-path. A wedged or slow daemon can therefore never stall a network verdict. The queue is capped (drop-oldest) and the daemon socket carries a send timeout, so a stuck reader degrades observation but never traffic.
-- **The user can always recover their network independently of AgentSnitch.** Disabling the Network Sensor from Settings tears the filter down and verifies it; uninstall (`scripts/uninstall.sh`) deactivates the system extension via `systemextensionsctl` and prints the OS-level escape hatches (System Settings → Network → Filters, `systemextensionsctl list`, Safe Mode boot). These do not depend on AgentSnitch being healthy.
+- **The user can always recover their network independently of AgentSnitch.** Disabling OS Sensor mode from Settings tears the filter down and verifies it; uninstall (`scripts/uninstall.sh`) deactivates the system extension via `systemextensionsctl` and prints the OS-level escape hatches (System Settings → Network → Filters, `systemextensionsctl list`, Safe Mode boot). These do not depend on AgentSnitch being healthy.
 
 ### 3.3 Daemon / Correlator
 
@@ -229,7 +232,7 @@ This sequence illustrates the core "visibility proves the risk" loop. The emitte
 
 **Responsibilities:**
 - Listen on the unix domain socket for semantic events from emitters.
-- Receive flow records from the unprivileged NetworkStatistics/`nettop` observer by default, fall back to `lsof` when needed, and accept direct Network Extension daemon socket records only when the user opts into the Network Sensor.
+- Receive flow records from the unprivileged NetworkStatistics/`nettop` observer by default, fall back to `lsof` when needed, and accept direct Network Extension daemon socket records only when the user opts into OS Sensor mode.
 - Extract host-level semantic destination intent from tool inputs before network proof exists. This includes WebFetch URLs, shell/MCP URL-like values, and conservative provider hints for WebSearch such as GitHub.
 - Index Claude Code sidechain transcripts referenced by hook payloads and sibling `subagents/*.jsonl` files. Sidechain records create `agentsnitch.agent.v0` subagent lifecycle events and sidechain `tool_use` rows become `SubagentToolUse` semantic activity attributed to the subagent.
 - Maintain **per-agent-session state** in the daemon, not just in the UI:
@@ -322,8 +325,8 @@ The heuristics are intentionally simple and explainable. The UI should be able t
 
 **Panel Content (MVP):**
 - Header: "Claude Code • /Users/you/project • active 14m"
-- Default tab: `Attention`, followed by `Linked`, `Agents`, `Hooks`, `Network`, and `All`. Attention contains medium/high risk cards, unknown or first-time external destinations, raw/private IP destinations, sensitive or credential context followed by egress, large transfers to unknown destinations, new MCP server flows, public tunnel/listener flows, blocked flows, and ask-needed flows.
-- `Network` is raw observed flow visibility, `Linked` is semantic-plus-network evidence produced by the correlator, and `All` includes both.
+- Default tab: `Overview`, followed by `Agents`, `Evidence`, `Raw`, and `Flow Trace`. Overview summarizes the live session, readiness, agent context, and what needs attention. Evidence is the deduped attention-worthy and correlated feed. Raw is the firehose with hook/network sub-filters. Flow Trace visualizes agent/subagent/tool/destination paths.
+- `Raw` is raw observed hook and network visibility. `Evidence` is semantic-plus-network evidence produced by the correlator plus high-signal attention items. `Flow Trace` is an aggregate view over the same live evidence rather than a separate sensor.
 - Evidence tabs show a compact `Claude Code (subagents)` context. Each main agent is represented as `Main (N)` with event counts and a click-to-expand child strip, so large teams do not consume the whole window by default.
 - `Activity by agent` sits beside the compact agent context when agent activity exists. The chronological feed stays underneath both panels.
 - The dedicated `Agents` tab shows the full main-to-child hierarchy with names, PIDs when available, spawn method, and event counts. Clicking an agent filters to that agent's event stream.
@@ -334,14 +337,15 @@ The heuristics are intentionally simple and explainable. The UI should be able t
 - Lower-signal linked rows default to a compact form that keeps destination, category, why, risk, decision, and correlation visible; expanding the card with `Explain` reveals hook/network lines and replay steps. Raw reasons and process-tree details stay collapsed behind `Raw Event` / `Raw Details` controls.
 - Known low-risk linked service rows collapse into category groups by default so routine Claude, telemetry, package registry, Playwright bridge, and local bridge traffic does not dominate the main linked feed.
 - A compact session summary shows totals for known Claude/bridge traffic, telemetry, local bridge/tunnel traffic, package traffic, high-signal cards, and new destinations.
-- Reason filters in `Attention` stay compact and appear only when there are multiple useful reasons or an active reason/agent filter to clear; there is no large standalone reason-summary block.
+- Reason filters in `Evidence` stay compact and appear only when there are multiple useful reasons or an active reason/agent filter to clear; there is no large standalone reason-summary block.
 - Actions per event or globally: Copy as JSON, Copy human text, "Quiet this host for rest of session", "Export session transcript".
 - Footer: "All local. Session transcript saved to ~/.agentsnitch/..."
 
 **Technical notes:**
 - The Rust side of Tauri loads the Swift host bridge for System Extension activation and configuration, then talks to the Go daemon over local sockets.
 - Live updates: daemon forwards validated events to the UI Unix socket; the Tauri side emits in-process UI events.
-- The current web UI is evidence-first: tabs separate `Attention`, `Linked`, `Agents`, `Hooks`, `Network`, and `All`, and the UI ring preferentially preserves linked evidence and subagent activity before routine hook or raw network rows. Repeated lower-signal linked cards with the same title, hook tool, and destination are grouped in `Linked`/`All` views, and known low-risk linked service traffic is collapsed by category.
+- Settings are intentionally split by audience: General contains interface mode, Hooks contains Claude Code hook management and hook startup refresh, Advanced contains OS Sensor mode plus Reverse DNS/PTR labels, and Developer contains HTTPS Inspect Mode, CA/system trust actions, payload capture, and the hidden-by-default Debug snapshot button.
+- The current web UI is evidence-first: tabs separate `Overview`, `Agents`, `Evidence`, `Raw`, and `Flow Trace`, and the UI ring preferentially preserves linked evidence and subagent activity before routine hook or raw network rows. Repeated lower-signal linked cards with the same title, hook tool, and destination are grouped in evidence views, and known low-risk linked service traffic is collapsed by category.
 - The `Explain` view acts as a mini replay: tool call, target, process, network flow, correlation reasons, and observed decision.
 - Quiet preferences are stored locally in `~/.agentsnitch/ui-quiet-preferences.json` with restricted file permissions on Unix platforms. Global known-service keys apply before a project is known; project-specific keys are merged once the first semantic event establishes the session working directory.
 - The app window auto-resizes from measured live layout. Quiet sessions remain compact; teams, activity panels, and larger event volume can grow the window within conservative screen bounds.
@@ -560,8 +564,8 @@ Session end detection: combination of `Stop` / `SessionEnd` hooks + polling or k
 - The bundle may contain the Network Extension as an embedded optional system extension target.
 - Entitlements required (com.apple.developer.networking.networkextension, etc.).
 - Signing + notarization needed for easy distribution.
-- The main local install path is `make create`: build Go tools, build the Tauri app, install `/Applications/AgentSnitch.app`, embed/sign the Network Extension and host bridge, install support binaries, register Claude hooks, install/start the user LaunchAgent, launch the app, and run `doctor`.
-- First launch does not activate the Network Extension. Enabling the Network Sensor from Settings triggers the user approval flow in System Settings → Privacy & Security → System Extensions (and Network Extension / Content Filter if categorized that way).
+- The main local install path is `make create`: build Go tools, build the Tauri app, install `/Applications/AgentSnitch.app`, embed/sign the Network Extension and host bridge, install support binaries, install/start the user LaunchAgent, launch the app, and run `doctor`. Claude Code hooks are not installed automatically by `make create`; the user installs or updates them from Settings -> Hooks, or manually with `make install`.
+- First launch does not activate the Network Extension. Enabling OS Sensor mode from Settings triggers the user approval flow in System Settings → Privacy & Security → System Extensions (and Network Extension / Content Filter if categorized that way).
 
 **Daemon registration:**
 - The current full install uses a per-user LaunchAgent. It keeps the unprivileged NetworkStatistics/`nettop` observer enabled by default, keeps `lsof` available as fallback, and does not require a root daemon.
@@ -591,7 +595,7 @@ Session end detection: combination of `Stop` / `SessionEnd` hooks + polling or k
 - **SNI vs. reality.** SNI is helpful but can be absent or misleading (ECH, IP-only, etc.).
 - **Semantic transformation.** An agent that reads `.env`, then later makes a "normal" API call that happens to include paraphrased secret data may not produce an obvious mechanical link. We surface the pattern; the human judges intent.
 - **System Extension UX tax.** Users must approve it. Some corporate MDM environments restrict extensions. We must make the value obvious quickly.
-- **No content visibility inside TLS** (by design in MVP). We are not a MITM proxy.
+- **No content visibility inside TLS by default.** The default NetworkStatistics/`nettop`, `lsof`, and OS Sensor paths are metadata/process attribution paths. Advanced HTTPS Inspect Mode is a separate Settings -> Developer feature for managed proxy traffic only; it uses local CA material, process-scoped trust by default, optional administrator-approved macOS System trust, redacted previews by default, and full payload capture only when explicitly enabled.
 
 These are accepted for Phase 1. Many of them become more tractable once we have real data and user feedback.
 
@@ -602,7 +606,6 @@ These are accepted for Phase 1. Many of them become more tractable once we have 
 ```
 agentsnitch/
 ├── readme.md
-├── prd.md
 ├── architecture.md
 ├── LICENSE
 ├── .gitignore
@@ -610,12 +613,14 @@ agentsnitch/
 ├── cmd/
 │   ├── emitter/
 │   │   └── main.go
+│   ├── agentsnitch/         # CLI helper, including HTTPS Inspect commands
 │   └── daemon/              # (or merge into Tauri Rust side later)
 │       └── main.go
 ├── internal/
 │   ├── agent/               # adapted adapters + specs
 │   ├── classify/
 │   ├── event/               # shared types + wire
+│   ├── inspect/             # HTTPS Inspect settings, CA, trust, status helpers
 │   └── correlator/          # session state, join logic, scoring
 ├── pkg/                     # shared small utilities if needed
 ├── ui/                      # Tauri project root
@@ -628,6 +633,7 @@ agentsnitch/
 │   └── ...
 ├── scripts/
 │   ├── install.sh
+│   ├── check-network-extension-invariants.sh
 │   └── uninstall.sh
 ├── docs/
 │   └── ...
@@ -646,7 +652,7 @@ Implemented locally:
 2. Go daemon with semantic event ingestion, real Network Extension ingestion, process graph enrichment, Claude sidechain transcript indexing, conservative correlation, transcript output, and UI forwarding.
 3. macOS Network Extension packaging path with direct daemon socket forwarding, host bridge activation/configuration, signing, and notarization support through `make create`.
 4. Tauri UI popup with evidence-first tabs, compact `Claude Code (subagents)` context, dedicated `Agents` tab, per-agent activity, agent filtering, auto-resizing, and retention that favors linked evidence over routine event noise.
-5. Real-data-only verification path: hooks, daemon, UI, and Network Extension must all be live before claims are made.
+5. Real-data-only verification path: hooks, daemon, UI, and the active network observer must all be live before claims are made. The default observer is NetworkStatistics/`nettop`; OS Sensor is optional.
 
 Remaining work is distribution polish: a stable installer/uninstaller, smoother System Extension approval flow, broader agent support, and longer-session UX.
 

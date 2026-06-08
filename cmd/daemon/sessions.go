@@ -60,6 +60,17 @@ func (s *daemonSessions) getOrCreate(sessionID string) *daemonSession {
 	return sess
 }
 
+func (s *daemonSessions) getExisting(sessionID string) (*daemonSession, bool) {
+	if s == nil {
+		return nil, false
+	}
+	sessionID = normalizedSessionID(sessionID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[sessionID]
+	return sess, ok
+}
+
 func (s *daemonSessions) recordActivity(sess *daemonSession, at time.Time) {
 	if s == nil || sess == nil {
 		return

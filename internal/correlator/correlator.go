@@ -50,6 +50,16 @@ type ProcessInfo struct {
 	LastSeen      time.Time
 }
 
+type ToolSpan struct {
+	SessionID string
+	SpanID    string
+	ToolUseID string
+	Tool      string
+	Target    string
+	StartedAt time.Time
+	Egress    bool
+}
+
 // SessionState holds the in-memory view of the current agent session for
 // correlation and basic process tracking. It is the core of the daemon's
 // "current session" as described in architecture.md §3.3 and §4.
@@ -91,6 +101,11 @@ type SessionState struct {
 	// already been surfaced once in this session.
 	NoisyPatternSeen map[string]struct{}
 
+	// ActiveToolSpans tracks egress-capable PreToolUse events that have not yet
+	// reached their matching PostToolUse. It is used by the inspect proxy path to
+	// avoid claiming active ToolSpan correlation from session membership alone.
+	ActiveToolSpans map[string]ToolSpan
+
 	// StartTime is when this session object was created (or first event).
 	StartTime time.Time
 }
@@ -106,6 +121,7 @@ func NewSessionState() *SessionState {
 		SemanticBestStrength: make(map[string]int),
 		DestinationSeen:      make(map[string]struct{}),
 		NoisyPatternSeen:     make(map[string]struct{}),
+		ActiveToolSpans:      make(map[string]ToolSpan),
 		StartTime:            time.Now(),
 	}
 }
@@ -237,6 +253,7 @@ func (s *SessionState) AddSemanticEvent(e event.SemanticEvent) {
 			break
 		}
 	}
+	s.updateActiveToolSpanLocked(e)
 
 	s.Events = append(s.Events, e)
 	if len(s.Events) > MaxRecentEvents {
@@ -268,6 +285,65 @@ func (s *SessionState) GetRecent() []event.SemanticEvent {
 	out := make([]event.SemanticEvent, len(s.Events))
 	copy(out, s.Events)
 	return out
+}
+
+func (s *SessionState) ActiveToolSpan(toolUseID string) (ToolSpan, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeToolSpanLocked(toolUseID)
+}
+
+func (s *SessionState) ActiveEgressToolSpan() (ToolSpan, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeToolSpanLocked("")
+}
+
+func (s *SessionState) updateActiveToolSpanLocked(e event.SemanticEvent) {
+	toolUseID := strings.TrimSpace(e.ToolUseID)
+	if toolUseID == "" {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Event)) {
+	case "pretooluse":
+		if !e.IsEgressLike() {
+			return
+		}
+		started := e.TS
+		if started.IsZero() {
+			started = time.Now()
+		}
+		s.ActiveToolSpans[toolUseID] = ToolSpan{
+			SessionID: e.Session.ID,
+			SpanID:    toolUseID,
+			ToolUseID: toolUseID,
+			Tool:      e.Tool,
+			Target:    e.Target,
+			StartedAt: started,
+			Egress:    true,
+		}
+	case "posttooluse", "posttoolusefailure":
+		delete(s.ActiveToolSpans, toolUseID)
+	}
+}
+
+func (s *SessionState) activeToolSpanLocked(toolUseID string) (ToolSpan, bool) {
+	if toolUseID != "" {
+		span, ok := s.ActiveToolSpans[toolUseID]
+		return span, ok
+	}
+	var newest ToolSpan
+	var ok bool
+	for _, span := range s.ActiveToolSpans {
+		if !span.Egress {
+			continue
+		}
+		if !ok || span.StartedAt.After(newest.StartedAt) {
+			newest = span
+			ok = true
+		}
+	}
+	return newest, ok
 }
 
 // TryCorrelate attempts a conservative time + process join for the given flow

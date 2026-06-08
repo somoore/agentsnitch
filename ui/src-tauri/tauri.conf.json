@@ -15,8 +15,10 @@
     "windows": [
       {
         "label": "main",
-        "width": 720,
-        "height": 520,
+        "width": 960,
+        "height": 680,
+        "minWidth": 720,
+        "minHeight": 520,
         "title": "AgentSnitch",
         "visible": true,
         "resizable": true,

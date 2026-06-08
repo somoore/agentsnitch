@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/somoore/agentsnitch/internal/event"
+	"github.com/somoore/agentsnitch/internal/inspect"
 )
 
 // Status is a daemon-written diagnostic snapshot used by doctor. It is not an
@@ -15,16 +16,18 @@ type Status struct {
 	DaemonStartedAt time.Time `json:"daemon_started_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 
-	LastSemantic   *event.SemanticEvent    `json:"last_semantic,omitempty"`
-	LastNetwork    *event.NetworkFlowEvent `json:"last_network,omitempty"`
-	LastCorrelated *event.CorrelatedEvent  `json:"last_correlated,omitempty"`
+	LastSemantic      *event.SemanticEvent         `json:"last_semantic,omitempty"`
+	LastNetwork       *event.NetworkFlowEvent      `json:"last_network,omitempty"`
+	LastCorrelated    *event.CorrelatedEvent       `json:"last_correlated,omitempty"`
+	LastInspectedHTTP *event.InspectedHTTPExchange `json:"last_inspected_http,omitempty"`
 
 	LastTranscriptPath string    `json:"last_transcript_path,omitempty"`
 	LastTranscriptKind string    `json:"last_transcript_kind,omitempty"`
 	LastTranscriptAt   time.Time `json:"last_transcript_at,omitempty"`
 
-	ObserverMode    string   `json:"observer_mode,omitempty"`
-	ObserverSources []string `json:"observer_sources,omitempty"`
+	ObserverMode    string         `json:"observer_mode,omitempty"`
+	ObserverSources []string       `json:"observer_sources,omitempty"`
+	Inspect         inspect.Status `json:"inspect,omitempty"`
 }
 
 func StatusPath() string {

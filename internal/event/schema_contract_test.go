@@ -22,6 +22,13 @@ func TestEventSchemaMatchesGoWireStructs(t *testing.T) {
 	assertSchemaPropertiesMatchStruct(t, defs, "CorrelatedEvent", CorrelatedEvent{})
 	assertSchemaPropertiesMatchStruct(t, defs, "ProcessNode", ProcessNode{})
 	assertSchemaPropertiesMatchStruct(t, defs, "AgentLifecycleEvent", AgentLifecycleEvent{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPExchange", InspectedHTTPExchange{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPRequest", InspectedHTTPRequest{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPResponse", InspectedHTTPResponse{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPHeader", InspectedHTTPHeader{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPTLS", InspectedHTTPTLS{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPRetention", InspectedHTTPRetention{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPCorrelation", InspectedHTTPCorrelation{})
 }
 
 func TestNetworkSchemaCoversSwiftFlowEvent(t *testing.T) {

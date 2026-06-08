@@ -1,0 +1,80 @@
+- generic [ref=e1] [box=0,0,1200,773]:
+  - generic [ref=e2] [box=0,0,1200,773]:
+    - generic [ref=e3] [box=1,1,1198,42]:
+      - generic [ref=e4] [box=11,13,1132,17]: AgentSnitch
+      - generic [ref=e5] [box=1151,14,30,15]: idle
+    - generic [ref=e8] [box=36,50,1144,14]: No sensitive context has left this machine.
+    - generic [ref=e9] [box=1,77,1198,37]:
+      - button "Overview" [ref=e10] [cursor=pointer] [box=7,83,234,24]
+      - button "Agents 0" [ref=e11] [cursor=pointer] [box=245,83,234,24]
+      - button "Evidence 0" [ref=e12] [cursor=pointer] [box=483,83,234,24]
+      - button "Raw 0" [ref=e13] [cursor=pointer] [box=721,83,234,24]
+      - button "Flow Trace 0" [ref=e14] [cursor=pointer] [box=959,83,234,24]
+    - generic [ref=e211] [box=7,118,1186,345]:
+      - generic [ref=e212] [box=7,118,1186,29]:
+        - generic [ref=e213] [box=15,125,1124,15]: Watching Claude Code on this Mac for the first real hook or network observation.
+        - generic [ref=e214] [box=1147,125,38,15]: All local
+      - generic [ref=e215] [box=7,163,1186,83]:
+        - generic [ref=e216] [box=7,163,1186,14]: Ready for a Claude Code session
+        - generic [ref=e217] [box=7,184,1186,62]:
+          - generic [ref=e218] [box=7,184,391,62]:
+            - generic [ref=e219] [box=16,193,373,14]: Local observer ready
+            - generic [ref=e220] [box=16,210,373,27]: "Idle · Hooks installed · Network ready · User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic [ref=e221] [box=404,184,391,62]:
+            - generic [ref=e222] [box=413,193,373,14]: Waiting for real activity
+            - generic [ref=e223] [box=413,210,373,27]: Run Claude Code on this Mac and use a tool such as Read, Bash, WebFetch, or MCP. No demo evidence is injected.
+          - generic [ref=e224] [box=802,184,391,62]:
+            - generic [ref=e225] [box=811,193,373,14]: What will appear
+            - generic [ref=e226] [box=811,210,373,27]: Agents, subagents, tool calls, outbound flows, linked evidence, and destination paths will populate as they are observed.
+      - generic [ref=e227] [box=7,256,1186,83]:
+        - generic [ref=e228] [box=7,256,1186,14]: What AgentSnitch can prove
+        - generic [ref=e229] [box=7,276,1186,62]:
+          - generic "Known Claude destinations are lower surprise by default, so ordinary API traffic does not dominate the review surface." [ref=e230] [box=7,276,292,62]:
+            - generic [ref=e231] [box=16,285,274,14]: Known Claude traffic
+            - generic [ref=e232] [box=16,302,274,14]: Claude/API traffic is grouped when observed
+          - generic "First-time external hosts, cloud providers, raw IPs, and large transfers are promoted above routine traffic." [ref=e233] [box=305,276,292,62]:
+            - generic [ref=e234] [box=314,285,274,14]: Unexpected destinations
+            - generic [ref=e235] [box=314,302,274,14]: New external destinations will stand out
+          - generic "AgentSnitch shows observed evidence only; short-lived flows can be missed by the default observer." [ref=e236] [box=603,276,292,62]:
+            - generic [ref=e237] [box=612,285,274,14]: Coverage
+            - generic [ref=e238] [box=612,302,274,27]: "User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic "The app is local visibility for Claude Code/macOS today, with exportable evidence when you need to share a session." [ref=e239] [box=901,276,292,62]:
+            - generic [ref=e240] [box=910,285,274,14]: Scope
+            - generic [ref=e241] [box=910,302,274,14]: Claude Code on this Mac
+      - generic [ref=e242] [box=7,348,1186,53]:
+        - generic [ref=e243] [box=7,348,1186,14]: Agents
+        - generic [ref=e244] [box=7,369,1186,32]: No Claude Code agents detected yet — running sessions and their subagents will appear here.
+      - generic [ref=e245] [box=7,411,1186,53]:
+        - generic [ref=e246] [box=7,411,1186,14]: Needs a look
+        - generic [ref=e247] [box=7,431,1186,32]: Nothing needs a look. New external destinations, sensitive-context reads, and large transfers would surface here.
+    - generic [ref=e53] [box=1,744,1198,29]:
+      - generic [ref=e54] [box=9,752,810,13]: Idle · Hooks installed · Network ready · all local
+      - button "Pause" [ref=e55] [cursor=pointer] [box=825,749,47,20]
+      - button "Quiet known" [ref=e56] [cursor=pointer] [box=878,749,74,20]
+      - button "Quiet" [ref=e57] [cursor=pointer] [box=958,749,42,20]
+      - button "Clear" [ref=e58] [cursor=pointer] [box=1005,749,42,20]
+      - button "Debug" [ref=e59] [cursor=pointer] [box=1053,749,47,20]
+      - button "Evidence Pack" [ref=e60] [cursor=pointer] [box=1107,749,84,20]
+  - dialog "Settings" [ref=e61] [box=0,0,1200,773]:
+    - generic [ref=e62] [box=220,285,760,202]:
+      - generic [ref=e63] [box=221,286,758,41]:
+        - generic [ref=e64] [box=233,298,54,17]: Settings
+        - button "Close" [ref=e65] [cursor=pointer] [box=923,296,44,20]
+      - tablist "Settings sections" [ref=e66] [box=221,327,758,28]:
+        - tab "General" [active] [selected] [ref=e67] [cursor=pointer] [box=233,335,82,20]
+        - tab "Hooks" [ref=e68] [cursor=pointer] [box=321,335,82,20]
+        - tab "Advanced" [ref=e69] [cursor=pointer] [box=409,335,82,20]
+        - tab "Developer" [ref=e70] [cursor=pointer] [box=497,335,82,20]
+      - tabpanel "General" [ref=e201] [box=233,366,734,68]:
+        - generic [ref=e202] [box=233,366,734,68]:
+          - generic [ref=e203] [box=233,368,734,12]: Workspace
+          - generic [ref=e204] [box=233,388,734,44]:
+            - generic [ref=e205] [box=233,388,690,44]:
+              - generic [ref=e206] [box=233,388,690,14]: Interface mode
+              - generic [ref=e207] [box=233,404,690,13]: Advanced controls shown
+              - paragraph [ref=e208] [box=233,419,520,13]: Simple keeps the main window focused on agents, evidence, and unexpected destinations.
+            - generic "Show advanced diagnostic controls" [ref=e209] [box=933,400,34,20]:
+              - checkbox [checked] [box=937,403,0,0]
+      - generic [ref=e124] [box=221,446,758,41]:
+        - button "Cancel" [ref=e125] [cursor=pointer] [box=869,457,49,20]
+        - button "Save" [ref=e126] [cursor=pointer] [box=926,457,41,20]
