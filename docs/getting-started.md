@@ -292,6 +292,7 @@ For status and cleanup:
 ```
 
 When the daemon is running, `inspect status` and `doctor inspect` report the live managed proxy listener and last inspected host from daemon status.
+Expired retained payload records are cleaned by the daemon and can also be removed manually with `agentsnitchctl inspect purge-data --expired`; omit `--expired` to delete all captured payload records.
 
 ## Check Health
 

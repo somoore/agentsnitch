@@ -47,6 +47,7 @@ const SidechainTranscriptMaxBytes = 4 * 1024 * 1024
 const ReverseDNSLookupTimeout = 150 * time.Millisecond
 const ReverseDNSCacheTTL = 6 * time.Hour
 const ReverseDNSNegativeCacheTTL = 30 * time.Minute
+const InspectPayloadRetentionInterval = 15 * time.Minute
 
 var reverseDNSLookup = net.DefaultResolver.LookupAddr
 
@@ -118,10 +119,11 @@ func main() {
 	transcripts := asruntime.NewTranscriptWriter()
 	// Pause is always Live on startup; the flag is never persisted (fail-safe).
 	pause := newPauseController()
-	inspectProxy := startInspectProxyIfEnabled(sessions, status, transcripts)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	go startInspectPayloadRetention(ctx, inspect.DefaultPaths(), InspectPayloadRetentionInterval)
+	inspectProxy := startInspectProxyIfEnabled(sessions, status, transcripts)
 
 	go func() {
 		<-ctx.Done()
@@ -220,6 +222,29 @@ func startInspectProxyIfEnabled(sessions *daemonSessions, status *statusReporter
 	inspectStatus.ProcessEnv = inspect.ProcessScopedEnv(inspect.DefaultPaths().BundlePath, proxy.AuthenticatedURL())
 	status.recordInspectStatus(inspectStatus)
 	return proxy
+}
+
+func startInspectPayloadRetention(ctx context.Context, paths inspect.Paths, interval time.Duration) {
+	purgeExpiredInspectPayloads(paths, time.Now().UTC())
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purgeExpiredInspectPayloads(paths, time.Now().UTC())
+		}
+	}
+}
+
+func purgeExpiredInspectPayloads(paths inspect.Paths, now time.Time) {
+	if err := inspect.PurgeExpiredPayloads(paths, now); err != nil {
+		log.Printf("inspect payload retention purge failed: %v", err)
+	}
 }
 
 func handleInspectedHTTP(exchange event.InspectedHTTPExchange, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) {

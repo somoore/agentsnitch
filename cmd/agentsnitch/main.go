@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/somoore/agentsnitch/internal/inspect"
 	asruntime "github.com/somoore/agentsnitch/internal/runtime"
@@ -30,7 +31,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: agentsnitchctl inspect status|env|run|enable|disable|create-ca|remove-ca|trust-system|untrust-system|rotate-ca|purge-data")
+	fmt.Fprintln(os.Stderr, "usage: agentsnitchctl inspect status|env|run|enable|disable|create-ca|remove-ca|trust-system|untrust-system|rotate-ca|purge-data [--expired]")
 }
 
 func runInspect(args []string) {
@@ -110,12 +111,24 @@ func runInspect(args []string) {
 		exitIf(err)
 		printJSON(info)
 	case "purge-data":
-		exitIf(inspect.PurgeData(inspect.DefaultPaths()))
-		fmt.Println("Captured HTTPS Inspect payload data purged.")
+		purgeInspectData(args[1:])
 	default:
 		usage()
 		os.Exit(2)
 	}
+}
+
+func purgeInspectData(args []string) {
+	fs := flag.NewFlagSet("purge-data", flag.ExitOnError)
+	expiredOnly := fs.Bool("expired", false, "delete only expired captured payload data")
+	_ = fs.Parse(args)
+	if *expiredOnly {
+		exitIf(inspect.PurgeExpiredPayloads(inspect.DefaultPaths(), time.Now().UTC()))
+		fmt.Println("Expired HTTPS Inspect payload data purged.")
+		return
+	}
+	exitIf(inspect.PurgeData(inspect.DefaultPaths()))
+	fmt.Println("Captured HTTPS Inspect payload data purged.")
 }
 
 func currentInspectStatus() inspect.Status {

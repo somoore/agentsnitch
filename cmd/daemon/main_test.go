@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/somoore/agentsnitch/internal/correlator"
 	"github.com/somoore/agentsnitch/internal/event"
+	"github.com/somoore/agentsnitch/internal/inspect"
 	asruntime "github.com/somoore/agentsnitch/internal/runtime"
 )
 
@@ -91,6 +93,65 @@ func TestNetworkStatisticsObserverEnabledTreatsOnlyExplicitTrueAsDisabled(t *tes
 			}
 		})
 	}
+}
+
+func TestStartInspectPayloadRetentionPurgesExpiredPayloads(t *testing.T) {
+	paths := inspect.Paths{DataDir: filepath.Join(t.TempDir(), "payloads")}
+	if err := os.MkdirAll(paths.DataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expiredAt := time.Now().UTC().Add(-time.Minute)
+	futureAt := time.Now().UTC().Add(time.Hour)
+	expiredPath := writeInspectPayloadRecord(t, paths, "expired.json", &expiredAt)
+	futurePath := writeInspectPayloadRecord(t, paths, "future.json", &futureAt)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		startInspectPayloadRetention(ctx, paths, time.Hour)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(expiredPath); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(expiredPath); !os.IsNotExist(err) {
+		cancel()
+		t.Fatalf("expired payload still exists or unexpected stat error: %v", err)
+	}
+	if _, err := os.Stat(futurePath); err != nil {
+		cancel()
+		t.Fatalf("future payload should remain: %v", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("retention loop did not stop after context cancellation")
+	}
+}
+
+func writeInspectPayloadRecord(t *testing.T, paths inspect.Paths, name string, expiresAt *time.Time) string {
+	t.Helper()
+	raw, err := json.Marshal(inspect.PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		ExpiresAt: expiresAt,
+		Request:   "request",
+		Response:  "response",
+	})
+	if err != nil {
+		t.Fatalf("Marshal payload record: %v", err)
+	}
+	path := filepath.Join(paths.DataDir, name)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("WriteFile payload record: %v", err)
+	}
+	return path
 }
 
 func TestReverseDNSLookupEnabledDefaultsOff(t *testing.T) {
