@@ -69,7 +69,7 @@ Defaults:
 - Full payload mode: writes redacted local payload records under the HTTPS Inspect payload store and includes request/response payload refs in the inspected exchange.
 - Authorization, Proxy-Authorization, Cookie, Set-Cookie, API key, auth token, AWS session token, GitHub token, OpenAI key, and Anthropic key headers are never stored raw by default.
 
-AgentSnitch purges expired full-payload records when new payloads are captured and from a daemon background maintenance pass. `agentsnitchctl inspect purge-data --expired` removes only expired payload records; `agentsnitchctl inspect purge-data` removes all captured payload data.
+AgentSnitch purges expired full-payload records when new payloads are captured and from a daemon background maintenance pass. Evidence Pack export never inlines retained full payload bodies; it includes local payload refs plus retention warnings so exported JSONL can be reviewed or shared without copying retained bodies into the export. `agentsnitchctl inspect purge-data --expired` removes only expired payload records; `agentsnitchctl inspect purge-data` removes all captured payload data.
 
 ## Disable And Cleanup
 
@@ -86,6 +86,8 @@ agentsnitchctl inspect untrust-system
 ```
 
 Uninstall checks whether the AgentSnitch CA is still trusted by macOS. If it is, uninstall attempts the same explicit admin-approved removal path and prints Keychain Access fallback instructions if macOS authorization or removal fails.
+
+The UI Clear action removes retained HTTPS Inspect payload files referenced by the current visible session before it clears the in-memory evidence view. It does not blindly delete unrelated payload records from other sessions.
 
 ## Doctor
 

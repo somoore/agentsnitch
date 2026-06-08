@@ -3834,6 +3834,14 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
         .get("full_payload_stored")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let request_payload_ref = request
+        .get("payload_ref")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let response_payload_ref = response
+        .get("payload_ref")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let state: State<AppState> = app.state();
     let mut next_id = state.next_id.lock().unwrap();
     *next_id += 1;
@@ -3905,6 +3913,18 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
             label: "Payload retention".into(),
             value: "redacted full payload stored locally; export includes refs only".into(),
         });
+        if !request_payload_ref.is_empty() {
+            details.push(EvidenceDetail {
+                label: "Request payload ref".into(),
+                value: request_payload_ref.into(),
+            });
+        }
+        if !response_payload_ref.is_empty() {
+            details.push(EvidenceDetail {
+                label: "Response payload ref".into(),
+                value: response_payload_ref.into(),
+            });
+        }
     }
     if let Some(fingerprint) = tls
         .get("ca_fingerprint")
@@ -5885,6 +5905,8 @@ fn restart_user_daemon(plist: &std::path::Path) -> Result<(), String> {
 
 #[tauri::command]
 fn clear_session(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    let events = state.events.lock().unwrap().clone();
+    purge_retained_payload_refs_for_events(&events)?;
     reset_session_state(&state);
     *state.status_hydration_cutoff.lock().unwrap() = Some(SystemTime::now());
     *state.status_hydration_suppressed.lock().unwrap() = true;
@@ -5893,6 +5915,59 @@ fn clear_session(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     let _ = app.emit("events-updated", ());
     let _ = app.emit("status-changed", ());
     Ok(())
+}
+
+fn purge_retained_payload_refs_for_events(events: &[UiEvent]) -> Result<usize, String> {
+    let mut removed = 0;
+    for payload_ref in events.iter().flat_map(event_payload_refs) {
+        if let Some(path) = inspect_payload_path_for_ref(&payload_ref) {
+            match std::fs::remove_file(&path) {
+                Ok(_) => removed += 1,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(format!(
+                        "remove retained HTTPS Inspect payload {}: {}",
+                        path.display(),
+                        err
+                    ));
+                }
+            }
+        }
+    }
+    Ok(removed)
+}
+
+fn inspect_payload_path_for_ref(payload_ref: &str) -> Option<std::path::PathBuf> {
+    let (rel, _) = payload_ref.split_once('#').unwrap_or((payload_ref, ""));
+    let name = rel.strip_prefix("payloads/")?;
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name == "."
+        || name == ".."
+        || name.contains("..")
+    {
+        return None;
+    }
+    Some(inspect_payload_dir().join(name))
+}
+
+fn inspect_payload_dir() -> std::path::PathBuf {
+    if let Ok(base) = std::env::var("AGENTSNITCH_INSPECT_DIR") {
+        return std::path::Path::new(&base).join("payloads");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::Path::new(&home)
+            .join("Library")
+            .join("Application Support")
+            .join("AgentSnitch")
+            .join("inspect")
+            .join("payloads");
+    }
+    std::env::temp_dir()
+        .join("AgentSnitch")
+        .join("inspect")
+        .join("payloads")
 }
 
 #[tauri::command]
@@ -6132,8 +6207,31 @@ fn export_header(
         "session": session,
         "agents": agents,
         "summary": summary.clone(),
+        "retention": export_retention_summary(events),
         "narrative": export_narrative(events, &summary),
         "timeline": export_timeline(events),
+    })
+}
+
+fn export_retention_summary(events: &[UiEvent]) -> serde_json::Value {
+    let retained_payload_events = events
+        .iter()
+        .filter(|event| event_has_retained_payload_ref(event))
+        .count();
+    let payload_ref_count: usize = events
+        .iter()
+        .map(event_payload_refs)
+        .map(|refs| refs.len())
+        .sum();
+    serde_json::json!({
+        "https_inspect_retained_payload_events": retained_payload_events,
+        "https_inspect_payload_ref_count": payload_ref_count,
+        "payload_export_mode": "refs_only",
+        "warning": if retained_payload_events > 0 {
+            "HTTPS Inspect retained payload bodies are not inlined in this export. Exported event rows include local payload refs only; use AgentSnitch cleanup controls to purge retained payload records."
+        } else {
+            "No retained HTTPS Inspect payload refs in this export."
+        },
     })
 }
 
@@ -6380,6 +6478,7 @@ fn export_record(e: &UiEvent) -> serde_json::Value {
         .destination
         .as_deref()
         .or_else(|| evidence.map(|ev| ev.destination.as_str()));
+    let payload_refs = event_payload_refs(e);
     serde_json::json!({
         "schema": "agentsnitch.export.v0",
         "record_type": "event",
@@ -6399,8 +6498,49 @@ fn export_record(e: &UiEvent) -> serde_json::Value {
         "destination_category": ui_event_destination_category(e),
         "why_human": evidence.map(|ev| ev.why_human.as_str()),
         "raw_reasons": evidence.map(|ev| ev.why.clone()).unwrap_or_default(),
+        "retention": export_event_retention(e, &payload_refs),
         "evidence": evidence,
     })
+}
+
+fn export_event_retention(event: &UiEvent, payload_refs: &[String]) -> serde_json::Value {
+    let inspected_http = event
+        .tags
+        .iter()
+        .any(|tag| tag == "inspected_http_exchange");
+    serde_json::json!({
+        "https_inspect": inspected_http,
+        "payload_export_mode": if payload_refs.is_empty() { "none" } else { "refs_only" },
+        "payload_refs": payload_refs,
+        "warning": if !payload_refs.is_empty() {
+            "Retained HTTPS Inspect payload bodies are stored locally and are not inlined in this export."
+        } else {
+            ""
+        },
+    })
+}
+
+fn event_has_retained_payload_ref(event: &UiEvent) -> bool {
+    !event_payload_refs(event).is_empty()
+}
+
+fn event_payload_refs(event: &UiEvent) -> Vec<String> {
+    let mut refs = event
+        .evidence
+        .as_ref()
+        .map(|evidence| {
+            evidence
+                .details
+                .iter()
+                .filter(|detail| detail.label.ends_with("payload ref"))
+                .map(|detail| detail.value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    refs.sort();
+    refs.dedup();
+    refs
 }
 
 fn export_timestamp() -> String {
@@ -8321,6 +8461,78 @@ mod tests {
     }
 
     #[test]
+    fn inspect_payload_path_for_ref_accepts_only_payload_file_refs() {
+        let _guard = lock_test_env();
+        let base = std::env::temp_dir().join(format!(
+            "agentsnitch-inspect-path-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::env::set_var("AGENTSNITCH_INSPECT_DIR", &base);
+        let expected = base.join("payloads").join("abc.json");
+
+        assert_eq!(
+            inspect_payload_path_for_ref("payloads/abc.json#request"),
+            Some(expected)
+        );
+        assert!(inspect_payload_path_for_ref("../abc.json#request").is_none());
+        assert!(inspect_payload_path_for_ref("payloads/../abc.json#request").is_none());
+        assert!(inspect_payload_path_for_ref("payloads/nested/abc.json#request").is_none());
+        std::env::remove_var("AGENTSNITCH_INSPECT_DIR");
+    }
+
+    #[test]
+    fn purge_retained_payload_refs_for_events_removes_only_referenced_payload_files() {
+        let _guard = lock_test_env();
+        let base = std::env::temp_dir().join(format!(
+            "agentsnitch-payload-purge-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let payload_dir = base.join("payloads");
+        std::fs::create_dir_all(&payload_dir).unwrap();
+        let referenced = payload_dir.join("referenced.json");
+        let unreferenced = payload_dir.join("unreferenced.json");
+        std::fs::write(&referenced, "{}").unwrap();
+        std::fs::write(&unreferenced, "{}").unwrap();
+        std::env::set_var("AGENTSNITCH_INSPECT_DIR", &base);
+
+        let mut evidence = linked_fixture(
+            "Inspected HTTPS request during tool span",
+            "api.example.com",
+            "medium",
+        );
+        evidence.details = vec![EvidenceDetail {
+            label: "Request payload ref".into(),
+            value: "payloads/referenced.json#request".into(),
+        }];
+        let events = vec![UiEvent {
+            id: 11,
+            ts: "23:00:02".into(),
+            summary: "Inspected HTTPS request".into(),
+            tags: vec!["inspected_http_exchange".into()],
+            detail: None,
+            destination: Some("api.example.com".into()),
+            destination_context: None,
+            correlated: true,
+            evidence: Some(evidence),
+            agent: None,
+        }];
+
+        let removed = purge_retained_payload_refs_for_events(&events).unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(!referenced.exists());
+        assert!(unreferenced.exists());
+        std::env::remove_var("AGENTSNITCH_INSPECT_DIR");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn export_record_includes_debuggable_evidence_fields() {
         let mut evidence = linked_fixture(
             "Sensitive read → outbound connection",
@@ -8417,6 +8629,112 @@ mod tests {
         assert_eq!(record["destination_category"], "unknown external");
         assert_eq!(record["severity"], "info");
         assert_eq!(record["raw_reasons"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn export_record_marks_inspected_http_payload_refs_as_refs_only() {
+        let mut evidence = linked_fixture(
+            "Inspected HTTPS request during tool span",
+            "api.example.com",
+            "medium",
+        );
+        evidence.details = vec![
+            EvidenceDetail {
+                label: "Payload retention".into(),
+                value: "redacted full payload stored locally; export includes refs only".into(),
+            },
+            EvidenceDetail {
+                label: "Request payload ref".into(),
+                value: "payloads/request-response.json#request".into(),
+            },
+            EvidenceDetail {
+                label: "Response payload ref".into(),
+                value: "payloads/request-response.json#response".into(),
+            },
+        ];
+        let event = UiEvent {
+            id: 9,
+            ts: "23:00:00".into(),
+            summary: "Inspected HTTPS request".into(),
+            tags: vec!["inspected_http_exchange".into(), "managed_proxy".into()],
+            detail: None,
+            destination: Some("api.example.com".into()),
+            destination_context: None,
+            correlated: true,
+            evidence: Some(evidence),
+            agent: None,
+        };
+        let refs = event_payload_refs(&event);
+
+        assert_eq!(
+            refs,
+            vec![
+                "payloads/request-response.json#request".to_string(),
+                "payloads/request-response.json#response".to_string()
+            ]
+        );
+        let record = export_record(&event);
+        assert_eq!(record["retention"]["https_inspect"], true);
+        assert_eq!(record["retention"]["payload_export_mode"], "refs_only");
+        assert_eq!(
+            record["retention"]["payload_refs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(!record.to_string().contains("request_redacted_body"));
+    }
+
+    #[test]
+    fn export_header_summarizes_inspected_http_payload_refs() {
+        let mut evidence = linked_fixture(
+            "Inspected HTTPS request during tool span",
+            "api.example.com",
+            "medium",
+        );
+        evidence.details = vec![
+            EvidenceDetail {
+                label: "Request payload ref".into(),
+                value: "payloads/one.json#request".into(),
+            },
+            EvidenceDetail {
+                label: "Response payload ref".into(),
+                value: "payloads/one.json#response".into(),
+            },
+        ];
+        let events = vec![UiEvent {
+            id: 10,
+            ts: "23:00:01".into(),
+            summary: "Inspected HTTPS request".into(),
+            tags: vec!["inspected_http_exchange".into(), "managed_proxy".into()],
+            detail: None,
+            destination: Some("api.example.com".into()),
+            destination_context: None,
+            correlated: true,
+            evidence: Some(evidence),
+            agent: None,
+        }];
+        let summary = session_summary(&events, 0);
+        let header = export_header(
+            &events,
+            true,
+            false,
+            &SessionSnapshot::default(),
+            &[],
+            summary,
+        );
+
+        assert_eq!(
+            header["retention"]["https_inspect_retained_payload_events"],
+            1
+        );
+        assert_eq!(header["retention"]["https_inspect_payload_ref_count"], 2);
+        assert_eq!(header["retention"]["payload_export_mode"], "refs_only");
+        assert!(header["retention"]["warning"]
+            .as_str()
+            .unwrap()
+            .contains("not inlined"));
     }
 
     #[test]
