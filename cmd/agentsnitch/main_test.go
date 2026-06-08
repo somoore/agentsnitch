@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +104,50 @@ func TestDisableInspectCleansProcessTrustAndPayloadData(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("payload dir entries = %d, want 0", len(entries))
 	}
+}
+
+func TestPurgeInspectDataExpiredOnlyPreservesActivePayloads(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("AGENTSNITCH_INSPECT_DIR", filepath.Join(base, "inspect"))
+	paths := inspect.DefaultPaths()
+	if err := os.MkdirAll(paths.DataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expiredAt := time.Now().UTC().Add(-time.Minute)
+	futureAt := time.Now().UTC().Add(time.Hour)
+	expiredPath := writePayloadRecordForCLITest(t, paths, "expired.json", &expiredAt)
+	futurePath := writePayloadRecordForCLITest(t, paths, "future.json", &futureAt)
+	manualPath := writePayloadRecordForCLITest(t, paths, "manual.json", nil)
+
+	purgeInspectData([]string{"--expired"})
+
+	if _, err := os.Stat(expiredPath); !os.IsNotExist(err) {
+		t.Fatalf("expired payload still exists or unexpected stat error: %v", err)
+	}
+	for _, path := range []string{futurePath, manualPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("active payload should remain at %s: %v", path, err)
+		}
+	}
+}
+
+func writePayloadRecordForCLITest(t *testing.T, paths inspect.Paths, name string, expiresAt *time.Time) string {
+	t.Helper()
+	raw, err := json.Marshal(inspect.PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		ExpiresAt: expiresAt,
+		Request:   "request",
+		Response:  "response",
+	})
+	if err != nil {
+		t.Fatalf("Marshal payload record: %v", err)
+	}
+	path := filepath.Join(paths.DataDir, name)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("WriteFile payload record: %v", err)
+	}
+	return path
 }
 
 func TestCurrentInspectStatusUsesLiveDaemonProxy(t *testing.T) {
