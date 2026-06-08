@@ -22,6 +22,8 @@ type Context struct {
 type Capture struct {
 	Settings      Settings
 	CAFingerprint string
+	Paths         Paths
+	Network       event.InspectedHTTPNetwork
 }
 
 func ExchangeFromHTTP(ctx Context, capture Capture, req *http.Request, reqBody []byte, resp *http.Response, respBody []byte, tlsMode, upstreamTLSVersion string, leafGenerated bool) event.InspectedHTTPExchange {
@@ -61,7 +63,7 @@ func ExchangeFromHTTP(ctx Context, capture Capture, req *http.Request, reqBody [
 		status = resp.StatusCode
 		respContentType = resp.Header.Get("Content-Type")
 	}
-	return event.InspectedHTTPExchange{
+	exchange := event.InspectedHTTPExchange{
 		Schema:    event.SchemaInspectedHTTPV0,
 		TS:        time.Now().UTC(),
 		SessionID: ctx.SessionID,
@@ -96,6 +98,7 @@ func ExchangeFromHTTP(ctx Context, capture Capture, req *http.Request, reqBody [
 			LeafCertGenerated:  leafGenerated,
 			UpstreamTLSVersion: upstreamTLSVersion,
 		},
+		Network: capture.Network,
 		Retention: event.InspectedHTTPRetention{
 			PayloadMode:       settings.PayloadMode(),
 			PreviewBytes:      settings.HTTPSInspectPreviewBytes,
@@ -107,6 +110,12 @@ func ExchangeFromHTTP(ctx Context, capture Capture, req *http.Request, reqBody [
 			Confidence: correlationConfidence(ctx, tlsMode),
 		},
 	}
+	if settings.HTTPSInspectCaptureFull {
+		if err := StorePayloadRecord(payloadPaths(capture.Paths), &exchange, reqRedacted.Value, respRedacted.Value); err != nil {
+			exchange.Retention.FullPayloadStored = false
+		}
+	}
+	return exchange
 }
 
 func MetadataOnlyExchange(ctx Context, capture Capture, host string, tlsMode string) event.InspectedHTTPExchange {
@@ -132,6 +141,7 @@ func MetadataOnlyExchange(ctx Context, capture Capture, host string, tlsMode str
 			PreviewBytes: capture.Settings.HTTPSInspectPreviewBytes,
 			Retention:    capture.Settings.HTTPSInspectFullRetention,
 		},
+		Network: capture.Network,
 		Correlation: event.InspectedHTTPCorrelation{
 			Basis:      correlationBasis(ctx, tlsMode),
 			Confidence: correlationConfidence(ctx, tlsMode),
@@ -166,13 +176,17 @@ func inspectedHeaders(headers http.Header) []event.InspectedHTTPHeader {
 }
 
 func previewForSettings(settings Settings, redacted RedactionResult) string {
-	if settings.HTTPSInspectCaptureFull {
-		return redacted.Value
-	}
-	if settings.HTTPSInspectCapturePreviews {
+	if settings.HTTPSInspectCaptureFull || settings.HTTPSInspectCapturePreviews {
 		return redacted.Preview
 	}
 	return ""
+}
+
+func payloadPaths(paths Paths) Paths {
+	if paths.DataDir != "" {
+		return paths
+	}
+	return DefaultPaths()
 }
 
 func correlationBasis(ctx Context, tlsMode string) []string {

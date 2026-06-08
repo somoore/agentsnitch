@@ -1,15 +1,19 @@
 package inspect
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,6 +137,9 @@ func TestProcessScopedEnvIncludesTrustAndProxy(t *testing.T) {
 	if env["HTTPS_PROXY"] == "" || !strings.Contains(env["NO_PROXY"], "localhost") {
 		t.Fatalf("proxy env missing: %+v", env)
 	}
+	if env["AGENTSNITCH_MANAGED_PROXY"] != "1" || env["AGENTSNITCH_INSPECT_MODE"] != "process_scoped" {
+		t.Fatalf("managed inspect labels missing: %+v", env)
+	}
 }
 
 func TestProxyRequiresToken(t *testing.T) {
@@ -173,13 +180,17 @@ func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
 	settings.HTTPSInspectCapturePreviews = true
+	settings.HTTPSInspectCaptureFull = true
 	settings.HTTPSInspectPreviewBytes = 128
+	settings.HTTPSInspectFullRetention = FullPayloadOneHour
 	paths := testPaths(t)
 	manager := NewCertManager(paths)
+	var rawBody = strings.Repeat("x", 512) + "\nAWS_" + "SECRET_ACCESS_KEY=<example-token>"
 	var seen []event.InspectedHTTPExchange
 	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
 		seen = append(seen, exchange)
 	})
+	proxy.paths = paths
 	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{}
 		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
@@ -208,7 +219,7 @@ func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 		},
 		Timeout: 5 * time.Second,
 	}
-	req, err := http.NewRequest("POST", "https://api.example.com/upload?secret=1", strings.NewReader("AWS_"+"SECRET_ACCESS_KEY=<example-token>"))
+	req, err := http.NewRequest("POST", "https://api.example.com/upload?secret=1", strings.NewReader(rawBody))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -238,8 +249,99 @@ func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 	if strings.Contains(exchange.Response.Preview, "ghp_") {
 		t.Fatalf("response preview leaked token: %q", exchange.Response.Preview)
 	}
+	if strings.Contains(exchange.Request.Preview, rawBody) || len(exchange.Request.Preview) > settings.HTTPSInspectPreviewBytes {
+		t.Fatalf("request preview was not capped: len=%d", len(exchange.Request.Preview))
+	}
+	if exchange.Request.PayloadRef == "" || exchange.Response.PayloadRef == "" {
+		t.Fatalf("full payload refs missing: request=%q response=%q", exchange.Request.PayloadRef, exchange.Response.PayloadRef)
+	}
+	entries, err := os.ReadDir(paths.DataDir)
+	if err != nil {
+		t.Fatalf("read payload dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("payload records = %d, want 1", len(entries))
+	}
+	payloadRaw, err := os.ReadFile(filepath.Join(paths.DataDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read payload record: %v", err)
+	}
+	if strings.Contains(string(payloadRaw), "<example-token>") {
+		t.Fatalf("payload record leaked secret: %s", payloadRaw)
+	}
+	if !strings.Contains(string(payloadRaw), "[REDACTED:env_secret]") {
+		t.Fatalf("payload record missing redacted body: %s", payloadRaw)
+	}
 	if err := event.ValidateInspectedHTTPExchange(exchange); err != nil {
 		t.Fatalf("validate exchange: %v", err)
+	}
+}
+
+func TestMetadataOnlyConnectRecordsNetworkMetrics(t *testing.T) {
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen upstream: %v", err)
+	}
+	defer upstream.Close()
+	go func() {
+		conn, err := upstream.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4)
+		_, _ = io.ReadFull(conn, buf)
+		_, _ = conn.Write([]byte("pong"))
+	}()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectNeverDomains = []string{"api.example.com"}
+	var seen []event.InspectedHTTPExchange
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), func(exchange event.InspectedHTTPExchange) {
+		seen = append(seen, exchange)
+	})
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	conn, err := net.DialTimeout("tcp", proxyURL.Host, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	fmt.Fprintf(conn, "CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n", basicProxyToken(proxy.Token()))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read connect response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("connect status = %d", resp.StatusCode)
+	}
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write tunnel: %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read tunnel: %v", err)
+	}
+	_ = conn.Close()
+
+	waitForEvents(t, &seen, 1)
+	exchange := seen[0]
+	if exchange.TLS.InspectionMode != "metadata_only" {
+		t.Fatalf("mode = %q", exchange.TLS.InspectionMode)
+	}
+	if exchange.Network.RemoteIP != "127.0.0.1" || exchange.Network.RemotePort == 0 {
+		t.Fatalf("remote metrics missing: %+v", exchange.Network)
+	}
+	if exchange.Network.BytesOut != 4 || exchange.Network.BytesIn != 4 {
+		t.Fatalf("byte metrics = out %d in %d, want 4/4", exchange.Network.BytesOut, exchange.Network.BytesIn)
 	}
 }
 
@@ -282,6 +384,52 @@ func TestProxyTrustFailureDowngradesToMetadata(t *testing.T) {
 	}
 }
 
+func TestProcessScopedCurlTrustsInspectCAWhenAvailable(t *testing.T) {
+	curl := findExecutableForTest(t, "curl")
+	upstream, proxy, seen := processScopedClientFixture(t)
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	cmd := exec.Command(curl, "-fsS", "--max-time", "5", "--resolve", "api.example.com:443:"+upstream.Listener.Addr().(*net.TCPAddr).IP.String(), "https://api.example.com/hello")
+	cmd.Env = append(os.Environ(), envPairs(ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL()))...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("curl failed: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("curl output = %q, want ok", out)
+	}
+	waitForEvents(t, seen, 1)
+	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
+func TestProcessScopedPythonRequestsTrustsInspectCAWhenAvailable(t *testing.T) {
+	python := findExecutableForTest(t, "python3")
+	if _, err := exec.Command(python, "-c", "import requests").CombinedOutput(); err != nil {
+		t.Skip("python requests module is not installed")
+	}
+	upstream, proxy, seen := processScopedClientFixture(t)
+	defer upstream.Close()
+	defer proxy.Shutdown(nil)
+
+	script := `import requests; print(requests.get("https://api.example.com/hello", timeout=5).text)`
+	cmd := exec.Command(python, "-c", script)
+	cmd.Env = append(os.Environ(), envPairs(ProcessScopedEnv(proxy.certs.paths.BundlePath, proxy.AuthenticatedURL()))...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python requests failed: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("python output = %q, want ok", out)
+	}
+	waitForEvents(t, seen, 1)
+	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	}
+}
+
 func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int) {
 	t.Helper()
 	deadline := time.Now().Add(500 * time.Millisecond)
@@ -291,4 +439,52 @@ func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func basicProxyToken(token string) string {
+	return base64.StdEncoding.EncodeToString([]byte("agentsnitch:" + token))
+}
+
+func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *[]event.InspectedHTTPExchange) {
+	t.Helper()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	paths := testPaths(t)
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectCapturePreviews = true
+	seen := []event.InspectedHTTPExchange{}
+	manager := NewCertManager(paths)
+	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
+		seen = append(seen, exchange)
+	})
+	proxy.paths = paths
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	proxy.upstreamTLSConfig = &tls.Config{InsecureSkipVerify: true}
+	if err := proxy.Start(); err != nil {
+		upstream.Close()
+		t.Fatalf("proxy start: %v", err)
+	}
+	return upstream, proxy, &seen
+}
+
+func findExecutableForTest(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("%s is not installed", name)
+	}
+	return path
+}
+
+func envPairs(env map[string]string) []string {
+	pairs := make([]string, 0, len(env))
+	for key, value := range env {
+		pairs = append(pairs, key+"="+value)
+	}
+	return pairs
 }

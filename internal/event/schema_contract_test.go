@@ -27,6 +27,7 @@ func TestEventSchemaMatchesGoWireStructs(t *testing.T) {
 	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPResponse", InspectedHTTPResponse{})
 	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPHeader", InspectedHTTPHeader{})
 	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPTLS", InspectedHTTPTLS{})
+	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPNetwork", InspectedHTTPNetwork{})
 	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPRetention", InspectedHTTPRetention{})
 	assertSchemaPropertiesMatchStruct(t, defs, "InspectedHTTPCorrelation", InspectedHTTPCorrelation{})
 }

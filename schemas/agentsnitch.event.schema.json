@@ -361,10 +361,11 @@
         "request": { "$ref": "#/$defs/InspectedHTTPRequest" },
         "response": { "$ref": "#/$defs/InspectedHTTPResponse" },
         "tls": { "$ref": "#/$defs/InspectedHTTPTLS" },
+        "network": { "$ref": "#/$defs/InspectedHTTPNetwork" },
         "retention": { "$ref": "#/$defs/InspectedHTTPRetention" },
         "correlation": { "$ref": "#/$defs/InspectedHTTPCorrelation" }
       },
-      "required": ["schema", "ts", "request", "response", "tls", "retention", "correlation"]
+      "required": ["schema", "ts", "request", "response", "tls", "network", "retention", "correlation"]
     },
     "InspectedHTTPRequest": {
       "type": "object",
@@ -384,7 +385,8 @@
         "body_sha256": { "type": "string" },
         "preview": { "type": "string" },
         "preview_truncated": { "type": "boolean" },
-        "redaction_count": { "type": "integer" }
+        "redaction_count": { "type": "integer" },
+        "payload_ref": { "type": "string" }
       },
       "required": ["method", "scheme", "host", "path", "query_redacted", "headers", "body_size", "preview_truncated", "redaction_count"]
     },
@@ -398,7 +400,8 @@
         "body_sha256": { "type": "string" },
         "preview": { "type": "string" },
         "preview_truncated": { "type": "boolean" },
-        "redaction_count": { "type": "integer" }
+        "redaction_count": { "type": "integer" },
+        "payload_ref": { "type": "string" }
       },
       "required": ["status", "body_size", "preview_truncated", "redaction_count"]
     },
@@ -424,6 +427,19 @@
         "upstream_tls_version": { "type": "string" }
       },
       "required": ["inspection_mode", "leaf_cert_generated"]
+    },
+    "InspectedHTTPNetwork": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remote": { "type": "string" },
+        "remote_ip": { "type": "string" },
+        "remote_port": { "type": "integer" },
+        "bytes_out": { "type": "integer" },
+        "bytes_in": { "type": "integer" },
+        "duration_ms": { "type": "integer" }
+      },
+      "required": ["bytes_out", "bytes_in", "duration_ms"]
     },
     "InspectedHTTPRetention": {
       "type": "object",

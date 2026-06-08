@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/somoore/agentsnitch/internal/event"
@@ -25,6 +26,7 @@ import (
 type Proxy struct {
 	settings          Settings
 	certs             *CertManager
+	paths             Paths
 	onEvent           func(event.InspectedHTTPExchange)
 	server            *http.Server
 	listener          net.Listener
@@ -42,7 +44,7 @@ type ProxyStatus struct {
 
 func NewProxy(settings Settings, certs *CertManager, onEvent func(event.InspectedHTTPExchange)) *Proxy {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	return &Proxy{settings: settings, certs: certs, onEvent: onEvent, dial: dialer.DialContext}
+	return &Proxy{settings: settings, paths: DefaultPaths(), certs: certs, onEvent: onEvent, dial: dialer.DialContext}
 }
 
 func (p *Proxy) Start() error {
@@ -144,6 +146,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Context) {
+	started := time.Now()
 	body, _ := io.ReadAll(limitReader(req.Body, 16<<20))
 	if req.Body != nil {
 		_ = req.Body.Close()
@@ -160,10 +163,19 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Co
 	}
 	defer resp.Body.Close()
 	copyResponse(w, resp, respBody)
-	p.emit(ExchangeFromHTTP(ctx, Capture{Settings: p.settings}, req, body, resp, respBody, "metadata_only", "", false))
+	p.emit(ExchangeFromHTTP(ctx, Capture{
+		Settings: p.settings,
+		Paths:    p.paths,
+		Network: event.InspectedHTTPNetwork{
+			BytesOut:   int64(len(body)),
+			BytesIn:    int64(len(respBody)),
+			DurationMS: time.Since(started).Milliseconds(),
+		},
+	}, req, body, resp, respBody, "metadata_only", "", false))
 }
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Context) {
+	started := time.Now()
 	host := req.Host
 	if host == "" {
 		http.Error(w, "missing CONNECT host", http.StatusBadRequest)
@@ -171,8 +183,11 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 	}
 	hostOnly := canonicalCertHost(host)
 	if !p.settings.HTTPSInspectEnabled || !DestinationInScope(p.settings, hostOnly) {
-		p.emit(p.metadata(ctx, hostOnly, "metadata_only"))
-		p.tunnelConnect(w, req)
+		network, err := p.tunnelConnect(w, req)
+		if err != nil {
+			log.Printf("inspect proxy tunnel metadata failed for %s: %v", hostOnly, err)
+		}
+		p.emit(p.metadata(ctx, hostOnly, "metadata_only", network))
 		return
 	}
 	hj, ok := w.(http.Hijacker)
@@ -190,7 +205,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 	}
 	leaf, err := p.certs.LeafCertificate(hostOnly)
 	if err != nil {
-		p.emit(p.metadata(ctx, hostOnly, "trust_failed"))
+		p.emit(p.metadata(ctx, hostOnly, "trust_failed", event.InspectedHTTPNetwork{}))
 		return
 	}
 	tlsClient := tls.Server(clientConn, &tls.Config{
@@ -198,13 +213,13 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		MinVersion:   tls.VersionTLS12,
 	})
 	if err := tlsClient.Handshake(); err != nil {
-		p.emit(p.metadata(ctx, hostOnly, "pinned_or_custom_trust"))
+		p.emit(p.metadata(ctx, hostOnly, "pinned_or_custom_trust", event.InspectedHTTPNetwork{}))
 		return
 	}
 	reader := bufio.NewReader(tlsClient)
 	clientReq, err := http.ReadRequest(reader)
 	if err != nil {
-		p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol"))
+		p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
 		return
 	}
 	innerCtx := contextFromRequest(clientReq)
@@ -223,7 +238,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 	}
 	upstreamReq, err := CloneRequestForUpstream(clientReq, reqBody, "https", host)
 	if err != nil {
-		p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol"))
+		p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
 		return
 	}
 	var tlsState *tls.ConnectionState
@@ -241,47 +256,67 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		upstreamVersion = tlsVersionName(tlsState.Version)
 	}
 	info, _ := p.certs.Info()
-	exchange := ExchangeFromHTTP(ctx, Capture{Settings: p.settings, CAFingerprint: info.Fingerprint}, clientReq, reqBody, resp, respBody, "local_mitm", upstreamVersion, true)
+	exchange := ExchangeFromHTTP(ctx, Capture{
+		Settings:      p.settings,
+		CAFingerprint: info.Fingerprint,
+		Paths:         p.paths,
+		Network: event.InspectedHTTPNetwork{
+			BytesOut:   int64(len(reqBody)),
+			BytesIn:    int64(len(respBody)),
+			DurationMS: time.Since(started).Milliseconds(),
+		},
+	}, clientReq, reqBody, resp, respBody, "local_mitm", upstreamVersion, true)
 	p.emit(exchange)
 }
 
-func (p *Proxy) tunnelConnect(w http.ResponseWriter, req *http.Request) {
+func (p *Proxy) tunnelConnect(w http.ResponseWriter, req *http.Request) (event.InspectedHTTPNetwork, error) {
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 	defer cancel()
 	upstream, err := p.dial(ctx, "tcp", req.Host)
 	if err != nil {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
-		return
+		return event.InspectedHTTPNetwork{DurationMS: time.Since(started).Milliseconds()}, err
 	}
 	defer upstream.Close()
+	network := networkFromRemote(upstream.RemoteAddr(), started)
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "hijacking unsupported", http.StatusInternalServerError)
-		return
+		return network, errors.New("hijacking unsupported")
 	}
 	client, _, err := hj.Hijack()
 	if err != nil {
-		return
+		return network, err
 	}
 	defer client.Close()
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
-		return
+		return network, err
 	}
+	var bytesOut atomic.Int64
+	var bytesIn atomic.Int64
 	errc := make(chan error, 2)
 	go func() {
-		_, err := io.Copy(upstream, client)
+		_, err := io.Copy(countingWriter{writer: upstream, count: &bytesOut}, client)
 		errc <- err
 	}()
 	go func() {
-		_, err := io.Copy(client, upstream)
+		_, err := io.Copy(countingWriter{writer: client, count: &bytesIn}, upstream)
 		errc <- err
 	}()
 	<-errc
+	_ = upstream.Close()
+	_ = client.Close()
+	<-errc
+	network.BytesOut = bytesOut.Load()
+	network.BytesIn = bytesIn.Load()
+	network.DurationMS = time.Since(started).Milliseconds()
+	return network, nil
 }
 
-func (p *Proxy) metadata(ctx Context, host, mode string) event.InspectedHTTPExchange {
+func (p *Proxy) metadata(ctx Context, host, mode string, network event.InspectedHTTPNetwork) event.InspectedHTTPExchange {
 	info, _ := p.certs.Info()
-	return MetadataOnlyExchange(ctx, Capture{Settings: p.settings, CAFingerprint: info.Fingerprint}, host, mode)
+	return MetadataOnlyExchange(ctx, Capture{Settings: p.settings, CAFingerprint: info.Fingerprint, Paths: p.paths, Network: network}, host, mode)
 }
 
 func (p *Proxy) emit(exchange event.InspectedHTTPExchange) {
@@ -354,6 +389,34 @@ func AuthenticatedProxyURL(address, token string) string {
 		u.User = url.UserPassword("agentsnitch", token)
 	}
 	return u.String()
+}
+
+type countingWriter struct {
+	writer io.Writer
+	count  *atomic.Int64
+}
+
+func (w countingWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	w.count.Add(int64(n))
+	return n, err
+}
+
+func networkFromRemote(addr net.Addr, started time.Time) event.InspectedHTTPNetwork {
+	network := event.InspectedHTTPNetwork{DurationMS: time.Since(started).Milliseconds()}
+	if addr == nil {
+		return network
+	}
+	network.Remote = addr.String()
+	host, port, err := net.SplitHostPort(network.Remote)
+	if err != nil {
+		return network
+	}
+	network.RemoteIP = strings.Trim(host, "[]")
+	if parsedPort, err := net.LookupPort("tcp", port); err == nil {
+		network.RemotePort = parsedPort
+	}
+	return network
 }
 
 func constantTimeStringEqual(a, b string) bool {

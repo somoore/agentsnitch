@@ -3783,6 +3783,8 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
     let request = value.get("request")?;
     let response = value.get("response").cloned().unwrap_or_default();
     let tls = value.get("tls").cloned().unwrap_or_default();
+    let network = value.get("network").cloned().unwrap_or_default();
+    let retention = value.get("retention").cloned().unwrap_or_default();
     let correlation = value.get("correlation").cloned().unwrap_or_default();
     let method = request
         .get("method")
@@ -3815,6 +3817,23 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
     let redactions = req_redactions + resp_redactions;
+    let remote = network.get("remote").and_then(|v| v.as_str()).unwrap_or("");
+    let bytes_out = network
+        .get("bytes_out")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let bytes_in = network
+        .get("bytes_in")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let duration_ms = network
+        .get("duration_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let full_payload_stored = retention
+        .get("full_payload_stored")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let state: State<AppState> = app.state();
     let mut next_id = state.next_id.lock().unwrap();
     *next_id += 1;
@@ -3863,6 +3882,30 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
             value: format!("{} redacted secret-looking value(s)", redactions),
         },
     ];
+    if !remote.is_empty() {
+        details.push(EvidenceDetail {
+            label: "Remote endpoint".into(),
+            value: remote.into(),
+        });
+    }
+    if bytes_out > 0 || bytes_in > 0 {
+        details.push(EvidenceDetail {
+            label: "Proxy bytes".into(),
+            value: format!("out {} · in {}", bytes_out, bytes_in),
+        });
+    }
+    if duration_ms > 0 {
+        details.push(EvidenceDetail {
+            label: "Proxy duration".into(),
+            value: format!("{} ms", duration_ms),
+        });
+    }
+    if full_payload_stored {
+        details.push(EvidenceDetail {
+            label: "Payload retention".into(),
+            value: "redacted full payload stored locally; export includes refs only".into(),
+        });
+    }
     if let Some(fingerprint) = tls
         .get("ca_fingerprint")
         .and_then(|v| v.as_str())
@@ -5523,6 +5566,7 @@ fn set_https_inspect_settings(
     state: State<AppState>,
     app: AppHandle,
 ) -> Result<AppSettingsUpdate, String> {
+    let was_enabled = state.app_settings.lock().unwrap().https_inspect_enabled;
     let settings = {
         let mut guard = state.app_settings.lock().unwrap();
         guard.https_inspect_enabled = request.enabled;
@@ -5540,10 +5584,33 @@ fn set_https_inspect_settings(
         guard.clone()
     };
     save_app_settings(&settings)?;
+    let mut settings = settings;
     let detail = if request.enabled {
         match run_inspect_cli(&["create-ca"], Duration::from_secs(12)) {
             Ok(_) => "HTTPS Inspect Mode saved. Restart AgentSnitch daemon to start or refresh the managed proxy.".into(),
             Err(err) => format!("HTTPS Inspect Mode saved, but CA creation failed: {}", err),
+        }
+    } else if was_enabled {
+        match run_inspect_cli(
+            &[
+                "disable",
+                "--remove-process-trust=true",
+                "--purge-data=true",
+            ],
+            Duration::from_secs(15),
+        ) {
+            Ok(_) => {
+                settings = load_app_settings();
+                {
+                    let mut guard = state.app_settings.lock().unwrap();
+                    *guard = settings.clone();
+                }
+                "HTTPS Inspect Mode disabled. Process-scoped trust files and captured payload data were removed.".into()
+            }
+            Err(err) => format!(
+                "HTTPS Inspect Mode disabled for new sessions, but cleanup failed: {}",
+                err
+            ),
         }
     } else {
         "HTTPS Inspect Mode disabled for new sessions.".into()
