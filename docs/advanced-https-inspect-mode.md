@@ -42,7 +42,7 @@ Put differently: OS Sensor mode and the default NetworkStatistics observer can p
 
 ## Trust Model
 
-The default trust strategy is process-scoped trust. AgentSnitch creates a local CA and a process-scoped CA bundle. Managed tool processes can be launched with environment variables such as `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, `npm_config_cafile`, `PNPM_CONFIG_CAFILE`, and `YARN_CA_FILE`.
+The default trust strategy is process-scoped trust. AgentSnitch creates a local CA and a process-scoped CA bundle. Managed tool processes can be launched with environment variables such as `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, `NPM_CONFIG_CAFILE`, `npm_config_cafile`, `PNPM_CONFIG_CAFILE`, and `YARN_CA_FILE`.
 
 System trust is optional. `agentsnitchctl inspect trust-system` installs the AgentSnitch CA into the macOS System keychain and shows the CA fingerprint before doing so. It runs through macOS administrator authorization, so Touch ID or the device's configured admin approval path is required when available. Removal uses the same explicit authorization path through `agentsnitchctl inspect untrust-system`.
 
@@ -55,7 +55,7 @@ agentsnitchctl inspect run -- <command> [args...]
 
 `agentsnitchctl inspect run -- claude` is the managed-session launch path: Claude and tools it starts inherit the process-scoped proxy and CA environment. Existing Claude sessions that were already running before this command will not be retroactively reconfigured, because Claude hooks observe tool activity but cannot mutate the parent process environment.
 
-The process-scoped path is covered by integration tests for curl, Python `requests`, Node TLS clients, and Git HTTPS clients. Tools that ignore proxy environment variables or use their own trust store may still need tool-specific configuration or the optional system trust path.
+The process-scoped path is covered by integration tests for curl, Python `requests`, Node TLS clients, npm registry requests, and Git HTTPS clients. Tools that ignore proxy environment variables or use their own trust store may still need tool-specific configuration or the optional system trust path.
 
 ## Retention
 
