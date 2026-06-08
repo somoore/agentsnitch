@@ -10,7 +10,7 @@ AgentSnitch is a local-first macOS pre-alpha. The current release path is built 
 
 Download [AgentSnitch v0.1.0-pre-alpha.5](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.5) and install the macOS `.pkg`.
 
-The installer includes `AgentSnitch.app`, the local daemon, support tools, and LaunchAgent registration. Claude Code hook tooling is included, but hooks are not installed automatically; open AgentSnitch Settings -> Hooks to install or update them explicitly. High Assurance mode is available as an optional macOS system-extension-backed path, but User Visibility mode is the default unless explicitly changed in app Settings.
+The installer includes `AgentSnitch.app`, the local daemon, support tools, and LaunchAgent registration. Claude Code hook tooling is included, but hooks are not installed automatically; open AgentSnitch Settings -> Hooks to install or update them explicitly. OS Sensor mode is available as an optional macOS system-extension-backed path, but User Visibility mode is the default unless explicitly changed in app Settings.
 
 ## Build
 
@@ -23,7 +23,9 @@ This builds:
 - `bin/emitter` - fail-open Claude hook emitter;
 - `bin/daemon` - local socket receiver and correlator;
 - `bin/doctor` - local health check;
-- `bin/hookctl` - Claude Code hook installer/verifier.
+- `bin/hookctl` - Claude Code hook installer/verifier;
+- `bin/neready` - production Network Extension readiness checker;
+- `bin/agentsnitchctl` - CLI helper for HTTPS Inspect status, CA, trust, and process-scoped environment commands.
 
 The emitter tags linkable network intent from shell network commands, MCP tools, WebFetch, and WebSearch. It also emits `destination_intents` when a tool input implies a host before the OS observer proves the flow, for example a WebFetch URL or an obvious WebSearch provider query such as GitHub.
 
@@ -35,7 +37,7 @@ make create
 
 This is the one-command build/install path. It builds every Go tool, builds the Tauri app, installs `/Applications/AgentSnitch.app`, embeds and signs the optional Network Extension and host bridge, installs support binaries under `~/Library/Application Support/AgentSnitch/bin`, installs a per-user LaunchAgent for the daemon, starts the daemon, launches the app, and runs `doctor`. Claude Code hooks are managed separately from Settings -> Hooks.
 
-The installed LaunchAgent sets `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=0` and `AGENTSNITCH_DISABLE_LSOF=0` by default. That keeps the shipped/local-install path on semantic hooks plus unprivileged NetworkStatistics/`nettop` process-network correlation, with polling-based `lsof` as a fallback if `nettop` is unavailable. High Assurance is disabled by default and must be enabled explicitly when you need stronger OS-backed attribution.
+The installed LaunchAgent sets `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=0` and `AGENTSNITCH_DISABLE_LSOF=0` by default. That keeps the shipped/local-install path on semantic hooks plus unprivileged NetworkStatistics/`nettop` process-network correlation, with polling-based `lsof` as a fallback if `nettop` is unavailable. OS Sensor mode is disabled by default and must be enabled explicitly when you need stronger OS-backed attribution. Reverse DNS/PTR lookup is also disabled by default; enable it from Settings only when you need destination-name debugging. The **Always On** checkbox persists `AGENTSNITCH_ENABLE_REVERSE_DNS=1` in the daemon LaunchAgent so the setting survives app exits, daemon restarts, and reboots.
 
 If a single Developer ID Application signing identity is available in the login keychain, `make create` uses it automatically; otherwise it falls back to ad hoc signing with the development entitlements. It also signs the installed support binaries so the LaunchAgent daemon appears as AgentSnitch instead of a generic unsigned `daemon` process.
 
@@ -48,6 +50,17 @@ AGENTSNITCH_NOTARY_PROFILE=AgentSnitch make create
 ```
 
 Alternatively set `AGENTSNITCH_NOTARY_APPLE_ID`, `AGENTSNITCH_NOTARY_PASSWORD`, and `AGENTSNITCH_NOTARY_TEAM_ID`. Use `AGENTSNITCH_SKIP_NOTARIZE=1` to skip notarization explicitly.
+
+## Settings
+
+The Settings window is organized around the current product surfaces:
+
+- **General** keeps the app focused or shows advanced diagnostic controls.
+- **Hooks** installs, updates, removes, and refreshes Claude Code hook registrations. The "Keep hooks up to date" child setting refreshes installed hook commands when AgentSnitch starts.
+- **Advanced** contains OS Sensor mode, the OS Sensor startup default, Reverse DNS / PTR labels, and PTR "Always On". Reverse DNS is disabled by default and may ask the local resolver for PTR labels when enabled.
+- **Developer** contains HTTPS Inspect Mode, local CA actions, optional macOS system trust actions, payload capture controls, and the Debug button. The Debug button is hidden by default; enable it here only when you need the footer Debug snapshot control. Its "Always On" child setting keeps the Debug button visible after AgentSnitch restarts.
+
+HTTPS Inspect Mode is intentionally in **Developer** because it can create local CA material and, when full payload capture is explicitly enabled, can retain raw request and response bodies for inspected managed traffic. The normal app install, package install, daemon start, hook install, and OS Sensor activation never install a trusted root certificate.
 
 ## Install Claude Hooks
 
@@ -72,6 +85,8 @@ of AgentSnitch, you can always remove the filter via **System Settings → Netwo
 → Filters**, deactivate the extension listed by `systemextensionsctl list`, or
 boot into Safe Mode (third-party content filters do not load there).
 
+Uninstall also checks HTTPS Inspect CA state when `agentsnitchctl` is available. If the AgentSnitch CA is still installed in macOS System trust, uninstall requests the same administrator-approved removal path used by Settings -> Developer or `agentsnitchctl inspect untrust-system`, then prints Keychain Access fallback instructions if macOS refuses automatic removal. It also disables Inspect Mode, removes process-scoped trust files, and purges captured payload data when possible.
+
 ## Run
 
 Start the daemon:
@@ -84,7 +99,7 @@ The source-run target sets `AGENTSNITCH_ALLOW_UNSIGNED_PEERS=1` because `go run`
 
 In a separate terminal, run the Tauri UI from the built app bundle or with Tauri during development.
 
-For High Assurance verification, first open Settings in the app and turn **High Assurance mode** on, then disable the userland NetworkStatistics and `lsof` observers so `doctor` and the UI prove that the OS-backed path is producing network events:
+For OS Sensor verification, first open Settings in the app and turn **OS Sensor mode** on, then disable the userland NetworkStatistics and `lsof` observers so `doctor` and the UI prove that the OS-backed path is producing network events:
 
 ```sh
 AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1 AGENTSNITCH_DISABLE_LSOF=1 make run-daemon
@@ -133,7 +148,7 @@ flowchart LR
     class UI ui
 ```
 
-The optional High Assurance path is:
+The optional OS Sensor path is:
 
 ```mermaid
 flowchart LR
@@ -143,12 +158,12 @@ flowchart LR
     classDef ui fill:#f6f0ff,stroke:#8c63d8,color:#21133d
 
     Settings["AgentSnitch Settings"]
-    NE["High Assurance macOS sensor"]
+    NE["OS Sensor macOS telemetry"]
     Socket["Daemon Unix socket"]
     Correlator["Daemon / Correlator"]
     UI["Tauri evidence UI"]
 
-    Settings -->|"user enables High Assurance"| NE
+    Settings -->|"user enables OS Sensor mode"| NE
     NE -->|"metadata-only network_extension FlowEvent"| Socket
     Socket --> Correlator
     Correlator -->|"linked evidence"| UI
@@ -161,9 +176,11 @@ flowchart LR
 
 When explicitly enabled, the Tauri app dynamically loads the Swift host bridge dylib, starts the host-side XPC listener for activation/fallback, submits system-extension activation, and saves an enabled `NEFilterManager` socket-filter configuration bound to `com.somoore.agentsnitch.network-extension`. That configuration passes the daemon socket path to the provider, so real flow records can be forwarded directly from the extension to the daemon.
 
-The extension emits `new`, sampled `established`, and `closed` records. When macOS exposes `remoteHostname`, the extension also preserves it in the flow's `sni` field as a best-effort display hint so the UI can show a hostname instead of only a raw IP:port. True TLS ClientHello SNI parsing is still future work. Destination intent from hooks is shown separately from DNS/remote-host proof; linked evidence may display an intended host such as `github.com` alongside the observed endpoint. The UI raw `Network` tab intentionally shows raw observed flow visibility, while `Linked` shows derived semantic-plus-network evidence and `All` includes both.
+The extension emits `new`, sampled `established`, and `closed` records. When macOS exposes `remoteHostname`, the extension also preserves it in the flow's `sni` field as a best-effort display hint so the UI can show a hostname instead of only a raw IP:port. True TLS ClientHello SNI parsing is still future work. Destination intent from hooks is shown separately from DNS/remote-host proof; linked evidence may display an intended host such as `github.com` alongside the observed endpoint. The UI `Raw` tab intentionally shows observed hook/network firehose visibility, while `Evidence` shows derived semantic-plus-network evidence and other attention-worthy records.
 
 AgentSnitch should not accept fabricated sensitive-read or network-flow evidence as a product path.
+
+AgentSnitch sends no telemetry and has no SaaS backend. Reverse-DNS destination labeling is disabled by default; enabling **Reverse DNS / PTR labels** in Settings opts the daemon into local resolver PTR lookups for public destination IPs. Those lookups are outbound DNS by nature and may be visible to your resolver or network. The underlying daemon switch is `AGENTSNITCH_ENABLE_REVERSE_DNS=1`, which Settings can persist through the **Always On** checkbox. AgentSnitch also is not tamper-proof against the same local user: socket peer checks reduce accidental or fake ingestion paths, but a process running with the developer's privileges can intentionally invoke local tools.
 
 Check production Network Extension readiness with:
 
@@ -228,14 +245,48 @@ Minimum network flow fields, with optional `sni` shown when a destination host h
 
 By default, the daemon's real OS observer uses `"observer": "network_statistics"`. `doctor` reports which observer produced the latest network event. Installed LaunchAgents created by `make create` keep this path enabled unless `AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1` is set. If NetworkStatistics/`nettop` is unavailable, the daemon falls back to `"observer": "lsof"` unless `AGENTSNITCH_DISABLE_LSOF=1` is also set.
 
-For a real High Assurance smoke test, enable High Assurance mode in Settings and then run:
+For a real OS Sensor smoke test, enable OS Sensor mode in Settings and then run:
 
 ```sh
 AGENTSNITCH_DISABLE_NETWORK_STATISTICS=1 AGENTSNITCH_DISABLE_LSOF=1 make run-daemon
 make doctor
 ```
 
-The expected default healthy path is hooks OK, UI OK, latest network observer `network_statistics`, and linked evidence OK after real Claude Code activity creates a semantic/network pair. In the explicit High Assurance smoke test, the latest network observer should become `network_extension`.
+The expected default healthy path is hooks OK, UI OK, latest network observer `network_statistics`, and linked evidence OK after real Claude Code activity creates a semantic/network pair. In the explicit OS Sensor smoke test, the latest network observer should become `network_extension`.
+
+## HTTPS Inspect Mode
+
+HTTPS Inspect Mode is an advanced Developer feature for managed traffic routed through AgentSnitch's local proxy. It is useful for short debugging sessions where method/path/status/header metadata, redacted previews, hashes, or explicitly enabled full payloads are worth the CA/proxy friction.
+
+It does not inspect:
+
+- traffic that bypasses the managed proxy;
+- normal browser traffic by default;
+- all system traffic;
+- clients with certificate pinning or custom trust stores;
+- non-HTTP protocols inside TLS, beyond metadata-only proxy evidence.
+
+The process-scoped trust path is preferred. AgentSnitch can expose proxy and CA environment variables for managed processes without changing global macOS trust:
+
+```sh
+~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect env
+~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect run -- curl https://example.invalid/
+```
+
+System trust is optional and broader. Installing or removing the AgentSnitch CA from the macOS System keychain requires administrator approval, such as Touch ID when configured:
+
+```sh
+~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect trust-system
+~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect untrust-system
+```
+
+For status and cleanup:
+
+```sh
+~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect status
+~/Library/Application\ Support/AgentSnitch/bin/doctor inspect
+~/Library/Application\ Support/AgentSnitch/bin/agentsnitchctl inspect disable --remove-process-trust=true --purge-data=true
+```
 
 ## Check Health
 
@@ -298,7 +349,7 @@ Use the UI Export action to write the current session as JSONL. The first row is
 
 The session header also includes a compact summary for known Claude/bridge traffic, telemetry, local bridge/tunnel traffic, package registry traffic, high-signal cards, quieted pattern count, and new destinations.
 
-Each event row includes the event kind, timestamp, summary, severity, the attributed agent, and any known destination. Raw network rows preserve the same destination snippet shown in the UI, while linked rows also include human WHY text, observed decision state, risk, destination category, raw correlation reasons, replay steps, evidence details, and any compact process-tree evidence. Linked rows can include a `Destination intent` detail when hook input implies a host before DNS or reverse-name data is available. The UI defaults to `Attention`; that tab prioritizes compact agent context, `Activity by agent`, and event rows, then shows compact reason filters only when there are multiple useful reasons or an active reason/agent filter to clear. Known low-risk service rows are collapsed by category in `Linked` and `All`.
+Each event row includes the event kind, timestamp, summary, severity, the attributed agent, and any known destination. Raw network rows preserve the same destination snippet shown in the UI, while linked rows also include human WHY text, observed decision state, risk, destination category, raw correlation reasons, replay steps, evidence details, and any compact process-tree evidence. Linked rows can include a `Destination intent` detail when hook input implies a host before DNS or reverse-name data is available. The UI defaults to `Overview`; the `Evidence` tab prioritizes compact agent context, `Activity by agent`, and event rows, then shows compact reason filters only when there are multiple useful reasons or an active reason/agent filter to clear. Known low-risk service rows are collapsed by category in evidence views.
 
 The Claude Code subagent panel stays compact in evidence tabs: it shows `Claude Code (subagents)` with one `Main (N)` row per main agent, event counts, and a click-to-expand strip of child subagents. When per-agent activity is available, that compact panel sits beside `Activity by agent` so the chronological feed can stay below both. The dedicated `Agents` tab shows the full main-to-child breakdown with names, PIDs when available, spawn method, and event counts; clicking any child jumps to that agent's event stream. Sub-agents may be OS-process detections with a Claude CLI PID, hook-inferred Claude `Agent` tool launches with the hook PID and hook description, or Claude Code sidechain transcript agents where Claude records built-in parallel work under `.claude/projects/<session>/subagents/*.jsonl`. Sidechain agents use Claude's sidechain `agentId` as the stable identity, surface sidechain `tool_use` rows as `SubagentToolUse` activity, and show the latest hook PID when macOS does not expose a durable subagent process.
 

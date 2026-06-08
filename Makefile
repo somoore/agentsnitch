@@ -1,7 +1,7 @@
 # AgentSnitch Makefile
 # Targets for development, building, and packaging.
 
-.PHONY: help create build build-emitter build-daemon build-doctor build-hookctl build-neready build-extension package-macos-dev build-ui install uninstall clean test fmt lint run-daemon doctor ne-ready ne-typecheck dev-receiver release-gpg-check
+.PHONY: help create build build-emitter build-daemon build-doctor build-hookctl build-neready build-agentsnitch build-extension package-macos-dev build-ui install uninstall clean test fmt lint run-daemon doctor ne-ready ne-invariants ne-invariants-test ne-typecheck dev-receiver release-gpg-check
 
 help:
 	@echo "AgentSnitch development targets"
@@ -12,12 +12,15 @@ help:
 	@echo "  make build-doctor      - Build the local health-check command (Go)"
 	@echo "  make build-hookctl     - Build the Claude hook installer/verifier (Go)"
 	@echo "  make build-neready     - Build the Network Extension readiness checker (Go)"
+	@echo "  make build-agentsnitch - Build the AgentSnitch CLI helper (Go)"
 	@echo "  make build-extension   - Build local .systemextension bundle and host bridge dylib"
 	@echo "  make package-macos-dev - Embed .systemextension and sign app (ad hoc by default, Developer ID with profiles)"
 	@echo "  make create            - Build, sign/package, optionally notarize, install app/daemon"
 	@echo "  make run-daemon        - go run ./cmd/daemon (for live testing)"
 	@echo "  make doctor            - Check hook, emitter, daemon, UI, and recent hook health"
 	@echo "  make ne-ready          - Check production Network Extension readiness"
+	@echo "  make ne-invariants     - Check Network Extension static safety invariants"
+	@echo "  make ne-invariants-test - Regression-test Network Extension invariant checks"
 	@echo "  make ne-typecheck      - Type-check Swift NE/host bridge sources"
 	@echo "  make build-ui          - Build the Tauri UI (requires Tauri CLI + Rust)"
 	@echo "  make install           - Build binaries and install Claude Code hooks"
@@ -34,7 +37,7 @@ create:
 	@echo "==> Creating installed AgentSnitch build"
 	./scripts/create.sh
 
-build: build-emitter build-daemon build-doctor build-hookctl build-neready
+build: build-emitter build-daemon build-doctor build-hookctl build-neready build-agentsnitch
 
 build-emitter:
 	@echo "==> Building emitter"
@@ -68,6 +71,12 @@ build-neready:
 	go build -o bin/neready ./cmd/neready
 	@echo "    built: bin/neready"
 
+build-agentsnitch:
+	@echo "==> Building agentsnitch CLI"
+	@mkdir -p bin
+	go build -o bin/agentsnitchctl ./cmd/agentsnitch
+	@echo "    built: bin/agentsnitchctl"
+
 build-extension:
 	@echo "==> Building Network Extension bundle scaffold and host bridge dylib"
 	extension/build-extension.sh
@@ -97,6 +106,12 @@ doctor:
 
 ne-ready:
 	go run ./cmd/neready
+
+ne-invariants:
+	./scripts/check-network-extension-invariants.sh
+
+ne-invariants-test:
+	./scripts/test-network-extension-invariants.sh
 
 ne-typecheck:
 	xcrun swiftc -typecheck extension/AgentSnitchXPCProtocol.swift extension/AgentSnitchHostBridge.swift

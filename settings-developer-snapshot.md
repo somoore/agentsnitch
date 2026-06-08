@@ -1,0 +1,122 @@
+- generic [active] [ref=e1] [box=0,0,1200,773]:
+  - generic [ref=e2] [box=0,0,1200,773]:
+    - generic [ref=e3] [box=1,1,1198,42]:
+      - generic [ref=e4] [box=11,13,1132,17]: AgentSnitch
+      - generic [ref=e5] [box=1151,14,30,15]: idle
+    - generic [ref=e8] [box=36,50,1144,14]: No sensitive context has left this machine.
+    - generic [ref=e9] [box=1,77,1198,37]:
+      - button "Overview" [ref=e10] [cursor=pointer] [box=7,83,234,24]
+      - button "Agents 0" [ref=e11] [cursor=pointer] [box=245,83,234,24]
+      - button "Evidence 0" [ref=e12] [cursor=pointer] [box=483,83,234,24]
+      - button "Raw 0" [ref=e13] [cursor=pointer] [box=721,83,234,24]
+      - button "Flow Trace 0" [ref=e14] [cursor=pointer] [box=959,83,234,24]
+    - generic [ref=e127] [box=7,118,1186,345]:
+      - generic [ref=e128] [box=7,118,1186,29]:
+        - generic [ref=e129] [box=15,125,1124,15]: Watching Claude Code on this Mac for the first real hook or network observation.
+        - generic [ref=e130] [box=1147,125,38,15]: All local
+      - generic [ref=e131] [box=7,163,1186,83]:
+        - generic [ref=e132] [box=7,163,1186,14]: Ready for a Claude Code session
+        - generic [ref=e133] [box=7,184,1186,62]:
+          - generic [ref=e134] [box=7,184,391,62]:
+            - generic [ref=e135] [box=16,193,373,14]: Local observer ready
+            - generic [ref=e136] [box=16,210,373,27]: "Idle · Hooks installed · Network ready · User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic [ref=e137] [box=404,184,391,62]:
+            - generic [ref=e138] [box=413,193,373,14]: Waiting for real activity
+            - generic [ref=e139] [box=413,210,373,27]: Run Claude Code on this Mac and use a tool such as Read, Bash, WebFetch, or MCP. No demo evidence is injected.
+          - generic [ref=e140] [box=802,184,391,62]:
+            - generic [ref=e141] [box=811,193,373,14]: What will appear
+            - generic [ref=e142] [box=811,210,373,27]: Agents, subagents, tool calls, outbound flows, linked evidence, and destination paths will populate as they are observed.
+      - generic [ref=e143] [box=7,256,1186,83]:
+        - generic [ref=e144] [box=7,256,1186,14]: What AgentSnitch can prove
+        - generic [ref=e145] [box=7,276,1186,62]:
+          - generic "Known Claude destinations are lower surprise by default, so ordinary API traffic does not dominate the review surface." [ref=e146] [box=7,276,292,62]:
+            - generic [ref=e147] [box=16,285,274,14]: Known Claude traffic
+            - generic [ref=e148] [box=16,302,274,14]: Claude/API traffic is grouped when observed
+          - generic "First-time external hosts, cloud providers, raw IPs, and large transfers are promoted above routine traffic." [ref=e149] [box=305,276,292,62]:
+            - generic [ref=e150] [box=314,285,274,14]: Unexpected destinations
+            - generic [ref=e151] [box=314,302,274,14]: New external destinations will stand out
+          - generic "AgentSnitch shows observed evidence only; short-lived flows can be missed by the default observer." [ref=e152] [box=603,276,292,62]:
+            - generic [ref=e153] [box=612,285,274,14]: Coverage
+            - generic [ref=e154] [box=612,302,274,27]: "User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic "The app is local visibility for Claude Code/macOS today, with exportable evidence when you need to share a session." [ref=e155] [box=901,276,292,62]:
+            - generic [ref=e156] [box=910,285,274,14]: Scope
+            - generic [ref=e157] [box=910,302,274,14]: Claude Code on this Mac
+      - generic [ref=e158] [box=7,348,1186,53]:
+        - generic [ref=e159] [box=7,348,1186,14]: Agents
+        - generic [ref=e160] [box=7,369,1186,32]: No Claude Code agents detected yet — running sessions and their subagents will appear here.
+      - generic [ref=e161] [box=7,411,1186,53]:
+        - generic [ref=e162] [box=7,411,1186,14]: Needs a look
+        - generic [ref=e163] [box=7,431,1186,32]: Nothing needs a look. New external destinations, sensitive-context reads, and large transfers would surface here.
+    - generic [ref=e53] [box=1,744,1198,29]:
+      - generic [ref=e54] [box=9,752,810,13]: Idle · Hooks installed · Network ready · all local
+      - button "Pause" [ref=e55] [cursor=pointer] [box=825,749,47,20]
+      - button "Quiet known" [ref=e56] [cursor=pointer] [box=878,749,74,20]
+      - button "Quiet" [ref=e57] [cursor=pointer] [box=958,749,42,20]
+      - button "Clear" [ref=e58] [cursor=pointer] [box=1005,749,42,20]
+      - button "Debug" [ref=e59] [cursor=pointer] [box=1053,749,47,20]
+      - button "Evidence Pack" [ref=e60] [cursor=pointer] [box=1107,749,84,20]
+  - dialog "Settings" [ref=e61] [box=0,0,1200,773]:
+    - generic [ref=e62] [box=220,104,760,565]:
+      - generic [ref=e63] [box=221,105,758,41]:
+        - generic [ref=e64] [box=233,116,54,17]: Settings
+        - button "Close" [ref=e65] [cursor=pointer] [box=923,115,44,20]
+      - tablist "Settings sections" [ref=e66] [box=221,145,758,28]:
+        - tab "General" [ref=e67] [cursor=pointer] [box=233,153,82,20]
+        - tab "Hooks" [ref=e68] [cursor=pointer] [box=321,153,82,20]
+        - tab "Advanced" [ref=e69] [cursor=pointer] [box=409,153,82,20]
+        - tab "Developer" [selected] [ref=e70] [cursor=pointer] [box=497,153,82,20]
+      - tabpanel "Developer" [ref=e72] [box=233,185,734,431]:
+        - generic [ref=e73] [box=233,185,734,266]:
+          - generic [ref=e74] [box=233,187,734,12]: Debug capture
+          - generic [ref=e75] [box=233,207,734,78]:
+            - generic [ref=e76] [box=233,207,690,78]:
+              - generic [ref=e77] [box=233,207,690,14]: HTTPS Inspect Mode
+              - generic [ref=e78] [box=233,223,690,13]: Enabled · proxy 127.0.0.1:52221
+              - paragraph [ref=e79] [box=233,238,520,13]: Inspect request/response details for managed traffic routed through AgentSnitch's local proxy.
+              - paragraph [ref=e80] [box=233,257,690,28]: Full payload capture may retain raw prompts, model responses, tool results, and secrets for inspected traffic.
+            - generic "Enable local HTTPS inspection for managed agent sessions" [ref=e81] [box=933,236,34,20]:
+              - checkbox [checked] [box=937,239,0,0]
+          - generic [ref=e83] [box=247,292,720,52]:
+            - generic [ref=e84] [box=260,300,677,44]:
+              - generic [ref=e85] [box=260,300,677,14]: Process-scoped trust
+              - generic [ref=e86] [box=260,317,677,13]: Process-scoped default
+              - paragraph [ref=e87] [box=260,332,520,13]: Provide CA/proxy environment variables to managed processes without changing global macOS trust.
+            - generic "Use process-scoped CA trust" [ref=e88] [box=947,300,20,20]:
+              - checkbox [checked] [ref=e89] [box=951,303,13,13]
+          - generic [ref=e90] [box=247,345,720,52]:
+            - generic [ref=e91] [box=260,353,677,44]:
+              - generic [ref=e92] [box=260,353,677,14]: Payload previews
+              - generic [ref=e93] [box=260,369,677,13]: Metadata + redacted previews
+              - paragraph [ref=e94] [box=260,384,520,13]: Store redacted request/response previews when payload capture is available.
+            - generic "Store redacted request and response previews" [ref=e95] [box=947,353,20,20]:
+              - checkbox [checked] [ref=e96] [box=951,356,13,13]
+          - generic [ref=e97] [box=247,397,720,52]:
+            - generic [ref=e98] [box=260,405,677,44]:
+              - generic [ref=e99] [box=260,405,677,14]: Full payload capture
+              - generic [ref=e100] [box=260,421,677,13]: Full payloads · until_session_ends
+              - paragraph [ref=e101] [box=260,436,520,13]: Use only for short, intentional debugging sessions.
+            - generic "Store full request and response bodies" [ref=e102] [box=947,405,20,20]:
+              - checkbox [checked] [ref=e103] [box=951,408,13,13]
+        - generic [ref=e104] [box=233,463,734,152]:
+          - generic [ref=e105] [box=233,476,734,12]: Certificate authority
+          - generic [ref=e106] [box=233,496,734,44]:
+            - generic [ref=e107] [box=233,496,507,44]:
+              - generic [ref=e108] [box=233,496,507,14]: Local CA
+              - generic [ref=e109] [box=233,512,507,13]: Created · SHA256:204D472BA9FE87802C552E2AB2FD7A1F8D2BA086797DA48B100128B53A895098
+              - paragraph [ref=e110] [box=233,527,507,13]: CA material is unique to this installation and checked by doctor for strict permissions.
+            - generic [ref=e111] [box=750,496,217,20]:
+              - button "Create CA" [ref=e112] [cursor=pointer] [box=750,496,65,20]
+              - button "Rotate CA" [ref=e113] [cursor=pointer] [box=823,496,64,20]
+              - button "Remove CA" [ref=e114] [cursor=pointer] [box=895,496,72,20]
+          - generic [ref=e115] [box=247,548,720,65]:
+            - generic [ref=e116] [box=260,556,367,57]:
+              - generic [ref=e117] [box=260,556,367,14]: macOS system trust
+              - generic [ref=e118] [box=260,573,367,13]: Installed in macOS trust
+              - paragraph [ref=e119] [box=260,588,367,26]: Optional broader trust. macOS requires administrator approval to install or remove it.
+            - generic [ref=e120] [box=637,556,330,47]:
+              - button "Install in macOS Trust Store" [ref=e121] [cursor=pointer] [box=651,556,142,20]
+              - button "Remove from macOS Trust Store" [ref=e122] [cursor=pointer] [box=801,556,166,20]
+              - button "Delete Captured Payload Data" [ref=e123] [cursor=pointer] [box=813,584,154,20]
+      - generic [ref=e124] [box=221,628,758,41]:
+        - button "Cancel" [ref=e125] [cursor=pointer] [box=869,639,49,20]
+        - button "Save" [ref=e126] [cursor=pointer] [box=926,639,41,20]

@@ -1,12 +1,12 @@
 # AgentSnitch macOS Network Extension Integration
 
-**Current policy:** This file includes historical Network Extension research, but the shipped AgentSnitch design is stricter than several older notes below. The Network Sensor is opt-in, uses `NEFilterDataProvider` only, remains metadata-only and fail-open, and must not include transparent proxy, app proxy, packet tunnel, DNS proxy, byte-forwarding, blocking, drop, remote egress, inbound listener, or root-daemon behavior.
+**Current policy:** This file includes historical Network Extension research, but the shipped AgentSnitch design is stricter than several older notes below. OS Sensor mode is opt-in, uses `NEFilterDataProvider` only, remains metadata-only and fail-open, and must not include transparent proxy, app proxy, packet tunnel, DNS proxy, byte-forwarding, blocking, drop, remote egress, inbound listener, or root-daemon behavior.
 
 **Network Extension (Opt-In Ground Truth)**
 
 This document captures the current optional Network Extension implementation plus the build/signing research needed to distribute it inside a Tauri 2 macOS application bundle.
 
-**References (from architecture.md and prd.md):**
+**References from the current architecture:**
 - §3.2 Network Extension (Ground Truth)
 - §5 IPC (XPC)
 - §6 Installation & Packaging
@@ -16,7 +16,7 @@ This document captures the current optional Network Extension implementation plu
 - "Communication from extension to the daemon is direct Unix socket forwarding, with XPC retained for activation/configuration and fallback forwarding"
 - Provider choice validated for the pre-alpha: `NEFilterDataProvider`
 
-**Status:** Pre-alpha implementation. The default shipped path is semantic hooks plus unprivileged daemon-side NetworkStatistics/`nettop` process-network correlation, with `lsof` as fallback. The optional Network Sensor defines the `FlowEvent` contract, emits metadata-only records from `NEFilterDataProvider` when explicitly enabled, preserves `remoteHostname` as a best-effort destination display hint when macOS exposes it, and forwards real flow records directly from the extension to the daemon Unix socket configured through `NEFilterManager.providerConfiguration`. The Tauri app dynamically loads the Swift host bridge dylib for System Extension activation/configuration and keeps XPC available as a fallback flow forwarding path. The `make create` path builds, installs, signs, notarizes when credentials are available, registers hooks, starts the LaunchAgent daemon, launches the app, and runs `doctor`. Broader distribution still requires valid Apple Developer ID signing, host and extension provisioning profiles, notarization, and user/system approval on each machine.
+**Status:** Pre-alpha implementation. The default shipped path is semantic hooks plus unprivileged daemon-side NetworkStatistics/`nettop` process-network correlation, with `lsof` as fallback. The optional OS Sensor defines the `FlowEvent` contract, emits metadata-only records from `NEFilterDataProvider` when explicitly enabled, preserves `remoteHostname` as a best-effort destination display hint when macOS exposes it, and forwards real flow records directly from the extension to the daemon Unix socket configured through `NEFilterManager.providerConfiguration`. The Tauri app dynamically loads the Swift host bridge dylib for System Extension activation/configuration and keeps XPC available as a fallback flow forwarding path. The `make create` path builds, installs, signs, notarizes when credentials are available, starts the LaunchAgent daemon, launches the app, and runs `doctor`; it does not install Claude Code hooks automatically. Hooks are managed from Settings -> Hooks or manually with `make install`. Broader distribution still requires valid Apple Developer ID signing, host and extension provisioning profiles, notarization, and user/system approval on each machine.
 
 Signing and notarization work must never commit private keys, `.p12` exports, provisioning profiles, certificate material, keychains, Apple credentials, notarytool JSON, local logs, or generated `.app`/`.systemextension` bundles. Keep those artifacts outside the repo and rely on environment variables or local keychain state for packaging.
 
@@ -52,7 +52,7 @@ flowchart LR
 - `extension/build-extension.sh` builds the extension executable and `libAgentSnitchHostBridge.dylib`.
 - `scripts/package-macos-dev.sh` embeds the extension and host bridge into `/Applications/AgentSnitch.app` and signs either ad hoc for local UI inspection or with a real Developer ID identity/profiles for activation testing.
 - `ui/src-tauri/src/lib.rs` starts the bridge, requests extension activation, saves the filter configuration, and forwards daemon/UI events.
-- The daemon treats `observer: "network_statistics"` as the default production network observer, `observer: "lsof"` as fallback, and `observer: "network_extension"` only when the user opts into the Network Sensor.
+- The daemon treats `observer: "network_statistics"` as the default production network observer, `observer: "lsof"` as fallback, and `observer: "network_extension"` only when the user opts into OS Sensor mode.
 
 ## 1. High-Level Requirements for Embedding NE in Tauri 2 on macOS 13+
 
@@ -307,7 +307,7 @@ Fallback XPC flow:
 - `extension/AgentSnitchHostBridge.swift` contains the host-side `OSSystemExtensionRequest` activator, `NSXPCListener`, and Unix-socket forwarder into the Go daemon.
 - `extension/AgentSnitchNetworkExtension.swift` forwards encoded metadata-only `FlowEvent` JSON to the daemon socket first and uses the XPC protocol as fallback. It emits `new` flow records from `handleNewFlow` by default, allows flows immediately, and leaves byte lifecycle callbacks disabled unless explicitly configured for debug/performance testing. Delivery is strictly off the flow-decision path: `handleNewFlow` returns `.allow()` synchronously and `send()` only encodes and enqueues; the blocking `connect`/`write` (bounded by a send timeout) runs on a serial background queue with a capped, drop-oldest backlog, so a slow or wedged daemon cannot stall a network verdict.
 - `extension/build-extension.sh` also builds `extension/build/libAgentSnitchHostBridge.dylib` with C-callable `AgentSnitchHostBridgeStart`, `AgentSnitchHostBridgeActivateSystemExtension`, and `AgentSnitchHostBridgeSetNetworkSensorDisabled` exports.
-- `ui/src-tauri/src/lib.rs` dynamically loads `libAgentSnitchHostBridge.dylib`, starts the XPC listener, persists app settings, and skips `OSSystemExtensionRequest` activation while the Network Sensor is disabled. During local development it logs and continues if the dylib is missing.
+- `ui/src-tauri/src/lib.rs` dynamically loads `libAgentSnitchHostBridge.dylib`, starts the XPC listener, persists app settings, and skips `OSSystemExtensionRequest` activation while OS Sensor mode is disabled. During local development it logs and continues if the dylib is missing.
 - `make ne-typecheck` type-checks the host bridge and Network Extension Swift sources. Passing type-check does not mean the extension is bundled, signed, or activated; it proves the scaffold compiles against the local macOS SDK.
 - `make build-extension` produces `extension/build/com.somoore.agentsnitch.network-extension.systemextension` with a concrete principal class. It signs ad hoc by default (`AGENTSNITCH_EXT_SIGN_IDENTITY=-`); pass a real Apple signing identity once the provisioning profile exists.
 - `make package-macos-dev` embeds the built `.systemextension` into `/Applications/AgentSnitch.app/Contents/Library/SystemExtensions/`, embeds `libAgentSnitchHostBridge.dylib` into `/Applications/AgentSnitch.app/Contents/Frameworks/`, and re-signs the inner extension, dylib, and outer app. It signs with launchable dev entitlements by default, or with restricted production entitlements when a real Developer ID identity plus host and extension provisioning profiles are supplied.
@@ -366,7 +366,7 @@ if let code {
 
 **SNI:**
 - In many flows, `remoteHostname` is available from `NEFilterSocketFlow`. AgentSnitch stores a sanitized host-like `remoteHostname` value in the flow's `sni` field as a destination display hint. This is not proof that TLS SNI was parsed.
-- Do not parse TLS handshakes or peek bytes in the shipped Network Sensor path. Limitations remain ECH (Encrypted Client Hello), no SNI, IP-only connects, QUIC early data, and hostnames that macOS does not expose.
+- Do not parse TLS handshakes or peek bytes in the shipped OS Sensor path. Limitations remain ECH (Encrypted Client Hello), no SNI, IP-only connects, QUIC early data, and hostnames that macOS does not expose.
 
 **Byte counts / lifecycle:**
 - Byte callbacks are disabled by default. Do not enable `filterDataVerdict` byte peeking in distribution builds.

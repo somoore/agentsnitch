@@ -13,6 +13,7 @@ import (
 
 	"github.com/somoore/agentsnitch/internal/event"
 	"github.com/somoore/agentsnitch/internal/hookmatch"
+	"github.com/somoore/agentsnitch/internal/inspect"
 	asruntime "github.com/somoore/agentsnitch/internal/runtime"
 )
 
@@ -32,6 +33,10 @@ type appSettings struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "inspect" {
+		printInspectDoctor()
+		return
+	}
 	var checks []check
 
 	emitter := preferredEmitterPath()
@@ -42,6 +47,7 @@ func main() {
 	checks = append(checks, checkLastHookEvent())
 	checks = append(checks, checkLastNetworkEvent())
 	checks = append(checks, checkNetworkExtension())
+	checks = append(checks, checkInspectMode())
 	checks = append(checks, checkLastCorrelatedEvent())
 	checks = append(checks, checkLastTranscript())
 
@@ -67,6 +73,65 @@ func main() {
 	if failed {
 		os.Exit(1)
 	}
+}
+
+func printInspectDoctor() {
+	status := inspect.CurrentStatus(inspect.ProxyStatus{})
+	fmt.Printf("HTTPS Inspect Mode: %s\n", onOff(status.Enabled))
+	fmt.Printf("Managed proxy: %s\n", onOff(status.Proxy.Listening))
+	if status.Proxy.Address != "" {
+		fmt.Printf("Proxy listener: %s\n", status.Proxy.Address)
+	}
+	fmt.Printf("CA present: %s\n", yesNo(status.CA.Present))
+	if status.CA.Fingerprint != "" {
+		fmt.Printf("CA fingerprint: %s\n", status.CA.Fingerprint)
+	}
+	fmt.Printf("Trust mode: %s\n", status.TrustMode)
+	fmt.Printf("System trust: %s\n", yesNo(status.Trust.SystemTrusted))
+	fmt.Printf("Payload retention: %s, %s\n", status.PayloadMode, status.Retention)
+	if len(status.Warnings) > 0 {
+		for _, warning := range status.Warnings {
+			fmt.Printf("WARN: %s\n", warning)
+		}
+	}
+}
+
+func checkInspectMode() check {
+	proxyStatus := inspect.ProxyStatus{}
+	if status, err := asruntime.ReadStatus(); err == nil {
+		proxyStatus = status.Inspect.Proxy
+	}
+	status := inspect.CurrentStatus(proxyStatus)
+	if !status.Enabled && !status.CA.Present && !status.Trust.SystemTrusted {
+		return check{name: "HTTPS Inspect", ok: true, status: "OFF", detail: "off by default; no local CA trusted"}
+	}
+	detail := []string{}
+	if status.CA.Fingerprint != "" {
+		detail = append(detail, status.CA.Fingerprint)
+	}
+	detail = append(detail, "trust="+status.TrustMode)
+	detail = append(detail, "payload="+status.PayloadMode)
+	if status.Proxy.Listening {
+		detail = append(detail, "proxy="+status.Proxy.Address)
+	}
+	if len(status.Warnings) > 0 {
+		return check{name: "HTTPS Inspect", ok: true, status: "WARN", detail: strings.Join(append(detail, status.Warnings...), "; ")}
+	}
+	return check{name: "HTTPS Inspect", ok: true, status: onOff(status.Enabled), detail: strings.Join(detail, "; ")}
+}
+
+func onOff(value bool) string {
+	if value {
+		return "ON"
+	}
+	return "OFF"
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func preferredEmitterPath() string {
@@ -343,11 +408,11 @@ func observerDetail(ev event.NetworkFlowEvent) string {
 
 func checkNetworkExtension() check {
 	if networkSensorDisabledInSettings() {
-		return check{name: "High Assurance", ok: true, status: "OFF", detail: "User Visibility mode; semantic hooks + userland process/network correlation are primary"}
+		return check{name: "OS Sensor", ok: true, status: "OFF", detail: "User Visibility mode; semantic hooks + userland process/network correlation are primary"}
 	}
 	status, err := asruntime.ReadStatus()
 	if err != nil {
-		return check{name: "High Assurance", ok: true, status: "WAIT", detail: "requested in app settings, but no daemon status at " + asruntime.StatusPath()}
+		return check{name: "OS Sensor", ok: true, status: "WAIT", detail: "requested in app settings, but no daemon status at " + asruntime.StatusPath()}
 	}
 	listed, listErr := systemExtensionListed()
 	return networkExtensionCheckForStatus(status, listed, listErr)
@@ -381,43 +446,43 @@ func networkExtensionCheckForStatus(status asruntime.Status, listed bool, listEr
 		if len(status.ObserverSources) > 0 {
 			detail += "; active observers: " + strings.Join(status.ObserverSources, ", ")
 		}
-		return check{name: "High Assurance", ok: true, detail: detail}
+		return check{name: "OS Sensor", ok: true, detail: detail}
 	}
 	if status.ObserverMode == "high_assurance_requested" {
 		if listErr != nil {
-			return check{name: "High Assurance", ok: true, status: "WARN", detail: "requested, but could not inspect system extension state: " + listErr.Error()}
+			return check{name: "OS Sensor", ok: true, status: "WARN", detail: "requested, but could not inspect system extension state: " + listErr.Error()}
 		}
 		if listed {
-			return check{name: "High Assurance", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first OS-backed flow"}
+			return check{name: "OS Sensor", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first OS-backed flow"}
 		}
-		return check{name: "High Assurance", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
+		return check{name: "OS Sensor", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
 	}
 	if status.LastNetwork != nil {
 		ev := *status.LastNetwork
 		event.NormalizeNetworkFlow(&ev)
 		if ev.Observer == "network_extension" {
-			return check{name: "High Assurance", ok: true, detail: formatAge(time.Since(ev.TS)) + " ago; real NE flow observed"}
+			return check{name: "OS Sensor", ok: true, detail: formatAge(time.Since(ev.TS)) + " ago; real NE flow observed"}
 		}
 		if ev.Observer == "lsof" {
 			if listErr != nil {
-				return check{name: "High Assurance", ok: true, status: "WARN", detail: "latest network event is lsof fallback; could not inspect system extension state: " + listErr.Error()}
+				return check{name: "OS Sensor", ok: true, status: "WARN", detail: "latest network event is lsof fallback; could not inspect system extension state: " + listErr.Error()}
 			}
 			if listed {
-				return check{name: "High Assurance", ok: true, status: "WAIT", detail: "system extension is listed, but latest network event is still lsof fallback"}
+				return check{name: "OS Sensor", ok: true, status: "WAIT", detail: "system extension is listed, but latest network event is still lsof fallback"}
 			}
-			return check{name: "High Assurance", ok: true, status: "WARN", detail: "lsof fallback only; " + networkExtensionBundleID + " is not activated/listed"}
+			return check{name: "OS Sensor", ok: true, status: "WARN", detail: "lsof fallback only; " + networkExtensionBundleID + " is not activated/listed"}
 		}
 		if ev.Observer != "" {
-			return check{name: "High Assurance", ok: true, status: "WARN", detail: "latest network event came from observer " + ev.Observer}
+			return check{name: "OS Sensor", ok: true, status: "WARN", detail: "latest network event came from observer " + ev.Observer}
 		}
 	}
 	if listErr != nil {
-		return check{name: "High Assurance", ok: true, status: "WARN", detail: "could not inspect system extension state: " + listErr.Error()}
+		return check{name: "OS Sensor", ok: true, status: "WARN", detail: "could not inspect system extension state: " + listErr.Error()}
 	}
 	if listed {
-		return check{name: "High Assurance", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first NE flow"}
+		return check{name: "OS Sensor", ok: true, status: "WAIT", detail: "system extension is listed; waiting for first NE flow"}
 	}
-	return check{name: "High Assurance", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
+	return check{name: "OS Sensor", ok: true, status: "WARN", detail: networkExtensionBundleID + " is not activated/listed; run ./bin/neready for signing details"}
 }
 
 func systemExtensionListed() (bool, error) {

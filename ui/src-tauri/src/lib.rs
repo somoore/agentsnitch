@@ -1,11 +1,11 @@
 // AgentSnitch Tauri UI (tray + primary evidence window + live event display)
-// Implements the MVP described in architecture.md §3.4 and prd.md "oh shit" flows.
+// Implements the MVP described in architecture.md: local evidence for sensitive context followed by outbound activity.
 // - Proper tray with menu + icon state change (active vs quiet)
 // - Normal movable macOS window with tray affordances
 // - Receives validated daemon-forwarded events via ~/.agentsnitch/ui.sock
 // - Shared state + Tauri commands + live emit to frontend
 // - Self-contained frontend in ui/dist/index.html (vanilla + inline mac-like CSS)
-// - Activation: PreToolUse / claude-like => active tray + auto open panel
+// - Activation: PreToolUse / claude-like => active tray + visible panel
 // Minimal new crates: only added "image-png" to tauri features.
 
 use std::collections::{HashMap, HashSet};
@@ -27,8 +27,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, Size,
-    State,
+    AppHandle, Emitter, Manager, RunEvent, State,
 };
 
 // Upper bound on retained UI events (ring buffer). Sized for the live
@@ -48,6 +47,9 @@ const DEFAULT_SESSION_IDLE_SECS: u64 = 90;
 const AGENT_PROCESS_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 const HOOK_STATUS_TIMEOUT: Duration = Duration::from_secs(8);
 const HOOK_MUTATION_TIMEOUT: Duration = Duration::from_secs(15);
+const INSPECT_MUTATION_TIMEOUT: Duration = Duration::from_secs(120);
+const AGENTSNITCH_DAEMON_LABEL: &str = "com.somoore.agentsnitch.daemon";
+const REVERSE_DNS_ENV: &str = "AGENTSNITCH_ENABLE_REVERSE_DNS";
 const HEURISTICS_JSON: &str = include_str!("../../../config/heuristics.json");
 
 /// Matches internal/event/event.go SemanticEvent JSON shape exactly (for compatibility with parallel Go work).
@@ -288,12 +290,14 @@ struct AppState {
     quiet: Mutex<bool>,
     // paused: when true the user engaged Pause (Wireshark-style). The daemon halts
     // sensing; the UI freezes live updates. Never persisted — defaults to false
-    // (Live) so a restart always comes back Live (fail-safe, see docs/ui-ux-plan.md).
+    // (Live) so a restart always comes back Live as a fail-safe.
     paused: Mutex<bool>,
     quieted_patterns: Mutex<HashSet<String>>,
     quiet_preferences: Mutex<QuietPreferences>,
     destination_memory: Mutex<DestinationMemory>,
     app_settings: Mutex<AppSettings>,
+    status_hydration_cutoff: Mutex<Option<SystemTime>>,
+    status_hydration_suppressed: Mutex<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +312,28 @@ struct AppSettings {
     network_sensor_disabled: bool,
     #[serde(default)]
     high_assurance_default_enabled: bool,
+    #[serde(default)]
+    reverse_dns_enabled: bool,
+    #[serde(default)]
+    reverse_dns_always_on: bool,
+    #[serde(default)]
+    debug_mode_enabled: bool,
+    #[serde(default)]
+    debug_mode_always_on: bool,
+    #[serde(default)]
+    https_inspect_enabled: bool,
+    #[serde(default = "default_true")]
+    https_inspect_process_scoped: bool,
+    #[serde(default)]
+    https_inspect_allow_system_trust: bool,
+    #[serde(default = "default_true")]
+    https_inspect_capture_previews: bool,
+    #[serde(default)]
+    https_inspect_capture_full_payloads: bool,
+    #[serde(default = "default_preview_bytes")]
+    https_inspect_preview_bytes: u32,
+    #[serde(default = "default_full_payload_retention")]
+    https_inspect_full_retention: String,
 }
 
 fn app_settings_schema() -> String {
@@ -318,6 +344,18 @@ fn default_network_sensor_disabled() -> bool {
     true
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_preview_bytes() -> u32 {
+    2048
+}
+
+fn default_full_payload_retention() -> String {
+    "until_session_ends".into()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -326,6 +364,17 @@ impl Default for AppSettings {
             keep_hooks_up_to_date: false,
             network_sensor_disabled: true,
             high_assurance_default_enabled: false,
+            reverse_dns_enabled: false,
+            reverse_dns_always_on: false,
+            debug_mode_enabled: false,
+            debug_mode_always_on: false,
+            https_inspect_enabled: false,
+            https_inspect_process_scoped: true,
+            https_inspect_allow_system_trust: false,
+            https_inspect_capture_previews: true,
+            https_inspect_capture_full_payloads: false,
+            https_inspect_preview_bytes: 2048,
+            https_inspect_full_retention: default_full_payload_retention(),
         }
     }
 }
@@ -421,6 +470,7 @@ pub struct Status {
     pub quiet: bool,
     pub paused: bool,
     pub sensor: SensorStatus,
+    pub inspect: serde_json::Value,
     pub verdict: Verdict,
     pub summary: SessionSummary,
     pub agents: Vec<AgentInfo>,
@@ -440,14 +490,22 @@ pub struct SensorStatus {
     pub dns_policy: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DaemonStatusSnapshot {
+    #[serde(default)]
+    updated_at: String,
+    #[serde(default)]
+    last_semantic: Option<SemanticEvent>,
+    #[serde(default)]
+    last_correlated: Option<CorrelatedEvent>,
     #[serde(default)]
     observer_mode: String,
     #[serde(default)]
     observer_sources: Vec<String>,
     #[serde(default)]
     last_network: Option<NetworkFlowEvent>,
+    #[serde(default)]
+    inspect: serde_json::Value,
 }
 
 /// Verdict is the one-line, always-visible risk posture for the current session.
@@ -800,6 +858,10 @@ fn note_agent_activity(state: &AppState) {
     state.runtime.lock().unwrap().last_agent_activity = Some(SystemTime::now());
 }
 
+fn note_agent_activity_at(state: &AppState, at: SystemTime) {
+    state.runtime.lock().unwrap().last_agent_activity = Some(at);
+}
+
 fn session_idle_timeout() -> Duration {
     std::env::var("AGENTSNITCH_SESSION_IDLE_SECS")
         .ok()
@@ -887,6 +949,128 @@ fn reset_session_state(state: &AppState) {
     let prefs = state.quiet_preferences.lock().unwrap().clone();
     *state.quieted_patterns.lock().unwrap() =
         effective_quieted_patterns(&prefs, &SessionSnapshot::default());
+}
+
+fn hydrate_liveness_from_daemon_status(state: &AppState) -> bool {
+    if *state.status_hydration_suppressed.lock().unwrap() {
+        return false;
+    }
+    let Some(snapshot) = load_daemon_status_snapshot() else {
+        return false;
+    };
+    let Some(activity_at) = daemon_status_activity_time(&snapshot) else {
+        return false;
+    };
+    let fresh = activity_at
+        .elapsed()
+        .map(|elapsed| elapsed < session_idle_timeout())
+        .unwrap_or(true);
+    if !fresh {
+        return false;
+    }
+    if state
+        .status_hydration_cutoff
+        .lock()
+        .unwrap()
+        .is_some_and(|cutoff| activity_at <= cutoff)
+    {
+        return false;
+    }
+
+    let mut changed = false;
+    if let Some(semantic) = snapshot.last_semantic.as_ref() {
+        {
+            let mut snap = state.session.lock().unwrap();
+            update_session_from_event(&mut snap, semantic);
+        }
+        {
+            let mut agents = state.agents.lock().unwrap();
+            update_agent_registry(&mut agents, &semantic.agent);
+        }
+        changed = true;
+    }
+
+    if let Some(correlated) = snapshot.last_correlated.as_ref() {
+        let mut agents = state.agents.lock().unwrap();
+        let before = agents.len();
+        if let Some(agent) = correlated.agent.as_ref() {
+            update_agent_registry(&mut agents, agent);
+        }
+        if let Some(semantics) = correlated.semantics.as_ref() {
+            for semantic in semantics {
+                update_agent_registry(&mut agents, &semantic.agent);
+            }
+        }
+        if let Some(flows) = correlated.flows.as_ref() {
+            for flow in flows {
+                if let Some(agent) = daemon_status_agent_from_flow(flow) {
+                    update_agent_registry(&mut agents, &agent);
+                }
+            }
+        }
+        changed |= agents.len() != before;
+    }
+
+    if let Some(network) = snapshot.last_network.as_ref() {
+        if let Some(agent) = daemon_status_agent_from_flow(network) {
+            let mut agents = state.agents.lock().unwrap();
+            let before = agents.len();
+            update_agent_registry(&mut agents, &agent);
+            changed |= agents.len() != before;
+        }
+    }
+
+    if changed {
+        note_agent_activity_at(state, activity_at);
+        if !*state.quiet.lock().unwrap() {
+            *state.active.lock().unwrap() = true;
+        }
+    }
+    changed
+}
+
+fn daemon_status_activity_time(snapshot: &DaemonStatusSnapshot) -> Option<SystemTime> {
+    parse_rfc3339_system_time(&snapshot.updated_at)
+        .or_else(|| {
+            snapshot
+                .last_semantic
+                .as_ref()
+                .and_then(|semantic| parse_rfc3339_system_time(&semantic.ts))
+        })
+        .or_else(|| {
+            snapshot
+                .last_correlated
+                .as_ref()
+                .and_then(|correlated| parse_rfc3339_system_time(&correlated.ts))
+        })
+        .or_else(|| {
+            snapshot
+                .last_network
+                .as_ref()
+                .and_then(|network| parse_rfc3339_system_time(&network.ts))
+        })
+}
+
+fn daemon_status_agent_from_flow(flow: &NetworkFlowEvent) -> Option<AgentInfo> {
+    if let Some(agent) = flow.agent.as_ref() {
+        return Some(agent.clone());
+    }
+    let pid = flow.pid?;
+    let process_path = flow.process_path.as_deref().unwrap_or_default();
+    if !agent_process_path_matches_family(process_path, AgentFamily::Claude) {
+        return None;
+    }
+    Some(AgentInfo {
+        id: format!("main_{}", pid),
+        agent_type: Some("main".into()),
+        name: "claude".into(),
+        pid: Some(pid),
+        spawn_method: Some("process_status".into()),
+        first_seen: Some(flow.ts.clone()),
+        last_seen: Some(flow.ts.clone()),
+        cwd: None,
+        ..AgentInfo::default()
+    })
 }
 
 fn agent_process_running_for_session(
@@ -1012,6 +1196,11 @@ fn agent_process_line_matches_family(line: &str, family: AgentFamily) -> bool {
                 || agent_process_line_matches_family(line, AgentFamily::Cursor)
         }
     }
+}
+
+fn agent_process_path_matches_family(path: &str, family: AgentFamily) -> bool {
+    let line = format!("0 {} {}", path, path);
+    agent_process_line_matches_family(&line, family)
 }
 
 fn should_track_agent(agent: &AgentInfo) -> bool {
@@ -2572,6 +2761,8 @@ fn load_app_settings() -> AppSettings {
             if settings.schema.is_empty() {
                 settings.schema = "agentsnitch.ui_settings.v0".into();
             }
+            settings.debug_mode_enabled =
+                settings.debug_mode_enabled || settings.debug_mode_always_on;
             settings
         }
         Err(err) => {
@@ -2614,6 +2805,78 @@ fn runtime_status_path() -> String {
 fn load_daemon_status_snapshot() -> Option<DaemonStatusSnapshot> {
     let text = std::fs::read_to_string(runtime_status_path()).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+fn clear_daemon_status_snapshot() {
+    let path = runtime_status_path();
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => append_ui_log(&format!(
+            "[agentsnitch-ui] clear status snapshot failed: {}",
+            err
+        )),
+    }
+}
+
+fn system_time_debug(value: SystemTime) -> String {
+    let ts: DateTime<Utc> = value.into();
+    ts.to_rfc3339()
+}
+
+fn file_debug(path: &str) -> serde_json::Value {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            let modified = meta.modified().ok().map(system_time_debug);
+            serde_json::json!({
+                "path": path,
+                "exists": true,
+                "is_file": meta.is_file(),
+                "is_dir": meta.is_dir(),
+                "size": meta.len(),
+                "modified_at": modified,
+            })
+        }
+        Err(err) => serde_json::json!({
+            "path": path,
+            "exists": false,
+            "error": err.to_string(),
+        }),
+    }
+}
+
+fn optional_binary_debug(label: &str, value: Result<String, String>) -> serde_json::Value {
+    match value {
+        Ok(path) => serde_json::json!({
+            "label": label,
+            "path": path,
+            "file": file_debug(&path),
+        }),
+        Err(err) => serde_json::json!({
+            "label": label,
+            "error": err,
+        }),
+    }
+}
+
+fn command_lines(command: &str, args: &[&str], max_lines: usize) -> Vec<String> {
+    let Ok(output) = Command::new(command)
+        .args(args)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .take(max_lines)
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
 }
 
 fn save_app_settings(settings: &AppSettings) -> Result<(), String> {
@@ -2701,6 +2964,11 @@ fn emitter_path() -> Result<String, String> {
         .ok_or_else(|| "AgentSnitch emitter helper is not installed".into())
 }
 
+fn agentsnitch_cli_path() -> Result<String, String> {
+    support_binary_path("AGENTSNITCH_CLI", "agentsnitchctl")
+        .ok_or_else(|| "AgentSnitch CLI helper is not installed".into())
+}
+
 fn normalize_hook_events(events: Vec<String>) -> Result<Vec<String>, String> {
     if events.is_empty() {
         return Ok(vec!["PreToolUse".into(), "PostToolUse".into()]);
@@ -2766,6 +3034,27 @@ fn command_output_with_timeout(
     }
 }
 
+fn command_error(label: &str, output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        format!("{}: {}", label, stderr)
+    } else if !stdout.is_empty() {
+        format!("{}: {}", label, stdout)
+    } else {
+        format!("{} failed", label)
+    }
+}
+
+fn run_command_checked(command: Command, label: &str) -> Result<Output, String> {
+    let output = command_output_with_timeout(command, Duration::from_secs(8), label)?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(command_error(label, &output))
+    }
+}
+
 fn run_hookctl(action: &str, events: Vec<String>, agent: Option<String>) -> Result<String, String> {
     let hookctl = hookctl_path()?;
     let emitter = emitter_path()?;
@@ -2795,6 +3084,20 @@ fn run_hookctl(action: &str, events: Vec<String>, agent: Option<String>) -> Resu
         } else {
             format!("hookctl {} failed", action)
         });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn run_inspect_cli(args: &[&str], timeout: Duration) -> Result<String, String> {
+    let cli = agentsnitch_cli_path()?;
+    let mut command = Command::new(&cli);
+    command.arg("inspect");
+    for arg in args {
+        command.arg(arg);
+    }
+    let output = command_output_with_timeout(command, timeout, "agentsnitchctl inspect")?;
+    if !output.status.success() {
+        return Err(command_error("agentsnitchctl inspect", &output));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -3133,6 +3436,7 @@ fn process_incoming_semantic(app: &AppHandle, ev: SemanticEvent) {
         append_ui_log(&log_line);
     }
     let state: State<AppState> = app.state();
+    *state.status_hydration_suppressed.lock().unwrap() = false;
     note_agent_activity(&state);
     let mut events = state.events.lock().unwrap();
     let mut next_id = state.next_id.lock().unwrap();
@@ -3191,6 +3495,7 @@ fn process_incoming_network(app: &AppHandle, ev: NetworkFlowEvent) {
         append_ui_log(&log_line);
     }
     let state: State<AppState> = app.state();
+    *state.status_hydration_suppressed.lock().unwrap() = false;
     if let Some(agent) = ev.agent.as_ref() {
         let mut agents = state.agents.lock().unwrap();
         update_agent_registry(&mut agents, agent);
@@ -3213,6 +3518,7 @@ fn process_incoming_correlation(app: &AppHandle, ev: CorrelatedEvent) {
         append_ui_log(&log_line);
     }
     let state: State<AppState> = app.state();
+    *state.status_hydration_suppressed.lock().unwrap() = false;
     note_agent_activity(&state);
     {
         let mut agents = state.agents.lock().unwrap();
@@ -3297,10 +3603,20 @@ fn linked_pattern_key(ui: &UiEvent) -> Option<String> {
 }
 
 fn quieted_pattern_keys(ui: &UiEvent) -> Vec<String> {
-    let Some(evidence) = ui.evidence.as_ref() else {
-        return Vec::new();
-    };
     let mut keys = Vec::new();
+    let Some(evidence) = ui.evidence.as_ref() else {
+        if event_kind(ui) == "network" {
+            if let Some(destination) = ui.destination.as_deref().filter(|value| !value.is_empty()) {
+                let host = destination_memory_key(destination);
+                if let Some(category) = destination_category_for_host(&host) {
+                    if known_quiet_category(&category) {
+                        keys.push(format!("category:{}", normalize_pattern_piece(&category)));
+                    }
+                }
+            }
+        }
+        return keys;
+    };
     if let Some(key) = linked_pattern_key(ui) {
         keys.push(format!("exact:{}", key));
     }
@@ -3406,6 +3722,10 @@ fn is_agent_lifecycle_message(body: &str) -> bool {
     message_schema(body).as_deref() == Some("agentsnitch.agent.v0")
 }
 
+fn is_inspected_http_message(body: &str) -> bool {
+    message_schema(body).as_deref() == Some("agentsnitch.inspected_http.v0")
+}
+
 /// Wire shape of the daemon's pause_gap record (see event.PauseGapEvent in Go).
 #[derive(Debug, Clone, Deserialize)]
 struct PauseGapEvent {
@@ -3458,6 +3778,178 @@ fn build_pause_gap_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent> {
     })
 }
 
+fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let request = value.get("request")?;
+    let response = value.get("response").cloned().unwrap_or_default();
+    let tls = value.get("tls").cloned().unwrap_or_default();
+    let correlation = value.get("correlation").cloned().unwrap_or_default();
+    let method = request
+        .get("method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("HTTP");
+    let scheme = request
+        .get("scheme")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https");
+    let host = request
+        .get("host")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown host");
+    let path = request.get("path").and_then(|v| v.as_str()).unwrap_or("/");
+    let status = response.get("status").and_then(|v| v.as_i64()).unwrap_or(0);
+    let mode = tls
+        .get("inspection_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("metadata_only");
+    let confidence = correlation
+        .get("confidence")
+        .and_then(|v| v.as_str())
+        .unwrap_or("medium");
+    let req_redactions = request
+        .get("redaction_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let resp_redactions = response
+        .get("redaction_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let redactions = req_redactions + resp_redactions;
+    let state: State<AppState> = app.state();
+    let mut next_id = state.next_id.lock().unwrap();
+    *next_id += 1;
+    let id = *next_id;
+    drop(next_id);
+    let ts = value
+        .get("ts")
+        .and_then(|v| v.as_str())
+        .map(|raw| {
+            if raw.len() >= 19 {
+                raw[11..19].to_string()
+            } else {
+                raw.to_string()
+            }
+        })
+        .unwrap_or_default();
+    let title = if mode == "local_mitm" {
+        "Inspected HTTPS request during tool span"
+    } else {
+        "Managed proxy recorded HTTPS metadata"
+    };
+    let destination = format!("{}://{}{}", scheme, host, path);
+    let mut details = vec![
+        EvidenceDetail {
+            label: "Request".into(),
+            value: format!("{} {}", method, destination),
+        },
+        EvidenceDetail {
+            label: "Status".into(),
+            value: if status > 0 {
+                status.to_string()
+            } else {
+                "metadata only".into()
+            },
+        },
+        EvidenceDetail {
+            label: "Observed".into(),
+            value: if mode == "local_mitm" {
+                "TLS terminated locally by AgentSnitch Inspect Mode".into()
+            } else {
+                "managed proxy metadata only".into()
+            },
+        },
+        EvidenceDetail {
+            label: "Redaction".into(),
+            value: format!("{} redacted secret-looking value(s)", redactions),
+        },
+    ];
+    if let Some(fingerprint) = tls
+        .get("ca_fingerprint")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+    {
+        details.push(EvidenceDetail {
+            label: "CA fingerprint".into(),
+            value: fingerprint.into(),
+        });
+    }
+    let basis = correlation
+        .get("basis")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" + ")
+        })
+        .unwrap_or_else(|| "managed_proxy".into());
+    Some(UiEvent {
+        id,
+        ts,
+        summary: format!("{}: {} {}", title, method, destination),
+        tags: vec!["inspected_http_exchange".into(), "managed_proxy".into()],
+        detail: Some(format!("{} · confidence {}", basis, confidence)),
+        destination: Some(host.into()),
+        destination_context: None,
+        correlated: true,
+        evidence: Some(LinkedEvidence {
+            title: title.into(),
+            semantic: value
+                .get("tool_use_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("active managed session")
+                .into(),
+            flow: format!(
+                "{} {} -> status {}",
+                method,
+                destination,
+                if status > 0 {
+                    status.to_string()
+                } else {
+                    "metadata only".into()
+                }
+            ),
+            why: correlation
+                .get("basis")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_else(|| vec!["managed_proxy".into()]),
+            why_human: if mode == "local_mitm" {
+                "managed proxy + TLS terminated locally + exact requested host".into()
+            } else {
+                "managed proxy + exact requested host".into()
+            },
+            destination: host.into(),
+            destination_category: "inspected locally".into(),
+            destination_provenance: vec![EvidenceDetail {
+                label: "Source".into(),
+                value: "AgentSnitch managed proxy".into(),
+            }],
+            severity: "medium".into(),
+            risk: "medium".into(),
+            review_status: "needs review".into(),
+            review_subtitle: "Inspected locally with redaction-aware retention".into(),
+            decision: "observed".into(),
+            details,
+            replay: vec![EvidenceDetail {
+                label: "Correlation".into(),
+                value: basis,
+            }],
+            process_tree: vec![],
+            confidence: confidence.into(),
+            score: if confidence == "high" { 0.95 } else { 0.7 },
+        }),
+        agent: None,
+    })
+}
+
 fn process_incoming_json(app: &AppHandle, body: &str, source: &str) {
     // A pause_gap record is the daemon telling us a sensing gap just ended; always
     // surface it so the halted window is shown as an explicit gap. We must push a
@@ -3474,6 +3966,18 @@ fn process_incoming_json(app: &AppHandle, body: &str, source: &str) {
         }
         let _ = app.emit("pause-gap", body.to_string());
         let _ = app.emit("status-changed", ());
+        return;
+    }
+    if is_inspected_http_message(body) {
+        if let Some(ui) = build_inspected_http_ui_event(app, body) {
+            let state: State<AppState> = app.state();
+            let mut events = state.events.lock().unwrap();
+            events.push(ui.clone());
+            trim_ui_events(&mut events);
+            drop(events);
+            let _ = app.emit("event-received", &ui);
+            let _ = app.emit("status-changed", ());
+        }
         return;
     }
     // While paused the daemon should have stopped sending, but in-flight lines may
@@ -3535,6 +4039,7 @@ fn process_incoming_agent(app: &AppHandle, ev: AgentLifecycleEvent) {
         append_ui_log(&log_line);
     }
     let state: State<AppState> = app.state();
+    *state.status_hydration_suppressed.lock().unwrap() = false;
     note_agent_activity(&state);
     {
         let mut agents = state.agents.lock().unwrap();
@@ -3950,7 +4455,7 @@ fn request_network_extension_activation(network_sensor_disabled: bool) {
         return;
     }
     if network_sensor_disabled {
-        println!("[agentsnitch-ui] High Assurance activation skipped: disabled in settings");
+        println!("[agentsnitch-ui] OS Sensor activation skipped: disabled in settings");
         if let Err(err) = set_macos_network_sensor_disabled(true) {
             eprintln!(
                 "[agentsnitch-ui] Network Extension disable request unavailable: {}",
@@ -4040,7 +4545,7 @@ mod macos_ne_bridge {
             ));
         }
         Ok(format!(
-            "{}; High Assurance {} request submitted",
+            "{}; OS Sensor {} request submitted",
             path.display(),
             if disabled { "disable" } else { "enable" }
         ))
@@ -4586,8 +5091,89 @@ fn get_events_json(state: State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_debug_snapshot(state: State<AppState>) -> serde_json::Value {
+    build_debug_snapshot(&state)
+}
+
+fn build_debug_snapshot(state: &AppState) -> serde_json::Value {
+    let events = state.events.lock().unwrap().clone();
+    let agents = sorted_agents(&state.agents.lock().unwrap());
+    let active = *state.active.lock().unwrap();
+    let quiet = *state.quiet.lock().unwrap();
+    let paused = *state.paused.lock().unwrap();
+    let session = state.session.lock().unwrap().clone();
+    let runtime = state.runtime.lock().unwrap().clone();
+    let quieted_patterns = state.quieted_patterns.lock().unwrap().clone();
+    let settings = state.app_settings.lock().unwrap().clone();
+    let hydration_cutoff = *state.status_hydration_cutoff.lock().unwrap();
+    let hydration_suppressed = *state.status_hydration_suppressed.lock().unwrap();
+    let status_path = runtime_status_path();
+    let daemon_status = load_daemon_status_snapshot();
+    let agent_process_running =
+        agent_process_running_for_session(&session, &state.agents.lock().unwrap())
+            .map(|running| serde_json::json!(running))
+            .unwrap_or_else(|err| serde_json::json!({ "error": err }));
+
+    let mut quieted = quieted_patterns.into_iter().collect::<Vec<_>>();
+    quieted.sort();
+
+    serde_json::json!({
+        "generated_at": Utc::now().to_rfc3339(),
+        "app": {
+            "pid": std::process::id(),
+            "active": active,
+            "quiet": quiet,
+            "paused": paused,
+            "event_count": events.len(),
+            "agent_count": agents.len(),
+            "session": session,
+            "runtime": {
+                "last_agent_activity": runtime.last_agent_activity.map(system_time_debug),
+                "last_process_check": runtime.last_process_check.map(system_time_debug),
+                "agent_process_running": runtime.agent_process_running,
+            },
+            "status_hydration": {
+                "suppressed": hydration_suppressed,
+                "cutoff": hydration_cutoff.map(system_time_debug),
+            },
+            "settings": settings,
+            "quieted_patterns": quieted,
+            "agents": agents,
+            "recent_events": events.iter().rev().take(12).cloned().collect::<Vec<_>>(),
+        },
+        "daemon": {
+            "status_path": status_path,
+            "status_file": file_debug(&status_path),
+            "status": daemon_status,
+            "socket": file_debug(&daemon_socket_path()),
+            "agent_process_running_for_session": agent_process_running,
+        },
+        "paths": {
+            "ui_socket": file_debug(&ui_socket_path()),
+            "daemon_socket": file_debug(&daemon_socket_path()),
+            "ui_log": file_debug(&ui_log_path()),
+            "settings": file_debug(&app_settings_path()),
+            "quiet_preferences": file_debug(&quiet_preferences_path()),
+            "destination_memory": file_debug(&destination_memory_path()),
+            "support_bins": agent_snitch_support_bins().iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            "hookctl": optional_binary_debug("hookctl", hookctl_path()),
+            "emitter": optional_binary_debug("emitter", emitter_path()),
+            "agentsnitch": optional_binary_debug("agentsnitch", agentsnitch_cli_path()),
+        },
+        "processes": {
+            "agentsnitch": command_lines("/usr/bin/pgrep", &["-fl", "AgentSnitch|agentsnitch-ui"], 20),
+            "claude": command_lines("/usr/bin/pgrep", &["-fl", "claude"], 20),
+        }
+    })
+}
+
+#[tauri::command]
 fn get_status(state: State<AppState>, app: AppHandle) -> Status {
+    let hydrated = hydrate_liveness_from_daemon_status(&state);
     let reset = reconcile_session_liveness(&state, &app);
+    if hydrated && !reset {
+        refresh_tray(&app, *state.active.lock().unwrap());
+    }
     let active = *state.active.lock().unwrap();
     let quiet = *state.quiet.lock().unwrap();
     let paused = *state.paused.lock().unwrap();
@@ -4606,6 +5192,7 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
     let verdict = compute_verdict(active, &summary, &recent);
     let settings = state.app_settings.lock().unwrap().clone();
     let sensor = sensor_status(&settings, &recent);
+    let inspect = inspect_status(&settings);
     let status = Status {
         active,
         header: compute_header(&snap, active, &agents),
@@ -4613,6 +5200,7 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
         quiet,
         paused,
         sensor,
+        inspect,
         verdict,
         summary,
         agents,
@@ -4623,6 +5211,30 @@ fn get_status(state: State<AppState>, app: AppHandle) -> Status {
         let _ = app.emit("status-changed", ());
     }
     status
+}
+
+fn inspect_status(settings: &AppSettings) -> serde_json::Value {
+    if let Some(snapshot) = load_daemon_status_snapshot() {
+        if !snapshot.inspect.is_null() {
+            return snapshot.inspect;
+        }
+    }
+    serde_json::json!({
+        "enabled": settings.https_inspect_enabled,
+        "proxy": { "enabled": settings.https_inspect_enabled, "listening": false },
+        "ca": { "present": false },
+        "trust": { "system_trusted": false },
+        "trust_mode": if settings.https_inspect_process_scoped { "process_scoped" } else { "none" },
+        "payload_mode": if settings.https_inspect_capture_full_payloads {
+            "full"
+        } else if settings.https_inspect_capture_previews {
+            "redacted_preview"
+        } else {
+            "metadata_only"
+        },
+        "retention": settings.https_inspect_full_retention,
+        "warnings": [],
+    })
 }
 
 fn sensor_status(settings: &AppSettings, recent: &[UiEvent]) -> SensorStatus {
@@ -4669,13 +5281,13 @@ fn sensor_status(settings: &AppSettings, recent: &[UiEvent]) -> SensorStatus {
     };
     let (label, detail, trust_boundary) = match mode {
         "high_assurance_active" => (
-            "High Assurance active",
+            "OS Sensor active",
             "System Extension flow telemetry has been observed in this session.",
             "Apple-approved System Extension sensor plus user-level hooks and daemon.",
         ),
         "high_assurance_requested" => (
-            "High Assurance requested",
-            "High Assurance is enabled, but no OS-backed flow has been observed yet.",
+            "OS Sensor requested",
+            "OS Sensor mode is enabled, but no OS-backed flow has been observed yet.",
             "User-level hooks and daemon are active; System Extension activation may still need approval.",
         ),
         _ => (
@@ -4693,7 +5305,11 @@ fn sensor_status(settings: &AppSettings, recent: &[UiEvent]) -> SensorStatus {
         network_extension_active,
         observer_sources,
         trust_boundary: trust_boundary.into(),
-        dns_policy: "DNS names are shown only when directly observed; PTR and service/IP classification are labeled separately.".into(),
+        dns_policy: if settings.reverse_dns_enabled {
+            "Reverse DNS/PTR lookups are enabled. AgentSnitch may ask the local resolver for PTR names for public destination IPs; those lookups are outbound DNS by nature.".into()
+        } else {
+            "Reverse DNS/PTR lookups are off. DNS names are shown only when directly observed; service/IP classification stays labeled separately.".into()
+        },
     }
 }
 
@@ -4726,7 +5342,7 @@ fn set_network_sensor_disabled(
             Err(err) => {
                 warning = Some(err.clone());
                 format!(
-                    "High Assurance disabled setting saved; live disable failed: {}",
+                    "OS Sensor disabled setting saved; live disable failed: {}",
                     err
                 )
             }
@@ -4740,7 +5356,7 @@ fn set_network_sensor_disabled(
             Err(err) => {
                 warning = Some(err.clone());
                 format!(
-                    "High Assurance enabled setting saved; live enable failed: {}",
+                    "OS Sensor enabled setting saved; live enable failed: {}",
                     err
                 )
             }
@@ -4774,11 +5390,61 @@ fn set_high_assurance_default_enabled(
     Ok(AppSettingsUpdate {
         settings,
         detail: if enabled {
-            "High Assurance will be requested when AgentSnitch starts.".into()
+            "OS Sensor mode will be requested when AgentSnitch starts.".into()
         } else {
             "AgentSnitch will start in User Visibility mode.".into()
         },
         warning: None,
+    })
+}
+
+#[tauri::command]
+async fn set_reverse_dns_settings(
+    enabled: bool,
+    always_on: bool,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let always_on = enabled && always_on;
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.reverse_dns_enabled = enabled;
+        guard.reverse_dns_always_on = always_on;
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+
+    let apply_result = tauri::async_runtime::spawn_blocking(move || {
+        set_macos_reverse_dns_settings(enabled, always_on)
+    })
+    .await
+    .map_err(|err| format!("join reverse DNS settings task: {}", err))?;
+    let (detail, warning) = match apply_result {
+        Ok(detail) => (detail, None),
+        Err(err) => {
+            let detail = if enabled {
+                format!(
+                    "Reverse DNS/PTR setting saved, but daemon update failed: {}",
+                    err
+                )
+            } else {
+                format!(
+                    "Reverse DNS/PTR disable setting saved, but daemon update failed: {}",
+                    err
+                )
+            };
+            (detail, Some(err))
+        }
+    };
+
+    let settings = state.app_settings.lock().unwrap().clone();
+    let _ = app.emit("settings-changed", &settings);
+    let _ = app.emit("status-changed", ());
+    Ok(AppSettingsUpdate {
+        settings,
+        detail,
+        warning,
     })
 }
 
@@ -4803,6 +5469,134 @@ fn set_advanced_controls_enabled(
         } else {
             "simple interface saved".into()
         },
+        warning: None,
+    })
+}
+
+#[tauri::command]
+fn set_debug_mode_settings(
+    enabled: bool,
+    always_on: bool,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let always_on = enabled && always_on;
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.debug_mode_enabled = enabled;
+        guard.debug_mode_always_on = always_on;
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+    let _ = app.emit("settings-changed", &settings);
+    Ok(AppSettingsUpdate {
+        settings,
+        detail: if enabled {
+            if always_on {
+                "Debug mode will stay visible after restart.".into()
+            } else {
+                "Debug mode enabled for this session.".into()
+            }
+        } else {
+            "Debug mode hidden.".into()
+        },
+        warning: None,
+    })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HttpsInspectSettingsRequest {
+    enabled: bool,
+    process_scoped: bool,
+    allow_system_trust: bool,
+    capture_previews: bool,
+    capture_full_payloads: bool,
+    preview_bytes: u32,
+    full_retention: String,
+}
+
+#[tauri::command]
+fn set_https_inspect_settings(
+    request: HttpsInspectSettingsRequest,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let settings = {
+        let mut guard = state.app_settings.lock().unwrap();
+        guard.https_inspect_enabled = request.enabled;
+        guard.https_inspect_process_scoped = request.process_scoped;
+        guard.https_inspect_allow_system_trust = request.allow_system_trust;
+        guard.https_inspect_capture_previews = request.capture_previews;
+        guard.https_inspect_capture_full_payloads = request.capture_full_payloads;
+        guard.https_inspect_preview_bytes = request.preview_bytes.max(256);
+        guard.https_inspect_full_retention = if request.full_retention.trim().is_empty() {
+            default_full_payload_retention()
+        } else {
+            request.full_retention
+        };
+        guard.schema = app_settings_schema();
+        guard.clone()
+    };
+    save_app_settings(&settings)?;
+    let detail = if request.enabled {
+        match run_inspect_cli(&["create-ca"], Duration::from_secs(12)) {
+            Ok(_) => "HTTPS Inspect Mode saved. Restart AgentSnitch daemon to start or refresh the managed proxy.".into(),
+            Err(err) => format!("HTTPS Inspect Mode saved, but CA creation failed: {}", err),
+        }
+    } else {
+        "HTTPS Inspect Mode disabled for new sessions.".into()
+    };
+    let _ = app.emit("settings-changed", &settings);
+    let _ = app.emit("status-changed", ());
+    Ok(AppSettingsUpdate {
+        settings,
+        detail,
+        warning: None,
+    })
+}
+
+#[tauri::command]
+async fn run_https_inspect_action(
+    action: String,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<AppSettingsUpdate, String> {
+    let normalized = action.trim().to_ascii_lowercase();
+    let args: Vec<&str> = match normalized.as_str() {
+        "create-ca" => vec!["create-ca"],
+        "remove-ca" => vec!["remove-ca"],
+        "trust-system" => vec!["trust-system"],
+        "untrust-system" => vec!["untrust-system"],
+        "rotate-ca" => vec!["rotate-ca"],
+        "purge-data" => vec!["purge-data"],
+        "disable-clean" => vec![
+            "disable",
+            "--remove-process-trust=true",
+            "--purge-data=true",
+        ],
+        other => return Err(format!("unsupported HTTPS Inspect action: {}", other)),
+    };
+    let timeout = if matches!(normalized.as_str(), "trust-system" | "untrust-system") {
+        INSPECT_MUTATION_TIMEOUT
+    } else {
+        Duration::from_secs(15)
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || run_inspect_cli(&args, timeout))
+        .await
+        .map_err(|err| format!("join inspect action task: {}", err))?;
+    let detail = result?;
+    let settings = load_app_settings();
+    {
+        let mut guard = state.app_settings.lock().unwrap();
+        *guard = settings.clone();
+    }
+    let _ = app.emit("settings-changed", &settings);
+    let _ = app.emit("status-changed", ());
+    Ok(AppSettingsUpdate {
+        settings,
+        detail,
         warning: None,
     })
 }
@@ -4905,141 +5699,129 @@ fn set_macos_network_sensor_disabled(disabled: bool) -> Result<String, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn set_macos_network_sensor_disabled(_disabled: bool) -> Result<String, String> {
-    Ok("High Assurance setting saved; OS-backed network attribution is macOS-only".into())
+    Ok("OS Sensor setting saved; OS-backed network attribution is macOS-only".into())
 }
 
-/// Conservative margin (logical px, scaled by the display's factor below) kept
-/// between the window and the edges of the monitor's visible frame. Covers the
-/// menu bar / Dock so a grown window never has its title bar or bottom pushed
-/// off-screen — the most likely trigger for macOS to relocate the window.
-const WINDOW_EDGE_MARGIN_LOGICAL: f64 = 12.0;
+#[cfg(target_os = "macos")]
+fn set_macos_reverse_dns_settings(enabled: bool, always_on: bool) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|err| format!("resolve HOME: {}", err))?;
+    let plist = user_launch_agent_plist(&home);
+    if !plist.exists() {
+        return Ok(if enabled {
+            "Reverse DNS/PTR setting saved. The daemon LaunchAgent plist was not found yet, so the setting will apply after AgentSnitch is installed or the daemon is restarted from Settings again.".into()
+        } else {
+            "Reverse DNS/PTR setting saved. The daemon LaunchAgent plist was not found yet.".into()
+        });
+    }
 
-/// Pure geometry solver for the auto-resize path, extracted so it can be unit
-/// tested without a live window/window-manager (the actual `set_size` /
-/// `set_position` calls are not testable here).
-///
-/// All inputs/outputs are in **physical** pixels — the space `outer_position`,
-/// `Monitor::position`, and `Monitor::size` all report in. Mixing logical and
-/// physical here is the classic bug on non-1.0-scale (e.g. secondary) displays,
-/// so the caller converts the JS-supplied logical request to physical first.
-///
-/// Policy (UI/UX plan P1 #9/#10):
-/// - **Width is pinned** to the window's current width. The JS auto-resize asks
-///   for both width and height; we deliberately ignore the requested width so
-///   live tab-count changes can only grow/shrink height, never jitter width.
-///   (Accepted tradeoff: the agents-view auto-widening is disabled.)
-/// - **Height** is the only thing that tracks content, clamped so the window
-///   still fits within the monitor's visible frame at its current top edge.
-/// - **Position is clamped into the current monitor**, never moved across
-///   displays. If the window already sits partly off this monitor we nudge it
-///   back in, but we never recentre or otherwise fight a user-chosen spot.
-#[allow(clippy::too_many_arguments)]
-fn solve_window_geometry(
-    pos_x: i32,
-    pos_y: i32,
-    current_w: i32,
-    requested_h: i32,
-    mon_x: i32,
-    mon_y: i32,
-    mon_w: i32,
-    mon_h: i32,
-    margin: i32,
-) -> (u32, u32, i32, i32) {
-    // Visible frame inset by the edge margin on all sides.
-    let frame_x = mon_x + margin;
-    let frame_y = mon_y + margin;
-    let frame_w = (mon_w - 2 * margin).max(1);
-    let frame_h = (mon_h - 2 * margin).max(1);
+    apply_reverse_dns_launch_agent_plist(&plist, enabled && always_on)?;
+    set_launchctl_reverse_dns_env(enabled)?;
+    restart_user_daemon(&plist)?;
 
-    // Width: pinned to current, but never wider than the visible frame.
-    let width = current_w.clamp(1, frame_w);
-
-    // Clamp the top-left into the visible frame first (handles a window already
-    // dragged off / pushed onto a secondary display).
-    let max_x = frame_x + frame_w - width;
-    let x = pos_x.clamp(frame_x, max_x.max(frame_x));
-
-    // Height: keep the requested height, capped only by the monitor's own visible
-    // height (never taller than the screen). The window can be at most this tall.
-    let height = requested_h.clamp(1, frame_h);
-
-    // Now place the top edge. Prefer the window's current top, but if the
-    // requested height wouldn't fit below it, move the top edge UP so the full
-    // height is preserved — rather than collapsing the window to whatever sliver
-    // happens to sit below a low starting position (the bug Codex caught: a
-    // window placed low on a small display would otherwise shrink to a few px on
-    // the next auto-resize instead of sliding up to keep its minimum height).
-    let lowest_top = frame_y + frame_h - height; // top that still fits `height`
-    let y = pos_y.clamp(frame_y, lowest_top.max(frame_y));
-
-    (width as u32, height as u32, x, y)
+    Ok(match (enabled, always_on) {
+        (true, true) => "Reverse DNS/PTR lookups are enabled and saved in the daemon LaunchAgent for app exits, daemon restarts, and reboots. These PTR lookups are outbound DNS through the local resolver.".into(),
+        (true, false) => "Reverse DNS/PTR lookups are enabled for the current user launchd session. Reboot returns to off unless Always On is checked. These PTR lookups are outbound DNS through the local resolver.".into(),
+        (false, _) => "Reverse DNS/PTR lookups are disabled; the daemon was restarted without AGENTSNITCH_ENABLE_REVERSE_DNS.".into(),
+    })
 }
 
-#[tauri::command]
-fn resize_main_window(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
-    let win = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
+#[cfg(not(target_os = "macos"))]
+fn set_macos_reverse_dns_settings(enabled: bool, always_on: bool) -> Result<String, String> {
+    let _ = always_on;
+    Ok(if enabled {
+        "Reverse DNS/PTR setting saved; daemon launchd restart is macOS-only.".into()
+    } else {
+        "Reverse DNS/PTR lookups are disabled.".into()
+    })
+}
 
-    // Keep the JS request inside sane logical bounds first. Width is only used
-    // for the rare no-monitor fallback below; the normal path pins the width to
-    // the window's current width (see `solve_window_geometry`).
-    let requested_width = width.clamp(520.0, 1180.0);
-    let requested_height = height.clamp(420.0, 920.0);
-
-    // Resolve the current monitor; if we can't (rare), fall back to the legacy
-    // logical resize so the window still tracks content rather than freezing.
-    let monitor = match win.current_monitor() {
-        Ok(Some(m)) => m,
-        _ => {
-            return win
-                .set_size(Size::Logical(LogicalSize {
-                    width: requested_width,
-                    height: requested_height,
-                }))
-                .map_err(|e| e.to_string());
+#[cfg(target_os = "macos")]
+fn apply_reverse_dns_launch_agent_plist(
+    plist: &std::path::Path,
+    persist_enabled: bool,
+) -> Result<(), String> {
+    let plist_str = plist.to_string_lossy().into_owned();
+    if persist_enabled {
+        let mut replace = Command::new("/usr/bin/plutil");
+        replace
+            .arg("-replace")
+            .arg(format!("EnvironmentVariables.{}", REVERSE_DNS_ENV))
+            .arg("-string")
+            .arg("1")
+            .arg(&plist_str);
+        if run_command_checked(replace, "persist reverse DNS LaunchAgent setting").is_err() {
+            let mut insert = Command::new("/usr/bin/plutil");
+            insert
+                .arg("-insert")
+                .arg(format!("EnvironmentVariables.{}", REVERSE_DNS_ENV))
+                .arg("-string")
+                .arg("1")
+                .arg(&plist_str);
+            run_command_checked(insert, "persist reverse DNS LaunchAgent setting")?;
         }
-    };
+    } else {
+        let mut remove = Command::new("/usr/bin/plutil");
+        remove
+            .arg("-remove")
+            .arg(format!("EnvironmentVariables.{}", REVERSE_DNS_ENV))
+            .arg(&plist_str);
+        let _ = run_command_checked(remove, "remove reverse DNS LaunchAgent setting");
+    }
 
-    let scale = monitor.scale_factor();
-    let mon_pos = monitor.position();
-    let mon_size = monitor.size();
-    let cur_pos = win.outer_position().map_err(|e| e.to_string())?;
-    let cur_size = win.outer_size().map_err(|e| e.to_string())?;
+    let mut lint = Command::new("/usr/bin/plutil");
+    lint.arg("-lint").arg(&plist_str);
+    run_command_checked(lint, "validate daemon LaunchAgent plist")?;
+    Ok(())
+}
 
-    // JS speaks logical px; everything below is physical. Convert the request.
-    let requested_h_phys = (requested_height * scale).round() as i32;
-    let margin_phys = (WINDOW_EDGE_MARGIN_LOGICAL * scale).round() as i32;
+#[cfg(target_os = "macos")]
+fn set_launchctl_reverse_dns_env(enabled: bool) -> Result<(), String> {
+    let mut command = Command::new("/bin/launchctl");
+    if enabled {
+        command.arg("setenv").arg(REVERSE_DNS_ENV).arg("1");
+    } else {
+        command.arg("unsetenv").arg(REVERSE_DNS_ENV);
+    }
+    run_command_checked(command, "update launchd reverse DNS environment")?;
+    Ok(())
+}
 
-    let (w, h, x, y) = solve_window_geometry(
-        cur_pos.x,
-        cur_pos.y,
-        cur_size.width as i32,
-        requested_h_phys,
-        mon_pos.x,
-        mon_pos.y,
-        mon_size.width as i32,
-        mon_size.height as i32,
-        margin_phys,
-    );
+#[cfg(target_os = "macos")]
+fn current_user_id() -> Result<String, String> {
+    let mut command = Command::new("/usr/bin/id");
+    command.arg("-u");
+    let output = run_command_checked(command, "resolve current uid")?;
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if uid.is_empty() {
+        Err("resolve current uid: empty id output".into())
+    } else {
+        Ok(uid)
+    }
+}
 
-    // Apply size first, then re-assert position. The set_position is what
-    // actually pins the window: macOS may try to relocate a window whose new
-    // size no longer fits its old origin (the observed cross-display jump), and
-    // re-asserting the clamped origin overrides that.
-    win.set_size(Size::Physical(PhysicalSize {
-        width: w,
-        height: h,
-    }))
-    .map_err(|e| e.to_string())?;
-    win.set_position(tauri::Position::Physical(PhysicalPosition { x, y }))
-        .map_err(|e| e.to_string())?;
+#[cfg(target_os = "macos")]
+fn restart_user_daemon(plist: &std::path::Path) -> Result<(), String> {
+    let uid = current_user_id()?;
+    let service = format!("gui/{}/{}", uid, AGENTSNITCH_DAEMON_LABEL);
+    let mut kickstart = Command::new("/bin/launchctl");
+    kickstart.arg("kickstart").arg("-k").arg(&service);
+    if let Err(kickstart_err) = run_command_checked(kickstart, "restart AgentSnitch daemon") {
+        let plist_str = plist.to_string_lossy().into_owned();
+        let domain = format!("gui/{}", uid);
+        let mut bootstrap = Command::new("/bin/launchctl");
+        bootstrap.arg("bootstrap").arg(&domain).arg(&plist_str);
+        run_command_checked(bootstrap, "bootstrap AgentSnitch daemon")
+            .map_err(|bootstrap_err| format!("{}; {}", kickstart_err, bootstrap_err))?;
+    }
     Ok(())
 }
 
 #[tauri::command]
 fn clear_session(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     reset_session_state(&state);
+    *state.status_hydration_cutoff.lock().unwrap() = Some(SystemTime::now());
+    *state.status_hydration_suppressed.lock().unwrap() = true;
+    clear_daemon_status_snapshot();
     refresh_tray(&app, false);
     let _ = app.emit("events-updated", ());
     let _ = app.emit("status-changed", ());
@@ -5053,7 +5835,6 @@ fn quiet_session(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     refresh_tray(&app, false);
     let _ = app.emit("events-updated", ());
     let _ = app.emit("status-changed", ());
-    hide_panel(&app);
     Ok(())
 }
 
@@ -5567,6 +6348,35 @@ fn export_timestamp() -> String {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::sync::MutexGuard;
+
+    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_test_env() -> MutexGuard<'static, ()> {
+        TEST_ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn temp_status_path(name: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "agentsnitch-{}-{}-status.json",
+            name,
+            std::process::id()
+        ));
+        path
+    }
+
+    fn restore_env_var(key: &str, previous: Option<std::ffi::OsString>) {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    fn now_rfc3339_z() -> String {
+        Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
+    }
 
     #[test]
     fn app_settings_default_keeps_network_sensor_disabled() {
@@ -5575,6 +6385,8 @@ mod tests {
         assert!(!settings.keep_hooks_up_to_date);
         assert!(settings.network_sensor_disabled);
         assert!(!settings.high_assurance_default_enabled);
+        assert!(!settings.reverse_dns_enabled);
+        assert!(!settings.reverse_dns_always_on);
         assert_eq!(settings.schema, "agentsnitch.ui_settings.v0");
     }
 
@@ -5651,15 +6463,52 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reverse_dns_launch_agent_plist_persists_and_removes_key() {
+        let path = temp_status_path("reverse-dns-plist");
+        std::fs::write(
+            &path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.somoore.agentsnitch.daemon</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENTSNITCH_DISABLE_NETWORK_STATISTICS</key>
+    <string>0</string>
+    <key>AGENTSNITCH_DISABLE_LSOF</key>
+    <string>0</string>
+  </dict>
+</dict>
+</plist>
+"#,
+        )
+        .unwrap();
+
+        apply_reverse_dns_launch_agent_plist(&path, true).unwrap();
+        let enabled = std::fs::read_to_string(&path).unwrap();
+        assert!(enabled.contains(REVERSE_DNS_ENV));
+        assert!(enabled.contains("<string>1</string>"));
+
+        apply_reverse_dns_launch_agent_plist(&path, false).unwrap();
+        let disabled = std::fs::read_to_string(&path).unwrap();
+        assert!(!disabled.contains(REVERSE_DNS_ENV));
+    }
+
     #[test]
     fn network_sensor_env_kill_switch_forces_disabled_settings() {
         std::env::set_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION", "1");
         let settings = apply_network_sensor_env_override(AppSettings {
-            schema: "agentsnitch.ui_settings.v0".into(),
             advanced_controls_enabled: true,
             keep_hooks_up_to_date: true,
             network_sensor_disabled: false,
             high_assurance_default_enabled: true,
+            reverse_dns_enabled: true,
+            reverse_dns_always_on: true,
+            ..AppSettings::default()
         });
         std::env::remove_var("AGENTSNITCH_DISABLE_NETWORK_EXTENSION");
 
@@ -7171,6 +8020,196 @@ mod tests {
     }
 
     #[test]
+    fn daemon_status_hydrates_live_claude_agent_without_seeding_events() {
+        let _guard = lock_test_env();
+        let previous = std::env::var_os("AGENTSNITCH_STATUS");
+        let path = temp_status_path("fresh");
+        std::env::set_var("AGENTSNITCH_STATUS", &path);
+
+        let now = now_rfc3339_z();
+        let mut ev = semantic("Read", vec![]);
+        ev.ts = now.clone();
+        ev.agent = AgentInfo {
+            id: "main_62563".into(),
+            name: "claude".into(),
+            agent_type: Some("main".into()),
+            pid: Some(62563),
+            spawn_method: Some("direct".into()),
+            cwd: Some("/Users/scottmoore/github/sir-core".into()),
+            first_seen: Some(now.clone()),
+            last_seen: Some(now.clone()),
+            ..AgentInfo::default()
+        };
+        ev.cwd = Some("/Users/scottmoore/github/sir-core".into());
+        ev.session = SessionInfo {
+            id: "session-live".into(),
+        };
+        let raw = serde_json::to_string(&serde_json::json!({
+            "updated_at": now,
+            "last_semantic": ev,
+            "observer_sources": ["network_statistics"]
+        }))
+        .unwrap();
+        std::fs::write(&path, raw).unwrap();
+
+        let state = AppState::default();
+        assert!(hydrate_liveness_from_daemon_status(&state));
+        assert!(*state.active.lock().unwrap());
+        assert_eq!(state.events.lock().unwrap().len(), 0);
+        assert_eq!(
+            state.session.lock().unwrap().cwd,
+            "/Users/scottmoore/github/sir-core"
+        );
+        assert!(state.agents.lock().unwrap().contains_key("main_62563"));
+
+        let _ = std::fs::remove_file(path);
+        restore_env_var("AGENTSNITCH_STATUS", previous);
+    }
+
+    #[test]
+    fn daemon_status_hydration_ignores_stale_status() {
+        let _guard = lock_test_env();
+        let previous = std::env::var_os("AGENTSNITCH_STATUS");
+        let path = temp_status_path("stale");
+        std::env::set_var("AGENTSNITCH_STATUS", &path);
+
+        let stale = "2020-01-01T00:00:00Z";
+        let raw = serde_json::to_string(&serde_json::json!({
+            "updated_at": stale,
+            "last_network": {
+                "schema": "agentsnitch.network.v0",
+                "ts": stale,
+                "pid": 62563,
+                "process_path": "/Users/scottmoore/.local/bin/claude",
+                "remote": "api.anthropic.com:443"
+            }
+        }))
+        .unwrap();
+        std::fs::write(&path, raw).unwrap();
+
+        let state = AppState::default();
+        assert!(!hydrate_liveness_from_daemon_status(&state));
+        assert!(!*state.active.lock().unwrap());
+        assert!(state.agents.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(path);
+        restore_env_var("AGENTSNITCH_STATUS", previous);
+    }
+
+    #[test]
+    fn daemon_status_hydration_respects_clear_cutoff() {
+        let _guard = lock_test_env();
+        let previous = std::env::var_os("AGENTSNITCH_STATUS");
+        let path = temp_status_path("cleared");
+        std::env::set_var("AGENTSNITCH_STATUS", &path);
+
+        let before_clear = Utc::now() - chrono::Duration::seconds(1);
+        let before_clear_text = before_clear.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+        let mut ev = semantic("Read", vec![]);
+        ev.ts = before_clear_text.clone();
+        ev.agent = AgentInfo {
+            id: "main_62563".into(),
+            name: "claude".into(),
+            agent_type: Some("main".into()),
+            pid: Some(62563),
+            spawn_method: Some("direct".into()),
+            ..AgentInfo::default()
+        };
+        let raw = serde_json::to_string(&serde_json::json!({
+            "updated_at": before_clear_text,
+            "last_semantic": ev
+        }))
+        .unwrap();
+        std::fs::write(&path, raw).unwrap();
+
+        let state = AppState::default();
+        *state.status_hydration_cutoff.lock().unwrap() = Some(SystemTime::now());
+
+        assert!(!hydrate_liveness_from_daemon_status(&state));
+        assert!(!*state.active.lock().unwrap());
+        assert!(state.agents.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(path);
+        restore_env_var("AGENTSNITCH_STATUS", previous);
+    }
+
+    #[test]
+    fn daemon_status_hydration_stays_suppressed_after_clear() {
+        let _guard = lock_test_env();
+        let previous = std::env::var_os("AGENTSNITCH_STATUS");
+        let path = temp_status_path("suppressed");
+        std::env::set_var("AGENTSNITCH_STATUS", &path);
+
+        let now = now_rfc3339_z();
+        let mut ev = semantic("Read", vec![]);
+        ev.ts = now.clone();
+        ev.agent = AgentInfo {
+            id: "main_62563".into(),
+            name: "claude".into(),
+            agent_type: Some("main".into()),
+            pid: Some(62563),
+            spawn_method: Some("direct".into()),
+            ..AgentInfo::default()
+        };
+        let raw = serde_json::to_string(&serde_json::json!({
+            "updated_at": now,
+            "last_semantic": ev
+        }))
+        .unwrap();
+        std::fs::write(&path, raw).unwrap();
+
+        let state = AppState::default();
+        *state.status_hydration_suppressed.lock().unwrap() = true;
+
+        assert!(!hydrate_liveness_from_daemon_status(&state));
+        assert!(!*state.active.lock().unwrap());
+        assert!(state.agents.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(path);
+        restore_env_var("AGENTSNITCH_STATUS", previous);
+    }
+
+    #[test]
+    fn clear_daemon_status_snapshot_removes_status_file() {
+        let _guard = lock_test_env();
+        let previous = std::env::var_os("AGENTSNITCH_STATUS");
+        let path = temp_status_path("clear-file");
+        std::env::set_var("AGENTSNITCH_STATUS", &path);
+        std::fs::write(&path, "{}").unwrap();
+
+        clear_daemon_status_snapshot();
+
+        assert!(!path.exists());
+        restore_env_var("AGENTSNITCH_STATUS", previous);
+    }
+
+    #[test]
+    fn debug_snapshot_includes_on_demand_diagnostics() {
+        let state = AppState::default();
+        *state.active.lock().unwrap() = true;
+        state.agents.lock().unwrap().insert(
+            "main_62563".into(),
+            AgentInfo {
+                id: "main_62563".into(),
+                name: "claude".into(),
+                agent_type: Some("main".into()),
+                pid: Some(62563),
+                ..AgentInfo::default()
+            },
+        );
+        *state.status_hydration_suppressed.lock().unwrap() = true;
+
+        let snapshot = build_debug_snapshot(&state);
+
+        assert_eq!(snapshot["app"]["active"], true);
+        assert_eq!(snapshot["app"]["agent_count"], 1);
+        assert_eq!(snapshot["app"]["status_hydration"]["suppressed"], true);
+        assert!(snapshot["daemon"]["status_file"]["path"].is_string());
+        assert!(snapshot["paths"]["ui_socket"]["path"].is_string());
+        assert!(snapshot["processes"]["agentsnitch"].is_array());
+    }
+
+    #[test]
     fn reset_session_state_returns_to_empty_idle() {
         let state = AppState::default();
         state.events.lock().unwrap().push(UiEvent {
@@ -7684,6 +8723,32 @@ mod tests {
     }
 
     #[test]
+    fn known_service_quiet_keys_suppress_raw_known_network_rows() {
+        let known = UiEvent {
+            id: 1,
+            ts: "21:00:02".into(),
+            summary: "Network -> api.anthropic.com:443".into(),
+            tags: vec!["network_egress".into()],
+            detail: None,
+            destination: Some("api.anthropic.com:443".into()),
+            destination_context: None,
+            correlated: false,
+            evidence: None,
+            agent: None,
+        };
+        let quieted = known_service_quiet_keys()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        assert!(should_suppress_quieted_pattern(&known, &quieted));
+
+        let unknown = UiEvent {
+            destination: Some("webhook.site:443".into()),
+            ..known
+        };
+        assert!(!should_suppress_quieted_pattern(&unknown, &quieted));
+    }
+
+    #[test]
     fn trim_ui_events_preserves_linked_evidence_before_routine_hooks() {
         let mut events = Vec::new();
         events.push(UiEvent {
@@ -7777,52 +8842,6 @@ mod tests {
     }
 
     #[test]
-    fn solve_window_geometry_pins_width_and_only_changes_height() {
-        // Window at (200, 100), 700x500 on a 1920x1080 monitor at origin.
-        // Request a taller height; width must stay 700, position unchanged.
-        let (w, h, x, y) = solve_window_geometry(200, 100, 700, 760, 0, 0, 1920, 1080, 12);
-        assert_eq!(w, 700, "width must be pinned to current");
-        assert_eq!(h, 760, "height tracks the request when it fits");
-        assert_eq!((x, y), (200, 100), "position must not move");
-    }
-
-    #[test]
-    fn solve_window_geometry_never_moves_across_displays() {
-        // Window reported at a negative-X origin (already on/near a secondary
-        // display). It must be clamped back onto the current monitor's frame,
-        // never left at a negative X.
-        let (_w, _h, x, y) = solve_window_geometry(-1500, 50, 700, 500, 0, 0, 1920, 1080, 12);
-        assert!(x >= 12, "x must be clamped into the monitor frame, got {x}");
-        assert!(y >= 12, "y must be clamped into the monitor frame, got {y}");
-    }
-
-    #[test]
-    fn solve_window_geometry_caps_height_to_fit_below_top() {
-        // A short monitor: a requested height taller than the screen is capped to
-        // the visible frame height, and the bottom edge stays inside the frame.
-        let (_w, h, _x, y) = solve_window_geometry(0, 600, 700, 900, 0, 0, 1280, 800, 12);
-        // Visible frame: top=12, height=800-2*12=776, bottom=12+776=788.
-        assert!(h as i32 <= 776, "height capped to the visible frame: h={h}");
-        assert!(y + (h as i32) <= 788, "window bottom must fit: y={y} h={h}");
-    }
-
-    #[test]
-    fn solve_window_geometry_slides_up_to_preserve_height() {
-        // Codex P2: a window placed LOW on a small display must keep its requested
-        // height by sliding the top edge UP, not collapse to whatever sliver sits
-        // below the low starting position.
-        // Monitor 1280x800; window dragged to y=700 (near the bottom); request 500.
-        let (_w, h, _x, y) = solve_window_geometry(0, 700, 700, 500, 0, 0, 1280, 800, 12);
-        assert_eq!(h, 500, "requested height must be preserved, not collapsed");
-        // Frame bottom = 12 + (800 - 24) = 788; top must move up so 500 fits.
-        assert!(
-            y + (h as i32) <= 788,
-            "bottom still inside the frame: y={y} h={h}"
-        );
-        assert!(y < 700, "top edge slid up from the low starting y: y={y}");
-    }
-
-    #[test]
     fn ui_log_uses_configured_restricted_file() {
         let path = std::env::temp_dir().join(format!(
             "agentsnitch-ui-test-{}-{}.log",
@@ -7855,16 +8874,20 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_events,
             get_events_json,
+            get_debug_snapshot,
             get_status,
             get_app_settings,
             get_claude_hooks_status,
             install_claude_hooks,
             remove_claude_hooks,
             set_advanced_controls_enabled,
+            set_debug_mode_settings,
             set_high_assurance_default_enabled,
             set_keep_hooks_up_to_date,
             set_network_sensor_disabled,
-            resize_main_window,
+            set_reverse_dns_settings,
+            set_https_inspect_settings,
+            run_https_inspect_action,
             clear_session,
             quiet_session,
             set_paused,

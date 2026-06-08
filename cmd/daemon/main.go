@@ -24,6 +24,7 @@ import (
 
 	"github.com/somoore/agentsnitch/internal/correlator"
 	"github.com/somoore/agentsnitch/internal/event"
+	"github.com/somoore/agentsnitch/internal/inspect"
 	asruntime "github.com/somoore/agentsnitch/internal/runtime"
 )
 
@@ -93,6 +94,11 @@ func networkStatisticsObserverEnabled() bool {
 	return value != "1" && value != "true" && value != "yes"
 }
 
+func reverseDNSLookupEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("AGENTSNITCH_ENABLE_REVERSE_DNS")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
 func main() {
 	sock := resolveSocketPath()
 	_ = os.Remove(sock)
@@ -112,12 +118,18 @@ func main() {
 	transcripts := asruntime.NewTranscriptWriter()
 	// Pause is always Live on startup; the flag is never persisted (fail-safe).
 	pause := newPauseController()
+	inspectProxy := startInspectProxyIfEnabled(sessions, status, transcripts)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	go func() {
 		<-ctx.Done()
+		if inspectProxy != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = inspectProxy.Shutdown(shutdownCtx)
+			shutdownCancel()
+		}
 		l.Close()
 	}()
 
@@ -180,6 +192,120 @@ func main() {
 	}
 	wg.Wait()
 	log.Print("daemon done")
+}
+
+func startInspectProxyIfEnabled(sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) *inspect.Proxy {
+	settings, err := inspect.LoadSettings()
+	if err != nil {
+		log.Printf("inspect proxy: settings unavailable: %v", err)
+		status.recordInspectStatus(inspect.CurrentStatus(inspect.ProxyStatus{}))
+		return nil
+	}
+	if !settings.HTTPSInspectEnabled {
+		status.recordInspectStatus(inspect.CurrentStatus(inspect.ProxyStatus{Enabled: false}))
+		return nil
+	}
+	certs := inspect.NewCertManager(inspect.DefaultPaths())
+	proxy := inspect.NewProxy(settings, certs, func(exchange event.InspectedHTTPExchange) {
+		handleInspectedHTTP(exchange, sessions, status, transcripts)
+	})
+	if err := proxy.Start(); err != nil {
+		log.Printf("inspect proxy: start failed: %v", err)
+		status.recordInspectStatus(inspect.CurrentStatus(inspect.ProxyStatus{Enabled: true}))
+		return nil
+	}
+	proxyStatus := proxy.Status()
+	log.Printf("inspect proxy: listening on %s", proxyStatus.Address)
+	inspectStatus := inspect.CurrentStatus(proxyStatus)
+	inspectStatus.ProcessEnv = inspect.ProcessScopedEnv(inspect.DefaultPaths().BundlePath, proxy.AuthenticatedURL())
+	status.recordInspectStatus(inspectStatus)
+	return proxy
+}
+
+func handleInspectedHTTP(exchange event.InspectedHTTPExchange, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter) {
+	exchange = reconcileInspectCorrelation(exchange, sessions)
+	event.NormalizeInspectedHTTPExchange(&exchange)
+	if err := event.ValidateInspectedHTTPExchange(exchange); err != nil {
+		log.Printf("INSPECT_HTTP_INVALID: %v", err)
+		return
+	}
+	log.Printf("INSPECT_HTTP: %s %s://%s%s mode=%s redactions=%d",
+		exchange.Request.Method,
+		exchange.Request.Scheme,
+		exchange.Request.Host,
+		exchange.Request.Path,
+		exchange.TLS.InspectionMode,
+		exchange.Request.RedactionCount+exchange.Response.RedactionCount)
+	status.recordInspectedHTTP(exchange)
+	sessionID := exchange.SessionID
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = "inspect-proxy"
+	}
+	appendTranscript(transcripts, status, sessionID, "inspected_http", exchange)
+	forwardToUI(exchange)
+}
+
+func reconcileInspectCorrelation(exchange event.InspectedHTTPExchange, sessions *daemonSessions) event.InspectedHTTPExchange {
+	if sessions == nil || strings.TrimSpace(exchange.SessionID) == "" {
+		exchange.Correlation.Basis = removeInspectBasis(exchange.Correlation.Basis, "active_tool_span")
+		exchange.Correlation.Confidence = inspectConfidenceWithoutActiveSpan(exchange)
+		return exchange
+	}
+	session, ok := sessions.getExisting(exchange.SessionID)
+	if !ok || session == nil || session.state == nil {
+		exchange.Correlation.Basis = removeInspectBasis(exchange.Correlation.Basis, "active_tool_span")
+		exchange.Correlation.Confidence = inspectConfidenceWithoutActiveSpan(exchange)
+		return exchange
+	}
+	var span correlator.ToolSpan
+	var active bool
+	if strings.TrimSpace(exchange.ToolUseID) != "" {
+		span, active = session.state.ActiveToolSpan(exchange.ToolUseID)
+	} else {
+		span, active = session.state.ActiveEgressToolSpan()
+	}
+	if !active {
+		exchange.Correlation.Basis = removeInspectBasis(exchange.Correlation.Basis, "active_tool_span")
+		exchange.Correlation.Confidence = inspectConfidenceWithoutActiveSpan(exchange)
+		return exchange
+	}
+	if exchange.ToolUseID == "" {
+		exchange.ToolUseID = span.ToolUseID
+	}
+	if exchange.SpanID == "" {
+		exchange.SpanID = span.SpanID
+	}
+	exchange.Correlation.Basis = addInspectBasis(exchange.Correlation.Basis, "active_tool_span")
+	if exchange.TLS.InspectionMode == "local_mitm" {
+		exchange.Correlation.Confidence = "high"
+	}
+	return exchange
+}
+
+func inspectConfidenceWithoutActiveSpan(exchange event.InspectedHTTPExchange) string {
+	if strings.TrimSpace(exchange.SessionID) != "" {
+		return "medium"
+	}
+	return "low"
+}
+
+func addInspectBasis(values []string, basis string) []string {
+	for _, value := range values {
+		if value == basis {
+			return values
+		}
+	}
+	return append(values, basis)
+}
+
+func removeInspectBasis(values []string, basis string) []string {
+	out := values[:0]
+	for _, value := range values {
+		if value != basis {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func startProcessGraphObserver(ctx context.Context, sessions *daemonSessions, pause *pauseController) {
@@ -717,6 +843,9 @@ func enrichNetworkHostname(nf *event.NetworkFlowEvent) {
 		return
 	}
 	if !publicAddrForDNS(addr) {
+		return
+	}
+	if !reverseDNSLookupEnabled() {
 		return
 	}
 	if name := cachedReverseDNS(addr.String(), time.Now()); name != "" {
@@ -1602,6 +1731,20 @@ func (r *statusReporter) recordCorrelated(ev event.CorrelatedEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.status.LastCorrelated = &ev
+	r.writeLocked()
+}
+
+func (r *statusReporter) recordInspectedHTTP(ev event.InspectedHTTPExchange) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status.LastInspectedHTTP = &ev
+	r.writeLocked()
+}
+
+func (r *statusReporter) recordInspectStatus(status inspect.Status) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status.Inspect = status
 	r.writeLocked()
 }
 

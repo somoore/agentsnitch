@@ -17,6 +17,10 @@ LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist"
 SYSTEM_LAUNCH_AGENT_PLIST="/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist"
 SUPPORT_DIR="${AGENTSNITCH_SUPPORT_DIR:-$HOME/Library/Application Support/AgentSnitch}"
 SYSTEM_SUPPORT_DIR="/Library/Application Support/AgentSnitch"
+INSPECT_CLI="$SUPPORT_DIR/bin/agentsnitchctl"
+if [[ ! -x "$INSPECT_CLI" && -x "$ROOT/bin/agentsnitchctl" ]]; then
+  INSPECT_CLI="$ROOT/bin/agentsnitchctl"
+fi
 
 require_agentsnitch_path_for_delete() {
   path="$1"
@@ -72,6 +76,27 @@ if [[ -f "$SYSTEM_LAUNCH_AGENT_PLIST" ]]; then
     echo "System LaunchAgent remains: $SYSTEM_LAUNCH_AGENT_PLIST"
     echo "  Remove with sudo if this was installed from a package."
   fi
+fi
+
+echo ""
+echo "HTTPS Inspect CA teardown:"
+if [[ -x "$INSPECT_CLI" ]]; then
+  if "$INSPECT_CLI" inspect status 2>/dev/null | grep -q '"system_trusted": true'; then
+    echo "  AgentSnitch CA appears to be installed in macOS System trust."
+    echo "  Requesting admin-approved removal now."
+    if "$INSPECT_CLI" inspect untrust-system; then
+      echo "  Removed AgentSnitch CA from macOS System trust."
+    else
+      echo "  Could not remove system trust automatically."
+      echo "  Open Keychain Access > System and remove the AgentSnitch Local HTTPS Inspection CA."
+    fi
+  else
+    echo "  No AgentSnitch CA detected in macOS System trust."
+  fi
+  "$INSPECT_CLI" inspect disable --remove-process-trust=true --purge-data=true >/dev/null 2>&1 || true
+else
+  echo "  agentsnitchctl inspect helper not available; skipping automatic CA trust check."
+  echo "  If you enabled system trust, open Keychain Access > System and remove the AgentSnitch Local HTTPS Inspection CA."
 fi
 
 if [[ -d "$SUPPORT_DIR" ]]; then

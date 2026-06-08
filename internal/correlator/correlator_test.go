@@ -42,6 +42,47 @@ func TestSessionState_RingAndPID(t *testing.T) {
 	}
 }
 
+func TestSessionState_TracksActiveEgressToolSpan(t *testing.T) {
+	s := NewSessionState()
+	read := event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "s1"},
+		Event:     "PreToolUse",
+		Tool:      "Read",
+		ToolUseID: "read-1",
+		TS:        time.Now(),
+	}
+	s.AddSemanticEvent(read)
+	if _, ok := s.ActiveToolSpan("read-1"); ok {
+		t.Fatal("non-egress tool should not open active inspect span")
+	}
+
+	egress := event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "s1"},
+		Event:     "PreToolUse",
+		Tool:      "Bash",
+		Target:    "curl https://api.example.com",
+		Tags:      []string{"external_egress_attempt"},
+		ToolUseID: "tool-1",
+		TS:        time.Now().Add(time.Second),
+	}
+	s.AddSemanticEvent(egress)
+	span, ok := s.ActiveEgressToolSpan()
+	if !ok || span.ToolUseID != "tool-1" || span.SessionID != "s1" {
+		t.Fatalf("active egress span = %+v ok=%t", span, ok)
+	}
+
+	s.AddSemanticEvent(event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "s1"},
+		Event:     "PostToolUse",
+		Tool:      "Bash",
+		ToolUseID: "tool-1",
+		TS:        time.Now().Add(2 * time.Second),
+	})
+	if _, ok := s.ActiveToolSpan("tool-1"); ok {
+		t.Fatal("PostToolUse should close active inspect span")
+	}
+}
+
 func TestSessionState_AddPIDAndSnapshot(t *testing.T) {
 	s := NewSessionState()
 	s.AddPID(4242)

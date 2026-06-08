@@ -1,0 +1,103 @@
+- generic [ref=e1] [box=0,0,1200,773]:
+  - generic [ref=e2] [box=0,0,1200,773]:
+    - generic [ref=e3] [box=1,1,1198,42]:
+      - generic [ref=e4] [box=11,13,1132,17]: AgentSnitch
+      - generic [ref=e5] [box=1151,14,30,15]: idle
+    - generic [ref=e8] [box=36,50,1144,14]: No sensitive context has left this machine.
+    - generic [ref=e9] [box=1,77,1198,37]:
+      - button "Overview" [ref=e10] [cursor=pointer] [box=7,83,234,24]
+      - button "Agents 0" [ref=e11] [cursor=pointer] [box=245,83,234,24]
+      - button "Evidence 0" [ref=e12] [cursor=pointer] [box=483,83,234,24]
+      - button "Raw 0" [ref=e13] [cursor=pointer] [box=721,83,234,24]
+      - button "Flow Trace 0" [ref=e14] [cursor=pointer] [box=959,83,234,24]
+    - generic [ref=e436] [box=7,118,1186,345]:
+      - generic [ref=e437] [box=7,118,1186,29]:
+        - generic [ref=e438] [box=15,125,1124,15]: Watching Claude Code on this Mac for the first real hook or network observation.
+        - generic [ref=e439] [box=1147,125,38,15]: All local
+      - generic [ref=e440] [box=7,163,1186,83]:
+        - generic [ref=e441] [box=7,163,1186,14]: Ready for a Claude Code session
+        - generic [ref=e442] [box=7,184,1186,62]:
+          - generic [ref=e443] [box=7,184,391,62]:
+            - generic [ref=e444] [box=16,193,373,14]: Local observer ready
+            - generic [ref=e445] [box=16,210,373,27]: "Idle · Hooks installed · Network ready · User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic [ref=e446] [box=404,184,391,62]:
+            - generic [ref=e447] [box=413,193,373,14]: Waiting for real activity
+            - generic [ref=e448] [box=413,210,373,27]: Run Claude Code on this Mac and use a tool such as Read, Bash, WebFetch, or MCP. No demo evidence is injected.
+          - generic [ref=e449] [box=802,184,391,62]:
+            - generic [ref=e450] [box=811,193,373,14]: What will appear
+            - generic [ref=e451] [box=811,210,373,27]: Agents, subagents, tool calls, outbound flows, linked evidence, and destination paths will populate as they are observed.
+      - generic [ref=e452] [box=7,256,1186,83]:
+        - generic [ref=e453] [box=7,256,1186,14]: What AgentSnitch can prove
+        - generic [ref=e454] [box=7,276,1186,62]:
+          - generic "Known Claude destinations are lower surprise by default, so ordinary API traffic does not dominate the review surface." [ref=e455] [box=7,276,292,62]:
+            - generic [ref=e456] [box=16,285,274,14]: Known Claude traffic
+            - generic [ref=e457] [box=16,302,274,14]: Claude/API traffic is grouped when observed
+          - generic "First-time external hosts, cloud providers, raw IPs, and large transfers are promoted above routine traffic." [ref=e458] [box=305,276,292,62]:
+            - generic [ref=e459] [box=314,285,274,14]: Unexpected destinations
+            - generic [ref=e460] [box=314,302,274,14]: New external destinations will stand out
+          - generic "AgentSnitch shows observed evidence only; short-lived flows can be missed by the default observer." [ref=e461] [box=603,276,292,62]:
+            - generic [ref=e462] [box=612,285,274,14]: Coverage
+            - generic [ref=e463] [box=612,302,274,27]: "User Visibility mode: hooks plus userland process/network observers, no root required."
+          - generic "The app is local visibility for Claude Code/macOS today, with exportable evidence when you need to share a session." [ref=e464] [box=901,276,292,62]:
+            - generic [ref=e465] [box=910,285,274,14]: Scope
+            - generic [ref=e466] [box=910,302,274,14]: Claude Code on this Mac
+      - generic [ref=e467] [box=7,348,1186,53]:
+        - generic [ref=e468] [box=7,348,1186,14]: Agents
+        - generic [ref=e469] [box=7,369,1186,32]: No Claude Code agents detected yet — running sessions and their subagents will appear here.
+      - generic [ref=e470] [box=7,411,1186,53]:
+        - generic [ref=e471] [box=7,411,1186,14]: Needs a look
+        - generic [ref=e472] [box=7,431,1186,32]: Nothing needs a look. New external destinations, sensitive-context reads, and large transfers would surface here.
+    - generic [ref=e53] [box=1,744,1198,29]:
+      - generic [ref=e54] [box=9,752,810,13]: Idle · Hooks installed · Network ready · all local
+      - button "Pause" [ref=e55] [cursor=pointer] [box=825,749,47,20]
+      - button "Quiet known" [ref=e56] [cursor=pointer] [box=878,749,74,20]
+      - button "Quiet" [ref=e57] [cursor=pointer] [box=958,749,42,20]
+      - button "Clear" [ref=e58] [cursor=pointer] [box=1005,749,42,20]
+      - button "Debug" [ref=e59] [cursor=pointer] [box=1053,749,47,20]
+      - button "Evidence Pack" [ref=e60] [cursor=pointer] [box=1107,749,84,20]
+  - dialog "Settings" [ref=e61] [box=0,0,1200,773]:
+    - generic [ref=e62] [box=220,179,760,414]:
+      - generic [ref=e63] [box=221,180,758,41]:
+        - generic [ref=e64] [box=233,192,54,17]: Settings
+        - button "Close" [ref=e65] [cursor=pointer] [box=923,190,44,20]
+      - tablist "Settings sections" [ref=e66] [box=221,221,758,28]:
+        - tab "General" [ref=e67] [cursor=pointer] [box=233,229,82,20]
+        - tab "Hooks" [ref=e68] [cursor=pointer] [box=321,229,82,20]
+        - tab "Advanced" [active] [selected] [ref=e69] [cursor=pointer] [box=409,229,82,20]
+        - tab "Developer" [ref=e70] [cursor=pointer] [box=497,229,82,20]
+      - tabpanel "Advanced" [ref=e403] [box=233,260,734,280]:
+        - generic [ref=e404] [box=233,260,734,128]:
+          - generic [ref=e405] [box=233,262,734,12]: Attribution
+          - generic [ref=e406] [box=233,282,734,44]:
+            - generic [ref=e407] [box=233,282,690,44]:
+              - generic [ref=e408] [box=233,282,690,14]: OS Sensor mode
+              - generic [ref=e409] [box=233,298,690,13]: User Visibility
+              - paragraph [ref=e410] [box=233,313,520,13]: Use OS-backed network attribution for this session.
+            - generic "Request OS Sensor mode for this session" [ref=e411] [box=933,294,34,20]:
+              - checkbox [box=937,297,0,0]
+          - generic [ref=e413] [box=247,334,720,52]:
+            - generic [ref=e414] [box=260,342,677,44]:
+              - generic [ref=e415] [box=260,342,677,14]: Startup default
+              - generic [ref=e416] [box=260,359,677,13]: User Visibility at startup
+              - paragraph [ref=e417] [box=260,374,520,13]: Start in OS Sensor mode instead of User Visibility.
+            - generic "Start in OS Sensor mode" [ref=e418] [box=947,342,20,20]:
+              - checkbox [ref=e419] [box=951,345,13,13]
+        - generic [ref=e420] [box=233,401,734,139]:
+          - generic [ref=e421] [box=233,414,734,12]: Destination labels
+          - generic [ref=e422] [box=233,433,734,44]:
+            - generic [ref=e423] [box=233,433,690,44]:
+              - generic [ref=e424] [box=233,433,690,14]: Reverse DNS / PTR labels
+              - generic [ref=e425] [box=233,450,690,13]: PTR lookup enabled
+              - paragraph [ref=e426] [box=233,465,520,13]: Ask the local resolver for PTR names for public destination IPs.
+            - generic "Enable reverse DNS PTR lookups" [ref=e427] [box=933,446,34,20]:
+              - checkbox [checked] [box=937,449,0,0]
+          - generic [ref=e429] [box=247,486,720,52]:
+            - generic [ref=e430] [box=260,494,677,44]:
+              - generic [ref=e431] [box=260,494,677,14]: Always On
+              - generic [ref=e432] [box=260,510,677,13]: Current session only
+              - paragraph [ref=e433] [box=260,525,520,13]: Keep PTR lookup enabled across daemon restarts and reboots.
+            - generic "Keep reverse DNS enabled after reboot" [ref=e434] [box=947,494,20,20]:
+              - checkbox [ref=e435] [box=951,497,13,13]
+      - generic [ref=e124] [box=221,552,758,41]:
+        - button "Cancel" [ref=e125] [cursor=pointer] [box=869,563,49,20]
+        - button "Save" [ref=e126] [cursor=pointer] [box=926,563,41,20]

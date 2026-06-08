@@ -142,6 +142,11 @@
     .summary-pill.quiet {
       opacity: 0.82;
     }
+    .summary-pill.quieted {
+      border-color: rgba(120, 183, 255, 0.35);
+      background: rgba(10, 132, 255, 0.08);
+      color: #b9eeff;
+    }
     .agent-team {
       display: none;
       padding: 6px 8px;
@@ -1077,7 +1082,7 @@
     }
     .network-row {
       display: grid;
-      grid-template-columns: 52px minmax(120px, 1fr) minmax(86px, 112px) minmax(112px, max-content) minmax(78px, max-content) auto;
+      grid-template-columns: 52px minmax(120px, 1fr) minmax(150px, max-content) minmax(112px, max-content) minmax(78px, max-content) auto;
       gap: 6px;
       align-items: center;
       min-width: 0;
@@ -1186,6 +1191,10 @@
     .network-raw-value {
       color: var(--orange);
       overflow-wrap: anywhere;
+    }
+    .raw-event-details {
+      padding-left: 58px;
+      margin-top: 3px;
     }
     /* Diagnostics subheading (P2 #13): separates human fields from machine fields,
        spanning both grid columns. */
@@ -1786,7 +1795,7 @@
 	      display: grid;
 	    }
 	    .settings-modal {
-	      width: min(720px, calc(100vw - 36px));
+	      width: min(760px, calc(100vw - 36px));
       max-height: min(720px, calc(100vh - 36px));
       display: grid;
       grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -1813,7 +1822,7 @@
 	    }
     .settings-modal-body {
       display: grid;
-      gap: 10px;
+      gap: 0;
       padding: 12px;
       overflow: auto;
       min-height: 0;
@@ -1825,7 +1834,7 @@
       background: #202022;
     }
     .settings-tab {
-      min-width: 88px;
+      min-width: 82px;
       justify-content: center;
     }
     .settings-tab.active {
@@ -1835,15 +1844,29 @@
     }
     .settings-pane {
       display: none;
-      gap: 10px;
+      gap: 0;
       min-height: 0;
     }
     .settings-pane.active {
       display: grid;
     }
-    .settings-modal-body .settings-row + .settings-row {
-      padding-top: 10px;
+    .settings-group {
+      display: grid;
+      gap: 0;
+      padding: 2px 0;
+    }
+    .settings-group + .settings-group {
+      margin-top: 12px;
+      padding-top: 12px;
       border-top: 1px solid var(--border);
+    }
+    .settings-group-label {
+      margin: 0 0 8px;
+      color: var(--text-dim);
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
 	    .settings-modal-actions {
 	      display: flex;
@@ -1858,7 +1881,25 @@
 	      grid-template-columns: minmax(0, 1fr) auto;
 	      gap: 10px;
 	      align-items: center;
+      min-width: 0;
 	    }
+    .settings-row.child {
+      margin: 8px 0 0 14px;
+      padding: 8px 0 0 12px;
+      border-left: 1px solid var(--border);
+      align-items: start;
+    }
+    .settings-row.child + .settings-row.child {
+      margin-top: 0;
+      padding-top: 8px;
+    }
+    .settings-row.actions {
+      align-items: start;
+    }
+    .settings-row.actions .hook-toolbar {
+      justify-content: flex-end;
+      max-width: 330px;
+    }
 	    .settings-label {
 	      display: grid;
 	      gap: 2px;
@@ -1889,6 +1930,63 @@
 	      color: var(--orange);
       font-size: 10px;
       line-height: 1.35;
+    }
+    .debug-modal {
+      width: min(860px, calc(100vw - 36px));
+      max-height: min(760px, calc(100vh - 36px));
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+    .debug-body {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 8px;
+      min-height: 0;
+      padding: 12px;
+    }
+    .debug-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .debug-chip {
+      min-width: 0;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #1b1b1d;
+    }
+    .debug-chip strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .debug-chip span {
+      color: var(--text-dim);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .debug-json {
+      min-height: 0;
+      margin: 0;
+      padding: 10px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #111113;
+      color: #d7f0ff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      line-height: 1.45;
+      white-space: pre;
+    }
+    @media (max-width: 760px) {
+      .debug-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
     .hook-toolbar {
       display: flex;
@@ -2463,6 +2561,7 @@
 	      <button class="advanced-only" onclick="quietKnownServices()">Quiet known</button>
 	      <button class="advanced-only" onclick="quietSession()">Quiet</button>
 	      <button class="advanced-only" onclick="clearSession()">Clear</button>
+	      <button id="debugButton" onclick="openDebugModal()" hidden>Debug</button>
 	      <button onclick="doExport()" class="primary">Evidence Pack</button>
 	    </div>
 	  </div>
@@ -2476,97 +2575,243 @@
 	      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
 	        <button id="settingsTabGeneral" class="settings-tab active" onclick="setSettingsTab('general')" role="tab" aria-selected="true">General</button>
 	        <button id="settingsTabHooks" class="settings-tab" onclick="setSettingsTab('hooks')" role="tab" aria-selected="false">Hooks</button>
+	        <button id="settingsTabAdvanced" class="settings-tab" onclick="setSettingsTab('advanced')" role="tab" aria-selected="false">Advanced</button>
+	        <button id="settingsTabDeveloper" class="settings-tab" onclick="setSettingsTab('developer')" role="tab" aria-selected="false">Developer</button>
 	      </div>
 	      <div class="settings-modal-body">
 	        <div id="settingsPaneGeneral" class="settings-pane active" role="tabpanel" aria-labelledby="settingsTabGeneral">
-	        <div class="settings-row">
-	          <div class="settings-label">
-	            <div class="settings-title">Interface</div>
-	            <div id="advancedControlsStatus" class="settings-status">Simple</div>
-	            <p class="settings-copy">Simple keeps the main window focused on agents, evidence, and unexpected destinations. Advanced adds raw sub-filters, Volume/List flow modes, zoom, and quiet/clear controls.</p>
-	            <p class="settings-warning simple-only">Simple mode hides diagnostic controls. Flow Trace stays on Destinations, Raw stays on All, and quiet/clear actions stay out of the way.</p>
+	          <div class="settings-group">
+	            <div class="settings-group-label">Workspace</div>
+	            <div class="settings-row">
+	              <div class="settings-label">
+	                <div class="settings-title">Interface mode</div>
+	                <div id="advancedControlsStatus" class="settings-status">Simple</div>
+	                <p class="settings-copy">Simple keeps the main window focused on agents, evidence, and unexpected destinations.</p>
+	              </div>
+	              <label class="switch" title="Show advanced diagnostic controls">
+	                <input id="advancedControlsEnabled" type="checkbox" onchange="setDraftAdvancedControlsEnabled(this.checked)">
+	                <span class="switch-track"></span>
+	              </label>
+	            </div>
 	          </div>
-	          <label class="switch" title="Show advanced diagnostic controls">
-	            <input id="advancedControlsEnabled" type="checkbox" onchange="setDraftAdvancedControlsEnabled(this.checked)">
-	            <span class="switch-track"></span>
-	          </label>
-	        </div>
-	        <div class="settings-row advanced-only">
-	          <div class="settings-label">
-	            <div class="settings-title">Advanced controls enabled</div>
-	            <div class="settings-status">Diagnostics visible</div>
-	            <p class="settings-copy">Raw sub-filters, Flow Trace Volume/List modes, Sankey zoom, destination quieting, raw reason toggles, and clear-session controls are visible.</p>
-	          </div>
-	        </div>
-	        <div class="settings-row">
-	          <div class="settings-label">
-	            <div class="settings-title">High Assurance mode</div>
-	            <div id="networkSensorStatus" class="settings-status">Loading</div>
-	            <p class="settings-copy">Requests stronger OS-backed network attribution for this session. User Visibility remains the default unless the startup default checkbox is selected.</p>
-	            <p class="settings-warning">This may ask macOS for additional approval. AgentSnitch still labels DNS, PTR, and service classification separately.</p>
-	            <p id="networkSensorActualWarning" class="settings-warning" hidden></p>
-	          </div>
-	          <label class="switch" title="Request High Assurance mode for this session">
-	            <input id="networkSensorEnabled" type="checkbox" onchange="setDraftNetworkSensorEnabled(this.checked)">
-	            <span class="switch-track"></span>
-	          </label>
-	        </div>
-	        <div class="settings-row">
-	          <div class="settings-label">
-	            <div class="settings-title">Make High Assurance the startup default</div>
-	            <div id="highAssuranceDefaultStatus" class="settings-status">Off</div>
-	            <p class="settings-copy">When unchecked, AgentSnitch always starts in User Visibility mode even if High Assurance was enabled during the previous session.</p>
-	          </div>
-	          <label title="Start in High Assurance mode">
-	            <input id="highAssuranceDefaultEnabled" type="checkbox" onchange="setDraftHighAssuranceDefaultEnabled(this.checked)">
-	          </label>
-	        </div>
 	        </div>
 	        <div id="settingsPaneHooks" class="settings-pane" role="tabpanel" aria-labelledby="settingsTabHooks">
-	          <div class="settings-row">
-	            <div class="settings-label">
-	              <div class="settings-title">Claude Code</div>
-	              <div id="claudeCodeStatus" class="settings-status">Checking</div>
-	              <p class="settings-copy">AgentSnitch never installs Claude Code hooks automatically during app install. Choose the hooks you want and install them explicitly.</p>
+	          <div class="settings-group">
+	            <div class="settings-group-label">Claude Code</div>
+	            <div class="settings-row">
+	              <div class="settings-label">
+	                <div class="settings-title">Hook integration</div>
+	                <div id="claudeCodeStatus" class="settings-status">Checking</div>
+	                <p class="settings-copy">Choose which Claude Code hooks AgentSnitch should install and keep current.</p>
+	              </div>
+	              <span id="claudeCodeBadge" class="status-pill warn">Checking</span>
 	            </div>
-	            <span id="claudeCodeBadge" class="status-pill warn">Checking</span>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Keep hooks up to date</div>
+	                <div id="keepHooksStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Refresh installed hook commands when AgentSnitch starts.</p>
+	              </div>
+	              <label title="Automatically update AgentSnitch Claude Code hooks">
+	                <input id="keepHooksUpToDate" type="checkbox" onchange="setKeepHooksUpToDate(this.checked)">
+	              </label>
+	            </div>
 	          </div>
-	          <div class="settings-row">
-	            <div class="settings-label">
-	              <div class="settings-title">Keep hooks up to date</div>
-	              <div id="keepHooksStatus" class="settings-status">Off</div>
-	              <p class="settings-copy">When enabled, AgentSnitch updates its Claude Code hooks on app startup if the expected hook commands changed.</p>
+	          <div class="settings-group">
+	            <div class="settings-group-label">Installed hooks</div>
+	            <div class="settings-row actions">
+	              <div class="settings-label">
+	                <div class="settings-title">Hook set</div>
+	                <div id="hooksSummaryStatus" class="settings-status">Loading</div>
+	              </div>
+	              <div class="hook-toolbar">
+	                <select id="hookAgentSelect" onchange="setHookAgent(this.value)" title="Choose coding agent hook target">
+	                  <option value="all">All</option>
+	                </select>
+	                <button id="hookSelectAllButton" onclick="selectAllHooks(true)">Select All</button>
+	                <button id="hookSelectNoneButton" onclick="selectAllHooks(false)">Select None</button>
+	                <button id="hookRefreshButton" onclick="refreshHookStatus()">Refresh</button>
+	              </div>
 	            </div>
-	            <label class="switch" title="Automatically update AgentSnitch Claude Code hooks">
-	              <input id="keepHooksUpToDate" type="checkbox" onchange="setKeepHooksUpToDate(this.checked)">
-	              <span class="switch-track"></span>
-	            </label>
-	          </div>
-	          <div class="settings-row">
-	            <div class="settings-label">
-	              <div class="settings-title">Installed hooks</div>
-	              <div id="hooksSummaryStatus" class="settings-status">Loading</div>
-	            </div>
+	            <div id="hookList" class="hook-list"></div>
+	            <p id="hooksChangedWarning" class="settings-warning" hidden></p>
 	            <div class="hook-toolbar">
-	              <select id="hookAgentSelect" onchange="setHookAgent(this.value)" title="Choose coding agent hook target">
-	                <option value="all">All</option>
-	              </select>
-	              <button id="hookSelectAllButton" onclick="selectAllHooks(true)">Select All</button>
-	              <button id="hookSelectNoneButton" onclick="selectAllHooks(false)">Select None</button>
-	              <button id="hookRefreshButton" onclick="refreshHookStatus()">Refresh</button>
+	              <button id="hookRemoveButton" onclick="removeSelectedHooks()">Remove Hooks</button>
+	              <button id="hookInstallButton" onclick="installSelectedHooks()" class="primary">Install/Update Hooks</button>
 	            </div>
 	          </div>
-	          <div id="hookList" class="hook-list"></div>
-	          <p id="hooksChangedWarning" class="settings-warning" hidden></p>
-	          <div class="hook-toolbar">
-	            <button id="hookRemoveButton" onclick="removeSelectedHooks()">Remove Hooks</button>
-	            <button id="hookInstallButton" onclick="installSelectedHooks()" class="primary">Install/Update Hooks</button>
+	        </div>
+	        <div id="settingsPaneAdvanced" class="settings-pane" role="tabpanel" aria-labelledby="settingsTabAdvanced">
+	          <div class="settings-group">
+	            <div class="settings-group-label">Attribution</div>
+	            <div class="settings-row">
+	              <div class="settings-label">
+	                <div class="settings-title">OS Sensor mode</div>
+	                <div id="networkSensorStatus" class="settings-status">Loading</div>
+	                <p class="settings-copy">Use OS-backed network attribution for this session.</p>
+	                <p id="networkSensorActualWarning" class="settings-warning" hidden></p>
+	              </div>
+	              <label class="switch" title="Request OS Sensor mode for this session">
+	                <input id="networkSensorEnabled" type="checkbox" onchange="setDraftNetworkSensorEnabled(this.checked)">
+	                <span class="switch-track"></span>
+	              </label>
+	            </div>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Startup default</div>
+	                <div id="highAssuranceDefaultStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Start in OS Sensor mode instead of User Visibility.</p>
+	              </div>
+	              <label title="Start in OS Sensor mode">
+	                <input id="highAssuranceDefaultEnabled" type="checkbox" onchange="setDraftHighAssuranceDefaultEnabled(this.checked)">
+	              </label>
+	            </div>
+	          </div>
+	          <div class="settings-group">
+	            <div class="settings-group-label">Destination labels</div>
+	            <div class="settings-row">
+	              <div class="settings-label">
+	                <div class="settings-title">Reverse DNS / PTR labels</div>
+	                <div id="reverseDnsStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Ask the local resolver for PTR names for public destination IPs.</p>
+	              </div>
+	              <label class="switch" title="Enable reverse DNS PTR lookups">
+	                <input id="reverseDnsEnabled" type="checkbox" onchange="setDraftReverseDnsEnabled(this.checked)">
+	                <span class="switch-track"></span>
+	              </label>
+	            </div>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Always On</div>
+	                <div id="reverseDnsAlwaysOnStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Keep PTR lookup enabled across daemon restarts and reboots.</p>
+	              </div>
+	              <label title="Keep reverse DNS enabled after reboot">
+	                <input id="reverseDnsAlwaysOn" type="checkbox" onchange="setDraftReverseDnsAlwaysOn(this.checked)">
+	              </label>
+	            </div>
+	          </div>
+	        </div>
+	        <div id="settingsPaneDeveloper" class="settings-pane" role="tabpanel" aria-labelledby="settingsTabDeveloper">
+	          <div class="settings-group">
+	            <div class="settings-group-label">Debug capture</div>
+	            <div class="settings-row">
+	              <div class="settings-label">
+	                <div class="settings-title">HTTPS Inspect Mode</div>
+	                <div id="httpsInspectStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Inspect request/response details for managed traffic routed through AgentSnitch's local proxy.</p>
+	                <p class="settings-warning">Full payload capture may retain raw prompts, model responses, tool results, and secrets for inspected traffic.</p>
+	              </div>
+	              <label class="switch" title="Enable local HTTPS inspection for managed agent sessions">
+	                <input id="httpsInspectEnabled" type="checkbox" onchange="setDraftHttpsInspectEnabled(this.checked)">
+	                <span class="switch-track"></span>
+	              </label>
+	            </div>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Process-scoped trust</div>
+	                <div id="httpsInspectProcessStatus" class="settings-status">Recommended</div>
+	                <p class="settings-copy">Provide CA/proxy environment variables to managed processes without changing global macOS trust.</p>
+	              </div>
+	              <label title="Use process-scoped CA trust">
+	                <input id="httpsInspectProcessScoped" type="checkbox" onchange="setDraftHttpsInspectProcessScoped(this.checked)">
+	              </label>
+	            </div>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Payload previews</div>
+	                <div id="httpsInspectPayloadStatus" class="settings-status">Redacted previews</div>
+	                <p class="settings-copy">Store redacted request/response previews when payload capture is available.</p>
+	              </div>
+	              <label title="Store redacted request and response previews">
+	                <input id="httpsInspectCapturePreviews" type="checkbox" onchange="setDraftHttpsInspectCapturePreviews(this.checked)">
+	              </label>
+	            </div>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Full payload capture</div>
+	                <div id="httpsInspectFullStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Use only for short, intentional debugging sessions.</p>
+	              </div>
+	              <label title="Store full request and response bodies">
+	                <input id="httpsInspectCaptureFull" type="checkbox" onchange="setDraftHttpsInspectCaptureFull(this.checked)">
+	              </label>
+	            </div>
+	          </div>
+	          <div class="settings-group">
+	            <div class="settings-group-label">Certificate authority</div>
+	            <div class="settings-row actions">
+	              <div class="settings-label">
+	                <div class="settings-title">Local CA</div>
+	                <div id="httpsInspectCAStatus" class="settings-status">CA not created</div>
+	                <p class="settings-copy">CA material is unique to this installation and checked by doctor for strict permissions.</p>
+	                <p id="httpsInspectWarning" class="settings-warning" hidden></p>
+	              </div>
+	              <div class="hook-toolbar">
+	                <button onclick="runHttpsInspectAction('create-ca')">Create CA</button>
+	                <button onclick="runHttpsInspectAction('rotate-ca')">Rotate CA</button>
+	                <button onclick="runHttpsInspectAction('remove-ca')">Remove CA</button>
+	              </div>
+	            </div>
+	            <div class="settings-row actions child">
+	              <div class="settings-label">
+	                <div class="settings-title">macOS system trust</div>
+	                <div id="httpsInspectSystemTrustStatus" class="settings-status">Not installed</div>
+	                <p class="settings-copy">Optional broader trust. macOS requires administrator approval to install or remove it.</p>
+	              </div>
+	              <div class="hook-toolbar">
+	                <button onclick="runHttpsInspectAction('trust-system')">Install in macOS Trust Store</button>
+	                <button onclick="runHttpsInspectAction('untrust-system')">Remove from macOS Trust Store</button>
+	                <button onclick="runHttpsInspectAction('purge-data')">Delete Captured Payload Data</button>
+	              </div>
+	            </div>
+	          </div>
+	          <div class="settings-group">
+	            <div class="settings-group-label">Debug mode</div>
+	            <div class="settings-row">
+	              <div class="settings-label">
+	                <div class="settings-title">Debug button</div>
+	                <div id="debugModeStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Show the footer Debug control and enable debug snapshots.</p>
+	              </div>
+	              <label class="switch" title="Show the Debug button in the footer">
+	                <input id="debugModeEnabled" type="checkbox" onclick="setDraftDebugModeEnabled(this.checked)" onchange="setDraftDebugModeEnabled(this.checked)">
+	                <span class="switch-track"></span>
+	              </label>
+	            </div>
+	            <div class="settings-row child">
+	              <div class="settings-label">
+	                <div class="settings-title">Always On</div>
+	                <div id="debugModeAlwaysOnStatus" class="settings-status">Off</div>
+	                <p class="settings-copy">Keep Debug mode enabled when AgentSnitch starts.</p>
+	              </div>
+	              <label title="Keep Debug mode enabled after restart">
+	                <input id="debugModeAlwaysOn" type="checkbox" onclick="setDraftDebugModeAlwaysOn(this.checked)" onchange="setDraftDebugModeAlwaysOn(this.checked)">
+	              </label>
+	            </div>
 	          </div>
 	        </div>
 	      </div>
 	      <div class="settings-modal-actions">
 	        <button onclick="closeSettingsModal()">Cancel</button>
 	        <button onclick="saveSettingsModal()" class="primary">Save</button>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="debugModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="debugModalTitle">
+	    <div class="settings-modal debug-modal">
+	      <div class="settings-modal-header">
+	        <div id="debugModalTitle" class="settings-modal-title">Debug Snapshot</div>
+	        <button onclick="closeDebugModal()" title="Close debug snapshot">Close</button>
+	      </div>
+	      <div class="debug-body">
+	        <div id="debugSummary" class="debug-summary"></div>
+	        <pre id="debugJson" class="debug-json">Loading...</pre>
+	      </div>
+	      <div class="settings-modal-actions">
+	        <button onclick="refreshDebugSnapshot()">Refresh</button>
+	        <button onclick="copyDebugSnapshot()">Copy JSON</button>
+	        <button onclick="closeDebugModal()" class="primary">Done</button>
 	      </div>
 	    </div>
 	  </div>
@@ -2589,7 +2834,7 @@
     let rawQuery = '';
     let traceQuery = '';
 	    let activeReasonFilter = '';
-	    let appSettings = { network_sensor_disabled: true, high_assurance_default_enabled: false, advanced_controls_enabled: false, keep_hooks_up_to_date: false };
+	    let appSettings = { network_sensor_disabled: true, high_assurance_default_enabled: false, advanced_controls_enabled: false, keep_hooks_up_to_date: false, reverse_dns_enabled: false, reverse_dns_always_on: false, https_inspect_enabled: false, https_inspect_process_scoped: true, https_inspect_allow_system_trust: false, https_inspect_capture_previews: true, https_inspect_capture_full_payloads: false, https_inspect_preview_bytes: 2048, https_inspect_full_retention: 'until_session_ends', debug_mode_enabled: false, debug_mode_always_on: false };
 	    let draftSettings = null;
     let settingsTab = 'general';
     let hooksStatus = null;
@@ -2602,8 +2847,6 @@
     const rawDetailIds = new Set();
     const expandedKnownGroups = new Set();
     const expandedMainGroups = new Set();
-    let autoResizeTimer = null;
-    let lastAutoResize = { width: 0, height: 0 };
     let renderTimer = null;
     let statusTimer = null;
     let backendTimer = null;
@@ -2614,10 +2857,31 @@
     let lastPushAt = 0;
     let latestSummary = {};
     let latestStatus = {};
+    let latestDebugSnapshot = null;
     // paused: the user engaged Pause. While true the daemon halts sensing and the
     // UI freezes live updates (no new events applied to the view). Mirrors the
     // backend `paused` flag; always starts false (Live).
     let paused = false;
+
+    function normalizeAppSettings(settings) {
+      const normalized = settings || {};
+      normalized.advanced_controls_enabled = !!normalized.advanced_controls_enabled;
+      normalized.high_assurance_default_enabled = !!normalized.high_assurance_default_enabled;
+      normalized.keep_hooks_up_to_date = !!normalized.keep_hooks_up_to_date;
+      normalized.reverse_dns_enabled = !!normalized.reverse_dns_enabled;
+      normalized.reverse_dns_always_on = !!normalized.reverse_dns_enabled && !!normalized.reverse_dns_always_on;
+      normalized.debug_mode_always_on = !!normalized.debug_mode_always_on;
+      normalized.debug_mode_enabled = !!normalized.debug_mode_enabled || normalized.debug_mode_always_on;
+      normalized.https_inspect_enabled = !!normalized.https_inspect_enabled;
+      normalized.https_inspect_process_scoped = normalized.https_inspect_process_scoped !== false;
+      normalized.https_inspect_allow_system_trust = !!normalized.https_inspect_allow_system_trust;
+      normalized.https_inspect_capture_previews = normalized.https_inspect_capture_previews !== false;
+      normalized.https_inspect_capture_full_payloads = !!normalized.https_inspect_capture_full_payloads;
+      normalized.https_inspect_preview_bytes = Number(normalized.https_inspect_preview_bytes || 2048);
+      normalized.https_inspect_full_retention = normalized.https_inspect_full_retention || 'until_session_ends';
+      normalized.network_sensor_disabled = normalized.network_sensor_disabled !== false;
+      return normalized;
+    }
 
     function scheduleRender(delay = 50) {
       if (renderTimer) return;
@@ -3032,6 +3296,10 @@
       return !!(draftSettings || appSettings || {}).advanced_controls_enabled;
     }
 
+    function debugModeEnabled() {
+      return !!(draftSettings || appSettings || {}).debug_mode_enabled;
+    }
+
     function applyInterfaceMode() {
       const advanced = !!(draftSettings || appSettings).advanced_controls_enabled;
       document.body.classList.toggle('advanced-mode', advanced);
@@ -3387,8 +3655,14 @@
 
     function quietKeys(ev, includeCategory = true) {
       const evidence = ev?.evidence;
-      if (!evidence) return [];
       const keys = [];
+      if (!evidence) {
+        if (includeCategory && eventKind(ev) === 'network') {
+          const category = networkCategory(ev);
+          if (knownQuietCategory(category)) keys.push(`category:${normalizePatternPiece(category)}`);
+        }
+        return keys;
+      }
       const pattern = eventPatternKey(ev);
       if (pattern) keys.push(`exact:${pattern}`);
       const tool = normalizePatternPiece(evidenceHookTool(evidence));
@@ -3403,6 +3677,19 @@
         keys.push(`category:${normalizePatternPiece(evidence.destination_category)}`);
       }
       return keys;
+    }
+
+    function applyQuietKeys(keys) {
+      const keySet = new Set(keys || []);
+      if (!keySet.size) return 0;
+      const before = events.length;
+      events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).some(key => keySet.has(key)));
+      return before - events.length;
+    }
+
+    function setFooterStatus(text) {
+      const statusEl = document.getElementById('status');
+      if (statusEl && text) statusEl.textContent = text;
     }
 
     function highSignalEvidence(ev) {
@@ -3650,6 +3937,7 @@
       const linked = Number(data.linked || 0);
       const knownClaude = Number(data.known_claude_traffic || 0);
       const observedFlows = Number(data.observer_coverage || 0);
+      const quieted = Number(data.quieted_patterns || 0);
       const items = [
         [`${newCount} new ${pluralize(newCount, 'destination')}`, newCount, newDestinationTitle || 'New destinations in this session/project', newCount ? 'attention' : 'quiet'],
         [`${sensitive} sensitive ${pluralize(sensitive, 'read')}`, sensitive, 'Events touching sensitive, credential, or secret context', sensitive ? 'attention' : 'good'],
@@ -3657,8 +3945,9 @@
         [`${agentProcesses} agent ${pluralize(agentProcesses, 'process', 'processes')}`, agentProcesses, 'Tracked Claude/agent processes with PID evidence', agentProcesses ? '' : 'quiet'],
         [`${knownClaude} Claude ${pluralize(knownClaude, 'service')}`, knownClaude, 'Known Claude or bridge service traffic', knownClaude ? '' : 'quiet'],
         [`${observedFlows} observed ${pluralize(observedFlows, 'flow')}`, observedFlows, 'Rows with network observer provenance', observedFlows ? '' : 'quiet'],
+        [`${quieted} quieted ${pluralize(quieted, 'pattern')}`, quieted, quieted ? 'Quieted patterns are hidden unless high-signal activity breaks through' : 'No quieted patterns yet', quieted ? 'quieted' : 'quiet'],
       ];
-      const hasData = items.some(([, value]) => Number(value) > 0) || Number(data.quieted_patterns || 0) > 0;
+      const hasData = items.some(([, value]) => Number(value) > 0);
       if (!hasData) {
         panel.style.display = 'none';
         panel.innerHTML = '';
@@ -3717,8 +4006,8 @@
 
     function networkCoverageNote() {
       const sensor = latestStatus.sensor || {};
-      if (sensor.mode === 'high_assurance_active') return 'High Assurance active: OS-backed flow telemetry has been observed.';
-      if (sensor.mode === 'high_assurance_requested') return 'High Assurance requested; waiting for OS-backed flow telemetry.';
+      if (sensor.mode === 'high_assurance_active') return 'OS Sensor active: OS-backed flow telemetry has been observed.';
+      if (sensor.mode === 'high_assurance_requested') return 'OS Sensor requested; waiting for OS-backed flow telemetry.';
       return 'User Visibility mode: hooks plus userland process/network observers, no root required.';
     }
 
@@ -4075,13 +4364,13 @@
     function renderAgentDetailView() {
       const agent = findAgent(activeAgentFilter) || { id: activeAgentFilter, name: activeAgentFilter, type: 'main' };
       const scoped = events.filter(ev => eventMatchesAgentScope(ev, activeAgentFilter));
-      // The drill-down chips mirror the top-level tabs (All / Evidence / Raw)
+      // The drill-down chips mirror the top-level tabs (All / Evidence / Network / Raw)
       // per the user's decision. resolveViewEvents understands the composite
       // 'evidence' (deduped) and 'raw' (= all events for this agent) kinds; for
-      // 'all' it passes through. Raw in the drill-down means "all events for this
-      // agent" — no nested sub-toggle — so it resolves to the agent's full set.
-      const selected = activeAgentDetailKind === 'raw'
-        ? filterEventsByKind(scoped, 'all', '', true)
+      // 'all' it passes through. Network is the same network-only slice available
+      // in Raw's top-level toolbar, including attributed linked flows.
+      const selected = activeAgentDetailKind === 'network'
+        ? filterEventsByKind(scoped, 'network', '', true)
         : activeAgentDetailKind === 'evidence'
           ? resolveViewEvents(scoped, 'evidence', '')
           : filterEventsByKind(scoped, 'all', '', true);
@@ -4098,9 +4387,9 @@
         parentLabel,
         counts.all === 1 ? '1 scoped event' : `${counts.all} scoped events`,
       ].filter(Boolean).join(' · ');
-      // Drill-down chips mirror the top-level nav: All / Evidence / Raw. Raw here
-      // = the agent's full event set (counts.all); Evidence = the deduped union.
-      const filters = [['all', 'All'], ['evidence', 'Evidence'], ['raw', 'Raw']].map(([kind, label]) => {
+      // Drill-down chips mirror the top-level nav: All / Evidence / Network / Raw.
+      // Raw here = the agent's full event set (counts.all); Evidence = deduped union.
+      const filters = [['all', 'All'], ['evidence', 'Evidence'], ['network', 'Network'], ['raw', 'Raw']].map(([kind, label]) => {
         const count = kind === 'raw' ? counts.all : (counts[kind] || 0);
         const active = activeAgentDetailKind === kind ? ' active' : '';
         return `<button class="agent-detail-chip${active}" onclick="setAgentDetailKind('${kind}')"><span>${label}</span><strong>${count}</strong></button>`;
@@ -4130,6 +4419,7 @@
       const name = agentShortName(agent);
       // Teaching empty copy (P2 #15): scoped to this agent, per drill-down chip.
       if (kind === 'evidence') return `Nothing needs a look from ${name} yet. A correlated tool↔flow pair, a new external destination, or a sensitive-context read by this agent would surface here.`;
+      if (kind === 'network') return `No network flows from ${name} yet. Outbound connections and attributed linked flows for this agent will appear here.`;
       return `No activity from ${name} yet. Its tool calls and network flows will appear here.`;
     }
 
@@ -4137,7 +4427,7 @@
       // In the Raw drill-down (all of this agent's events), an attributed network
       // flow gets the dedicated network-provenance card rather than the generic
       // linked card, so its host/category/bytes read at a glance.
-      if (detailKind === 'raw' && isAttributedNetworkEvent(ev) && eventKind(ev) !== 'network') {
+      if ((detailKind === 'raw' || detailKind === 'network') && isAttributedNetworkEvent(ev) && eventKind(ev) !== 'network') {
         return renderAttributedNetworkEvent(ev, agent);
       }
       return renderEvent(ev);
@@ -4743,17 +5033,14 @@
       renderAgentTeam(teamAgents);
       if (activeView === 'overview') {
         container.innerHTML = renderOverview();
-        scheduleAutoResize();
         return;
       }
       if (activeView === 'agents') {
         container.innerHTML = renderAgentsView();
-        scheduleAutoResize();
         return;
       }
       if (activeView === 'trace') {
         container.innerHTML = renderTraceView();
-        scheduleAutoResize();
         return;
       }
       const baseSelected = viewEvents();
@@ -4769,13 +5056,11 @@
         // matters, not just "nothing yet".
         const emptyText = viewEmptyText();
         container.innerHTML = `${rawToolbar}${narrative}${attentionBrief}${contextGrid}<div class="empty" id="empty">${escapeHtml(emptyText)}</div>`;
-        scheduleAutoResize();
         return;
       }
 
       const feedTitle = contextGrid ? '<div class="feed-title">Chronological Feed</div>' : '';
       container.innerHTML = `${rawToolbar}${narrative}${attentionBrief}${contextGrid}${feedTitle}${displayEvents(selected).map(renderEvent).join('')}`;
-      scheduleAutoResize();
     }
 
     // viewEmptyText (P2 #15): teach what WOULD appear in this view and why it
@@ -4945,72 +5230,6 @@
         .replace(/^PreToolUse\s+/i, '')
         .replace(/^PostToolUse\s+/i, '')
         .trim();
-    }
-
-    function scheduleAutoResize() {
-      if (autoResizeTimer) clearTimeout(autoResizeTimer);
-      autoResizeTimer = setTimeout(autoResizeWindow, 90);
-    }
-
-    async function autoResizeWindow() {
-      autoResizeTimer = null;
-      if (!document.hasFocus()) {
-        return;
-      }
-      const team = visibleTeamAgents();
-      const selected = activeView === 'agents' ? events : viewEvents();
-      const teamCount = team.length;
-      const activeTeamCount = team.filter(agent => eventCountForAgent(agent.id, selected) > 0).length;
-      const laneCount = document.querySelectorAll('.agent-lane').length;
-      const contentHeight = Math.ceil(document.documentElement.scrollHeight || document.body.scrollHeight || 520);
-      const screenWidth = Number(window.screen?.availWidth || 1180);
-      const screenHeight = Number(window.screen?.availHeight || 900);
-      const maxWidth = Math.max(700, Math.min(1080, screenWidth - 72));
-      const maxHeight = Math.max(560, Math.min(900, screenHeight - 72));
-      const settingsModal = document.getElementById('settingsModal');
-      const modalCard = settingsModal && settingsModal.classList.contains('open')
-        ? settingsModal.querySelector('.settings-modal')
-        : null;
-      if (modalCard) {
-        const modalHeight = Math.ceil(Math.max(modalCard.scrollHeight || 0, modalCard.offsetHeight || 0, 620));
-        const modalWidth = Math.ceil(Math.max(modalCard.scrollWidth || 0, modalCard.offsetWidth || 0, 720));
-        const width = Math.min(maxWidth, Math.max(720, modalWidth + 36));
-        const height = Math.min(maxHeight, Math.max(620, modalHeight + 36));
-        if (Math.abs(width - lastAutoResize.width) < 18 && Math.abs(height - lastAutoResize.height) < 18) {
-          return;
-        }
-        lastAutoResize = { width, height };
-        try {
-          await invoke('resize_main_window', { width, height });
-        } catch (e) {
-          console.warn('settings auto resize failed', e);
-        }
-        return;
-      }
-      let width = 660;
-      if (teamCount >= 3) width = 760;
-      if (teamCount >= 5) width = 920;
-      if (teamCount >= 18) width = 1080;
-      if (activeView === 'agents') width = Math.max(width, 1040);
-      if (activeTeamCount >= 3 || laneCount >= 3 || selected.length >= 28) width = Math.max(width, 980);
-      let height = 500;
-      if (teamCount >= 3) height = 560;
-      if (teamCount >= 5) height = 640;
-      if (teamCount >= 18) height = 760;
-      if (activeView === 'agents') height = Math.max(height, teamCount >= 18 ? 820 : 700);
-      if (selected.length >= 12 || laneCount >= 2) height = Math.max(height, 700);
-      if (selected.length >= 28) height = Math.max(height, 820);
-      height = Math.min(maxHeight, Math.max(height, Math.min(contentHeight + 12, maxHeight)));
-      width = Math.min(maxWidth, width);
-      if (Math.abs(width - lastAutoResize.width) < 18 && Math.abs(height - lastAutoResize.height) < 18) {
-        return;
-      }
-      lastAutoResize = { width, height };
-      try {
-        await invoke('resize_main_window', { width, height });
-      } catch (e) {
-        console.warn('auto resize failed', e);
-      }
     }
 
     function renderTags(ev) {
@@ -5184,6 +5403,7 @@
       const label = ev.correlated ? '<span class="correlated-label">CORRELATED</span>' : '';
       const agentBadge = renderAgentBadge(ev.agent);
       const kind = eventKind(ev);
+      const expanded = rawDetailIds.has(ev.id);
       return `
         <div class="event ${escapeHtml(kind)}${ev.correlated ? ' correlated' : ''}">
           <div class="event-row">
@@ -5191,11 +5411,38 @@
             <span class="summary">${escapeHtml(ev.summary || '')}</span>
             ${agentBadge}
             ${label}
+            <button class="mini-button" title="${expanded ? 'Hide raw event details' : 'Show raw event details'}" onclick="toggleRawDetails(${Number(ev.id)})">Details</button>
           </div>
           ${tags ? `<div class="tags">${tags}</div>` : ''}
           ${detail}
+          ${expanded ? renderRawEventDetails(ev) : ''}
         </div>
       `;
+    }
+
+    function rawEventDetailRow(label, value) {
+      if (value === undefined || value === null || value === '') return '';
+      const shown = Array.isArray(value) ? value.join(', ') : String(value);
+      if (!shown) return '';
+      return `<div class="network-raw-label">${escapeHtml(label)}</div><div class="network-raw-value">${escapeHtml(shown)}</div>`;
+    }
+
+    function renderRawEventDetails(ev) {
+      const agent = ev?.agent || {};
+      const rows = [
+        rawEventDetailRow('time', ev?.ts || ''),
+        rawEventDetailRow('kind', eventKind(ev)),
+        rawEventDetailRow('summary', ev?.summary || ''),
+        rawEventDetailRow('detail', ev?.detail || ''),
+        rawEventDetailRow('tags', ev?.tags || []),
+        rawEventDetailRow('destination', ev?.destination || ''),
+        rawEventDetailRow('agent', agentLabel(agent)),
+        rawEventDetailRow('agent id', agent.id || ''),
+        rawEventDetailRow('pid', agentPid(agent) || ''),
+        rawEventDetailRow('cwd', agent.cwd || ''),
+        rawEventDetailRow('raw payload', JSON.stringify(ev || {}, null, 2)),
+      ].filter(Boolean).join('');
+      return `<div class="network-raw raw-event-details">${rows || '<div class="network-raw-value">No raw details</div>'}</div>`;
     }
 
     function knownGroupTitle(category) {
@@ -5557,8 +5804,9 @@
     async function quietPattern(id) {
       const event = events.find(ev => ev.id === id);
       const keys = quietKeys(event, false);
+      let hidden = 0;
       if (keys.length) {
-        events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).some(key => keys.includes(key)));
+        hidden = applyQuietKeys(keys);
         expandedIds.delete(id);
         rawWhyIds.delete(id);
         rawDetailIds.delete(id);
@@ -5567,8 +5815,14 @@
       try {
         await invoke('quiet_pattern', { id });
         await refreshStatus();
+        const detail = keys.length
+          ? `${hidden} current ${pluralize(hidden, 'row')} hidden · ${keys.length} project ${pluralize(keys.length, 'pattern')}`
+          : 'No quietable pattern found on this row';
+        setFooterStatus(`Quieted pattern · ${detail}`);
+        showToast('success', 'Quieted pattern', detail);
       } catch (e) {
         console.warn('quiet pattern failed', e);
+        showToast('error', 'Quiet failed', String(e));
         await refreshFromBackend();
       }
     }
@@ -5583,27 +5837,35 @@
         'category:local dev tunnel',
         'category:package registry',
       ];
-      events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).some(key => knownKeys.includes(key)));
+      const hidden = applyQuietKeys(knownKeys);
       renderEvents();
       try {
         await invoke('quiet_known_services');
         await refreshStatus();
+        const detail = `${hidden} current ${pluralize(hidden, 'row')} hidden · ${knownKeys.length} known ${pluralize(knownKeys.length, 'category', 'categories')} quieted`;
+        setFooterStatus(`Quiet known applied · ${detail}`);
+        showToast('success', 'Quiet known applied', detail);
       } catch (e) {
         console.warn('quiet known services failed', e);
+        showToast('error', 'Quiet known failed', String(e));
         await refreshFromBackend();
       }
     }
 
     async function quietCategory(category) {
       const key = `category:${normalizePatternPiece(category)}`;
-      events = events.filter(ev => highSignalEvidence(ev) || !quietKeys(ev).includes(key));
+      const hidden = applyQuietKeys([key]);
       expandedKnownGroups.delete(`known:${normalizePatternPiece(category)}`);
       renderEvents();
       try {
         await invoke('quiet_category', { category });
         await refreshStatus();
+        const detail = `${hidden} current ${pluralize(hidden, 'row')} hidden · ${categoryDisplayName(category)} quieted`;
+        setFooterStatus(`Quiet category applied · ${detail}`);
+        showToast('success', 'Quiet category applied', detail);
       } catch (e) {
         console.warn('quiet category failed', e);
+        showToast('error', 'Quiet category failed', String(e));
         await refreshFromBackend();
       }
     }
@@ -5697,7 +5959,7 @@
 	      }
 	    }
 
-	    function renderAppSettings(detail = '') {
+	    function renderAppSettings(detail = '', detailKind = '') {
 	      const toggle = document.getElementById('networkSensorEnabled');
 	      const statusEl = document.getElementById('networkSensorStatus');
       const actualWarning = document.getElementById('networkSensorActualWarning');
@@ -5705,36 +5967,121 @@
       const defaultStatus = document.getElementById('highAssuranceDefaultStatus');
       const advancedToggle = document.getElementById('advancedControlsEnabled');
 	      const advancedStatus = document.getElementById('advancedControlsStatus');
+      const reverseToggle = document.getElementById('reverseDnsEnabled');
+      const reverseStatus = document.getElementById('reverseDnsStatus');
+      const reverseAlwaysOn = document.getElementById('reverseDnsAlwaysOn');
+      const reverseAlwaysOnStatus = document.getElementById('reverseDnsAlwaysOnStatus');
+      const inspectToggle = document.getElementById('httpsInspectEnabled');
+      const inspectStatus = document.getElementById('httpsInspectStatus');
+      const inspectProcessScoped = document.getElementById('httpsInspectProcessScoped');
+      const inspectProcessStatus = document.getElementById('httpsInspectProcessStatus');
+      const inspectCapturePreviews = document.getElementById('httpsInspectCapturePreviews');
+      const inspectCaptureFull = document.getElementById('httpsInspectCaptureFull');
+      const inspectPayloadStatus = document.getElementById('httpsInspectPayloadStatus');
+      const inspectFullStatus = document.getElementById('httpsInspectFullStatus');
+      const inspectCAStatus = document.getElementById('httpsInspectCAStatus');
+      const inspectSystemTrustStatus = document.getElementById('httpsInspectSystemTrustStatus');
+      const inspectWarning = document.getElementById('httpsInspectWarning');
+      const debugButton = document.getElementById('debugButton');
+      const debugToggle = document.getElementById('debugModeEnabled');
+      const debugStatus = document.getElementById('debugModeStatus');
+      const debugAlwaysOn = document.getElementById('debugModeAlwaysOn');
+      const debugAlwaysOnStatus = document.getElementById('debugModeAlwaysOnStatus');
 
-	      const source = draftSettings || appSettings;
+	      const source = normalizeAppSettings(draftSettings || appSettings);
       const sensor = latestStatus.sensor || {};
       const disabled = !!source.network_sensor_disabled;
       const enabled = !disabled;
       const defaultEnabled = !!source.high_assurance_default_enabled;
       const advanced = !!source.advanced_controls_enabled;
+      const reverseDnsEnabled = !!source.reverse_dns_enabled;
+      const reverseDnsAlwaysOn = !!source.reverse_dns_always_on;
+      const debugModeEnabled = !!source.debug_mode_enabled;
+      const debugModeAlwaysOn = !!source.debug_mode_always_on;
+      const inspect = latestStatus.inspect || {};
+      const inspectCA = inspect.ca || {};
+      const inspectTrust = inspect.trust || {};
+      const inspectProxy = inspect.proxy || {};
       const actualActive = sensor.mode === 'high_assurance_active';
       const actualRequested = sensor.mode === 'high_assurance_requested';
       if (toggle) toggle.checked = enabled;
       if (statusEl) {
         const requestLabel = enabled ? 'requested for this session' : 'User Visibility requested';
-        statusEl.textContent = detail || sensor.label || requestLabel;
+        statusEl.textContent = detailKind === 'reverse_dns' ? (sensor.label || requestLabel) : (detail || sensor.label || requestLabel);
       }
       if (actualWarning) {
         if (actualActive && !enabled) {
           actualWarning.hidden = false;
-          actualWarning.textContent = 'High Assurance is active in macOS right now, while this session request is off. Saving will send an explicit disable request.';
+          actualWarning.textContent = 'OS Sensor mode is active in macOS right now, while this session request is off. Saving will send an explicit disable request.';
         } else if (actualRequested && enabled) {
           actualWarning.hidden = false;
-          actualWarning.textContent = 'High Assurance is requested; macOS approval or the first OS-backed flow may still be pending.';
+          actualWarning.textContent = 'OS Sensor mode is requested; macOS approval or the first OS-backed flow may still be pending.';
         } else {
           actualWarning.hidden = true;
           actualWarning.textContent = '';
         }
       }
       if (defaultToggle) defaultToggle.checked = defaultEnabled;
-      if (defaultStatus) defaultStatus.textContent = defaultEnabled ? 'High Assurance at startup' : 'User Visibility at startup';
+      if (defaultStatus) defaultStatus.textContent = defaultEnabled ? 'OS Sensor at startup' : 'User Visibility at startup';
+      if (reverseToggle) reverseToggle.checked = reverseDnsEnabled;
+      if (reverseStatus) {
+        reverseStatus.textContent = detailKind === 'reverse_dns'
+          ? (detail || (reverseDnsEnabled ? 'PTR lookup enabled' : 'PTR lookup off'))
+          : (reverseDnsEnabled ? 'PTR lookup enabled' : 'Off');
+      }
+      if (reverseAlwaysOn) {
+        reverseAlwaysOn.checked = reverseDnsAlwaysOn;
+        reverseAlwaysOn.disabled = !reverseDnsEnabled;
+      }
+      if (reverseAlwaysOnStatus) {
+        reverseAlwaysOnStatus.textContent = reverseDnsAlwaysOn
+          ? 'Saved for reboots'
+          : (reverseDnsEnabled ? 'Current session only' : 'Off');
+      }
       if (advancedToggle) advancedToggle.checked = advanced;
 	      if (advancedStatus) advancedStatus.textContent = advanced ? 'Advanced controls shown' : 'Simple';
+      if (debugButton) debugButton.hidden = !debugModeEnabled;
+      if (!debugModeEnabled) {
+        const debugModal = document.getElementById('debugModal');
+        if (debugModal) debugModal.classList.remove('open');
+      }
+      if (debugToggle) debugToggle.checked = debugModeEnabled;
+      if (debugStatus) debugStatus.textContent = debugModeEnabled ? 'Debug visible' : 'Off';
+      if (debugAlwaysOn) {
+        debugAlwaysOn.checked = debugModeAlwaysOn;
+        debugAlwaysOn.disabled = false;
+      }
+      if (debugAlwaysOnStatus) {
+        debugAlwaysOnStatus.textContent = debugModeAlwaysOn
+          ? 'Saved for startup'
+          : 'Off at startup';
+      }
+      if (inspectToggle) inspectToggle.checked = !!source.https_inspect_enabled;
+      if (inspectStatus) {
+        const proxyText = inspectProxy.listening ? `proxy ${inspectProxy.address || 'listening'}` : 'proxy not running';
+        inspectStatus.textContent = detailKind === 'https_inspect'
+          ? (detail || (source.https_inspect_enabled ? `Enabled · ${proxyText}` : 'Off'))
+          : (source.https_inspect_enabled ? `Enabled · ${proxyText}` : 'Off');
+      }
+      if (inspectProcessScoped) inspectProcessScoped.checked = !!source.https_inspect_process_scoped;
+      if (inspectProcessStatus) inspectProcessStatus.textContent = source.https_inspect_process_scoped ? 'Process-scoped default' : 'Process-scoped disabled';
+      if (inspectCapturePreviews) inspectCapturePreviews.checked = !!source.https_inspect_capture_previews;
+      if (inspectCaptureFull) inspectCaptureFull.checked = !!source.https_inspect_capture_full_payloads;
+      if (inspectPayloadStatus) inspectPayloadStatus.textContent = source.https_inspect_capture_previews ? 'Metadata + redacted previews' : 'Metadata only';
+      if (inspectFullStatus) inspectFullStatus.textContent = source.https_inspect_capture_full_payloads ? `Full payloads · ${source.https_inspect_full_retention}` : 'Off';
+      if (inspectCAStatus) {
+        inspectCAStatus.textContent = inspectCA.present
+          ? `Created · ${inspectCA.fingerprint || 'fingerprint pending'}`
+          : 'CA not created';
+      }
+      if (inspectSystemTrustStatus) {
+        inspectSystemTrustStatus.textContent = inspectTrust.system_trusted ? 'Installed in macOS trust' : 'Not installed';
+      }
+      if (inspectWarning) {
+        const warnings = Array.isArray(inspect.warnings) ? inspect.warnings : [];
+        inspectWarning.hidden = warnings.length === 0;
+        inspectWarning.textContent = warnings.join(' ');
+      }
       const keepToggle = document.getElementById('keepHooksUpToDate');
       const keepStatus = document.getElementById('keepHooksStatus');
       if (keepToggle) keepToggle.checked = !!source.keep_hooks_up_to_date;
@@ -5744,11 +6091,17 @@
 	    }
 
     function setSettingsTab(tab) {
-      settingsTab = tab === 'hooks' ? 'hooks' : 'general';
-      for (const name of ['general', 'hooks']) {
+      const tabs = [
+        ['general', 'settingsTabGeneral', 'settingsPaneGeneral'],
+        ['hooks', 'settingsTabHooks', 'settingsPaneHooks'],
+        ['advanced', 'settingsTabAdvanced', 'settingsPaneAdvanced'],
+        ['developer', 'settingsTabDeveloper', 'settingsPaneDeveloper'],
+      ];
+      settingsTab = tabs.some(([name]) => name === tab) ? tab : 'general';
+      for (const [name, tabId, paneId] of tabs) {
         const active = settingsTab === name;
-        const tabEl = document.getElementById(name === 'general' ? 'settingsTabGeneral' : 'settingsTabHooks');
-        const paneEl = document.getElementById(name === 'general' ? 'settingsPaneGeneral' : 'settingsPaneHooks');
+        const tabEl = document.getElementById(tabId);
+        const paneEl = document.getElementById(paneId);
         if (tabEl) {
           tabEl.classList.toggle('active', active);
           tabEl.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -5756,7 +6109,6 @@
         if (paneEl) paneEl.classList.toggle('active', active);
       }
       if (settingsTab === 'hooks') refreshHookStatus();
-      scheduleAutoResize();
     }
 
     function hookStatusClass(hook) {
@@ -5887,7 +6239,6 @@
         warning.textContent = messages.join(' ');
       }
       updateHookControlState();
-      scheduleAutoResize();
     }
 
     async function refreshHookStatus() {
@@ -5997,7 +6348,7 @@
       renderAppSettings(enabled ? 'Hook auto-update on' : 'Hook auto-update off');
       try {
         const result = await invoke('set_keep_hooks_up_to_date', { enabled: !!enabled });
-        appSettings = result.settings || appSettings;
+        appSettings = normalizeAppSettings(result.settings || appSettings);
         if (draftSettings) draftSettings.keep_hooks_up_to_date = !!appSettings.keep_hooks_up_to_date;
         renderAppSettings(result.warning || result.detail || '');
         await refreshHookStatus();
@@ -6013,10 +6364,7 @@
 
 	    async function loadAppSettings() {
 	      try {
-	        appSettings = await invoke('get_app_settings');
-	        appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
-	        appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
-	        appSettings.keep_hooks_up_to_date = !!appSettings.keep_hooks_up_to_date;
+	        appSettings = normalizeAppSettings(await invoke('get_app_settings'));
 	        renderAppSettings();
 	      } catch (e) {
 	        renderAppSettings('Settings unavailable');
@@ -6030,7 +6378,6 @@
       if (modal) modal.classList.add('open');
       setSettingsTab(settingsTab || 'general');
       renderAppSettings();
-      scheduleAutoResize();
 	    }
 
 	    function closeSettingsModal() {
@@ -6038,7 +6385,6 @@
 	      const modal = document.getElementById('settingsModal');
 	      if (modal) modal.classList.remove('open');
 	      renderAppSettings();
-      scheduleAutoResize();
 	    }
 
 		    function setDraftNetworkSensorEnabled(enabled) {
@@ -6053,23 +6399,107 @@
 		      renderAppSettings('Unsaved');
 		    }
 
+    function setDraftReverseDnsEnabled(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.reverse_dns_enabled = !!enabled;
+      if (!enabled) draftSettings.reverse_dns_always_on = false;
+      renderAppSettings('Unsaved', 'reverse_dns');
+    }
+
+    function setDraftReverseDnsAlwaysOn(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.reverse_dns_always_on = !!enabled;
+      if (enabled) draftSettings.reverse_dns_enabled = true;
+      renderAppSettings('Unsaved', 'reverse_dns');
+    }
+
+    function setDraftHttpsInspectEnabled(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.https_inspect_enabled = !!enabled;
+      renderAppSettings('Unsaved', 'https_inspect');
+    }
+
+    function setDraftHttpsInspectProcessScoped(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.https_inspect_process_scoped = !!enabled;
+      renderAppSettings('Unsaved', 'https_inspect');
+    }
+
+    function setDraftHttpsInspectCapturePreviews(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.https_inspect_capture_previews = !!enabled;
+      renderAppSettings('Unsaved', 'https_inspect');
+    }
+
+    function setDraftHttpsInspectCaptureFull(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.https_inspect_capture_full_payloads = !!enabled;
+      renderAppSettings('Unsaved', 'https_inspect');
+    }
+
 	    function setDraftAdvancedControlsEnabled(enabled) {
 	      if (!draftSettings) draftSettings = { ...appSettings };
 	      draftSettings.advanced_controls_enabled = !!enabled;
 	      renderAppSettings('Unsaved');
 	    }
 
+    function setDraftDebugModeEnabled(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.debug_mode_enabled = !!enabled;
+      if (!enabled) draftSettings.debug_mode_always_on = false;
+      renderAppSettings('Unsaved');
+    }
+
+    function setDraftDebugModeAlwaysOn(enabled) {
+      if (!draftSettings) draftSettings = { ...appSettings };
+      draftSettings.debug_mode_always_on = !!enabled;
+      if (enabled) draftSettings.debug_mode_enabled = true;
+      renderAppSettings('Unsaved');
+    }
+
+    function syncDebugDraftFromControls() {
+      const debugToggle = document.getElementById('debugModeEnabled');
+      const debugAlwaysOn = document.getElementById('debugModeAlwaysOn');
+      if (!debugToggle && !debugAlwaysOn) return;
+      if (!draftSettings) draftSettings = { ...appSettings };
+      if (debugToggle) draftSettings.debug_mode_enabled = !!debugToggle.checked;
+      if (debugAlwaysOn) draftSettings.debug_mode_always_on = !!debugAlwaysOn.checked;
+      if (draftSettings.debug_mode_always_on) draftSettings.debug_mode_enabled = true;
+      if (!draftSettings.debug_mode_enabled) draftSettings.debug_mode_always_on = false;
+    }
+
 	    async function saveSettingsModal() {
 	      if (!draftSettings) {
 	        closeSettingsModal();
 	        return;
 	      }
+      syncDebugDraftFromControls();
 		      const nextNetworkDisabled = !!draftSettings.network_sensor_disabled;
 		      const nextDefault = !!draftSettings.high_assurance_default_enabled;
 		      const nextAdvanced = !!draftSettings.advanced_controls_enabled;
+        const nextReverseDns = !!draftSettings.reverse_dns_enabled;
+        const nextReverseDnsAlwaysOn = !!nextReverseDns && !!draftSettings.reverse_dns_always_on;
+        const nextDebugMode = !!draftSettings.debug_mode_enabled;
+        const nextDebugAlwaysOn = !!nextDebugMode && !!draftSettings.debug_mode_always_on;
+        const inspectChanged = hasHttpsInspectDraftChanges();
 		      if (nextAdvanced !== !!appSettings.advanced_controls_enabled) {
 		        await setAdvancedControlsEnabled(nextAdvanced);
 		      }
+        if (
+          nextDebugMode !== !!appSettings.debug_mode_enabled ||
+          nextDebugAlwaysOn !== !!appSettings.debug_mode_always_on
+        ) {
+          await setDebugModeSettings(nextDebugMode, nextDebugAlwaysOn);
+        }
+        if (
+          nextReverseDns !== !!appSettings.reverse_dns_enabled ||
+          nextReverseDnsAlwaysOn !== !!appSettings.reverse_dns_always_on
+        ) {
+          await setReverseDnsSettings(nextReverseDns, nextReverseDnsAlwaysOn);
+        }
+        if (inspectChanged) {
+          await setHttpsInspectSettings(httpsInspectDraftPayload());
+        }
 		      if (nextDefault !== !!appSettings.high_assurance_default_enabled) {
 		        await setHighAssuranceDefaultEnabled(nextDefault);
 		      }
@@ -6091,13 +6521,13 @@
 
 	      try {
 	        const result = await invoke('set_network_sensor_disabled', { disabled: !!disabled });
-	        appSettings = result.settings || appSettings;
+	        appSettings = normalizeAppSettings(result.settings || appSettings);
 	        renderAppSettings(result.warning || result.detail || '');
 	      } catch (e) {
 	        appSettings.network_sensor_disabled = previous;
 	        if (draftSettings) draftSettings.network_sensor_disabled = previous;
 	        renderAppSettings('Update failed');
-		        alert('High Assurance setting failed: ' + e);
+		        alert('OS Sensor setting failed: ' + e);
 		      }
 		    }
 
@@ -6108,13 +6538,13 @@
 		      renderAppSettings(enabled ? 'Startup default on' : 'Startup default off');
 		      try {
 		        const result = await invoke('set_high_assurance_default_enabled', { enabled: !!enabled });
-		        appSettings = result.settings || appSettings;
+		        appSettings = normalizeAppSettings(result.settings || appSettings);
 		        renderAppSettings(result.warning || result.detail || '');
 		      } catch (e) {
 		        appSettings.high_assurance_default_enabled = previous;
 		        if (draftSettings) draftSettings.high_assurance_default_enabled = previous;
 		        renderAppSettings('Update failed');
-		        alert('High Assurance default failed: ' + e);
+		        alert('OS Sensor default failed: ' + e);
 		      }
 		    }
 
@@ -6126,8 +6556,7 @@
 
 	      try {
 	        const result = await invoke('set_advanced_controls_enabled', { enabled: !!enabled });
-	        appSettings = result.settings || appSettings;
-	        appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
+	        appSettings = normalizeAppSettings(result.settings || appSettings);
 	        renderAppSettings(result.detail || '');
 	        renderEvents();
 	      } catch (e) {
@@ -6138,8 +6567,200 @@
 	      }
 	    }
 
+    async function setDebugModeSettings(enabled, alwaysOn) {
+      const previous = normalizeAppSettings({ ...appSettings });
+      const nextEnabled = !!enabled;
+      const nextAlwaysOn = nextEnabled && !!alwaysOn;
+      appSettings = normalizeAppSettings({ ...appSettings, debug_mode_enabled: nextEnabled, debug_mode_always_on: nextAlwaysOn });
+      if (draftSettings) {
+        draftSettings.debug_mode_enabled = nextEnabled;
+        draftSettings.debug_mode_always_on = nextAlwaysOn;
+      }
+      renderAppSettings(nextEnabled ? 'Debug mode on' : 'Debug mode off');
+      try {
+        const result = await invoke('set_debug_mode_settings', { enabled: nextEnabled, alwaysOn: nextAlwaysOn });
+        appSettings = normalizeAppSettings(result.settings || appSettings);
+        if (draftSettings) draftSettings = { ...draftSettings, ...appSettings };
+        renderAppSettings(result.detail || '');
+      } catch (e) {
+        appSettings = previous;
+        if (draftSettings) {
+          draftSettings.debug_mode_enabled = previous.debug_mode_enabled;
+          draftSettings.debug_mode_always_on = previous.debug_mode_always_on;
+        }
+        renderAppSettings('Update failed');
+        alert('Debug mode setting failed: ' + e);
+      }
+    }
+
+    async function setReverseDnsSettings(enabled, alwaysOn) {
+      const previousEnabled = !!appSettings.reverse_dns_enabled;
+      const previousAlwaysOn = !!appSettings.reverse_dns_always_on;
+      const nextEnabled = !!enabled;
+      const nextAlwaysOn = nextEnabled && !!alwaysOn;
+      appSettings.reverse_dns_enabled = nextEnabled;
+      appSettings.reverse_dns_always_on = nextAlwaysOn;
+      if (draftSettings) {
+        draftSettings.reverse_dns_enabled = nextEnabled;
+        draftSettings.reverse_dns_always_on = nextAlwaysOn;
+      }
+      renderAppSettings(nextEnabled ? 'Applying PTR lookup setting' : 'Turning PTR lookup off', 'reverse_dns');
+
+      try {
+        const result = await invoke('set_reverse_dns_settings', { enabled: nextEnabled, alwaysOn: nextAlwaysOn });
+        appSettings = normalizeAppSettings(result.settings || appSettings);
+        if (draftSettings) {
+          draftSettings.reverse_dns_enabled = !!appSettings.reverse_dns_enabled;
+          draftSettings.reverse_dns_always_on = !!appSettings.reverse_dns_always_on;
+        }
+        renderAppSettings(result.warning || result.detail || '', 'reverse_dns');
+      } catch (e) {
+        appSettings.reverse_dns_enabled = previousEnabled;
+        appSettings.reverse_dns_always_on = previousAlwaysOn;
+        if (draftSettings) {
+          draftSettings.reverse_dns_enabled = previousEnabled;
+          draftSettings.reverse_dns_always_on = previousAlwaysOn;
+        }
+        renderAppSettings('Update failed', 'reverse_dns');
+        alert('Reverse DNS setting failed: ' + e);
+      }
+    }
+
+    async function setHttpsInspectSettings(next) {
+      const previous = { ...appSettings };
+      appSettings = normalizeAppSettings({ ...appSettings,
+        https_inspect_enabled: !!next.enabled,
+        https_inspect_process_scoped: !!next.processScoped,
+        https_inspect_allow_system_trust: !!next.allowSystemTrust,
+        https_inspect_capture_previews: !!next.capturePreviews,
+        https_inspect_capture_full_payloads: !!next.captureFullPayloads,
+        https_inspect_preview_bytes: Number(next.previewBytes || 2048),
+        https_inspect_full_retention: next.fullRetention || 'until_session_ends',
+      });
+      renderAppSettings('Saving HTTPS Inspect Mode', 'https_inspect');
+      try {
+        const result = await invoke('set_https_inspect_settings', { request: next });
+        appSettings = normalizeAppSettings(result.settings || appSettings);
+        if (draftSettings) draftSettings = { ...draftSettings, ...appSettings };
+        renderAppSettings(result.warning || result.detail || '', 'https_inspect');
+        await refreshStatus();
+      } catch (e) {
+        appSettings = normalizeAppSettings(previous);
+        renderAppSettings('Update failed', 'https_inspect');
+        alert('HTTPS Inspect setting failed: ' + e);
+      }
+    }
+
+    function httpsInspectDraftPayload() {
+      const source = normalizeAppSettings(draftSettings || appSettings);
+      return {
+        enabled: !!source.https_inspect_enabled,
+        processScoped: source.https_inspect_process_scoped !== false,
+        allowSystemTrust: !!source.https_inspect_allow_system_trust,
+        capturePreviews: source.https_inspect_capture_previews !== false,
+        captureFullPayloads: !!source.https_inspect_capture_full_payloads,
+        previewBytes: Number(source.https_inspect_preview_bytes || 2048),
+        fullRetention: source.https_inspect_full_retention || 'until_session_ends',
+      };
+    }
+
+    function hasHttpsInspectDraftChanges() {
+      if (!draftSettings) return false;
+      const next = normalizeAppSettings(draftSettings);
+      const current = normalizeAppSettings(appSettings);
+      return (
+        !!next.https_inspect_enabled !== !!current.https_inspect_enabled ||
+        (next.https_inspect_process_scoped !== false) !== (current.https_inspect_process_scoped !== false) ||
+        (next.https_inspect_capture_previews !== false) !== (current.https_inspect_capture_previews !== false) ||
+        !!next.https_inspect_capture_full_payloads !== !!current.https_inspect_capture_full_payloads ||
+        Number(next.https_inspect_preview_bytes || 2048) !== Number(current.https_inspect_preview_bytes || 2048) ||
+        (next.https_inspect_full_retention || 'until_session_ends') !== (current.https_inspect_full_retention || 'until_session_ends')
+      );
+    }
+
+    async function runHttpsInspectAction(action) {
+      renderAppSettings('Working...', 'https_inspect');
+      try {
+        if (hasHttpsInspectDraftChanges()) {
+          await setHttpsInspectSettings(httpsInspectDraftPayload());
+        }
+        const result = await invoke('run_https_inspect_action', { action });
+        appSettings = normalizeAppSettings(result.settings || appSettings);
+        if (draftSettings) draftSettings = { ...draftSettings, ...appSettings };
+        await refreshStatus();
+        renderAppSettings(result.warning || result.detail || 'Done', 'https_inspect');
+      } catch (e) {
+        renderAppSettings('Action failed', 'https_inspect');
+        alert('HTTPS Inspect action failed: ' + e);
+      }
+    }
+
+    function openDebugModal() {
+      if (!debugModeEnabled()) {
+        showToast('info', 'Debug mode is off', 'Enable it in Settings > Developer.');
+        return;
+      }
+      const modal = document.getElementById('debugModal');
+      if (modal) modal.classList.add('open');
+      refreshDebugSnapshot();
+    }
+
+    function closeDebugModal() {
+      const modal = document.getElementById('debugModal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function renderDebugSnapshot(snapshot, error = '') {
+      const summary = document.getElementById('debugSummary');
+      const body = document.getElementById('debugJson');
+      if (summary) {
+        const app = snapshot && snapshot.app ? snapshot.app : {};
+        const daemon = snapshot && snapshot.daemon ? snapshot.daemon : {};
+        const paths = snapshot && snapshot.paths ? snapshot.paths : {};
+        const hydration = app.status_hydration || {};
+        const generated = snapshot && snapshot.generated_at ? snapshot.generated_at : '';
+        const chips = [
+          ['State', app.active ? 'active' : 'idle'],
+          ['Events', String(app.event_count ?? 0)],
+          ['Agents', String(app.agent_count ?? 0)],
+          ['Hydration', hydration.suppressed ? 'suppressed' : 'enabled'],
+          ['Daemon status', daemon.status_file && daemon.status_file.exists ? 'present' : 'missing'],
+          ['UI socket', paths.ui_socket && paths.ui_socket.exists ? 'present' : 'missing'],
+          ['Daemon socket', daemon.socket && daemon.socket.exists ? 'present' : 'missing'],
+          ['Generated', generated ? (generated.split('T')[1] || generated).replace('Z', '') : 'now'],
+        ];
+        summary.innerHTML = chips.map(([label, value]) => `<div class="debug-chip"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+      }
+      if (body) body.textContent = error || JSON.stringify(snapshot || {}, null, 2);
+    }
+
+    async function refreshDebugSnapshot() {
+      renderDebugSnapshot(latestDebugSnapshot || {}, 'Loading...');
+      try {
+        latestDebugSnapshot = await invoke('get_debug_snapshot');
+        renderDebugSnapshot(latestDebugSnapshot);
+        setFooterStatus('Debug snapshot refreshed');
+      } catch (e) {
+        renderDebugSnapshot({}, `Debug snapshot failed: ${String(e)}`);
+        showToast('error', 'Debug snapshot failed', String(e));
+      }
+    }
+
+    async function copyDebugSnapshot() {
+      const text = JSON.stringify(latestDebugSnapshot || {}, null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('success', 'Debug snapshot copied', `${text.length} bytes`);
+      } catch (e) {
+        const body = document.getElementById('debugJson');
+        if (body) body.textContent = text;
+        showToast('error', 'Copy failed', 'Snapshot is shown in the debug panel');
+      }
+    }
+
 	    async function clearSession() {
-      if (!confirm('Clear this AgentSnitch session view? This removes the current local events from the app.')) return;
+      const cleared = events.length;
+      const clearedAgents = teamAgents.length;
       try {
         await invoke('clear_session');
         events = [];
@@ -6153,7 +6774,15 @@
         teamAgents = [];
         renderEvents();
         await refreshStatus();
+        const pieces = [
+          `${cleared} ${pluralize(cleared, 'row')}`,
+          `${clearedAgents} ${pluralize(clearedAgents, 'agent')}`,
+        ];
+        const detail = `${pieces.join(' · ')} removed from this local session view`;
+        setFooterStatus(`Cleared session · ${detail}`);
+        showToast('success', 'Session cleared', detail);
       } catch (e) {
+        showToast('error', 'Clear failed', String(e));
         alert('clear failed: ' + e);
       }
     }
@@ -6162,7 +6791,11 @@
       try {
         await invoke('quiet_session');
         await refreshStatus();
+        const detail = 'Session quieted. Routine activity stays suppressed until high-signal evidence breaks through.';
+        setFooterStatus(`Quiet mode on · ${detail}`);
+        showToast('success', 'Quiet mode on', detail);
       } catch (e) {
+        showToast('error', 'Quiet failed', String(e));
         alert('quiet failed: ' + e);
       }
     }
@@ -6291,10 +6924,7 @@
 
 	      listen('settings-changed', (evt) => {
 		        if (evt.payload) {
-		          appSettings = evt.payload;
-		          appSettings.advanced_controls_enabled = !!appSettings.advanced_controls_enabled;
-		          appSettings.high_assurance_default_enabled = !!appSettings.high_assurance_default_enabled;
-		          appSettings.keep_hooks_up_to_date = !!appSettings.keep_hooks_up_to_date;
+		          appSettings = normalizeAppSettings(evt.payload);
 		          renderAppSettings();
 		          renderEvents();
 		        }
@@ -6345,6 +6975,10 @@
       if (action === 'quietSession()') { quietSession(); return true; }
       if (action === 'clearSession()') { clearSession(); return true; }
       if (action === 'doExport()') { doExport(); return true; }
+      if (action === 'openDebugModal()') { openDebugModal(); return true; }
+      if (action === 'closeDebugModal()') { closeDebugModal(); return true; }
+      if (action === 'refreshDebugSnapshot()') { refreshDebugSnapshot(); return true; }
+      if (action === 'copyDebugSnapshot()') { copyDebugSnapshot(); return true; }
       if (action === 'closeSettingsModal()') { closeSettingsModal(); return true; }
       if (action === 'saveSettingsModal()') { saveSettingsModal(); return true; }
       if (action === 'refreshHookStatus()') { refreshHookStatus(); return true; }
@@ -6359,6 +6993,8 @@
       if (match) { setView(decodeInlineString(match[1])); return true; }
       match = action.match(/^setSettingsTab\((.+)\)$/);
       if (match) { setSettingsTab(decodeInlineString(match[1])); return true; }
+      match = action.match(/^runHttpsInspectAction\((.+)\)$/);
+      if (match) { runHttpsInspectAction(decodeInlineString(match[1])); return true; }
       match = action.match(/^selectAllHooks\((true|false)\)$/);
       if (match) { selectAllHooks(match[1] === 'true'); return true; }
       match = action.match(/^filterAgent\((.+)\)$/);
@@ -6414,6 +7050,14 @@
       if (match) { setDraftHighAssuranceDefaultEnabled(target.checked); return true; }
       match = action.match(/^setKeepHooksUpToDate\(this\.checked\)$/);
       if (match) { setKeepHooksUpToDate(target.checked); return true; }
+      match = action.match(/^setDraftHttpsInspectEnabled\(this\.checked\)$/);
+      if (match) { setDraftHttpsInspectEnabled(target.checked); return true; }
+      match = action.match(/^setDraftHttpsInspectProcessScoped\(this\.checked\)$/);
+      if (match) { setDraftHttpsInspectProcessScoped(target.checked); return true; }
+      match = action.match(/^setDraftHttpsInspectCapturePreviews\(this\.checked\)$/);
+      if (match) { setDraftHttpsInspectCapturePreviews(target.checked); return true; }
+      match = action.match(/^setDraftHttpsInspectCaptureFull\(this\.checked\)$/);
+      if (match) { setDraftHttpsInspectCaptureFull(target.checked); return true; }
       match = action.match(/^setHookAgent\(this\.value\)$/);
       if (match) { setHookAgent(target.value); return true; }
       match = action.match(/^setHookSelected\((.+),\s*this\.checked\)$/);
@@ -6465,12 +7109,16 @@
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
           e.preventDefault();
           clearSession();
+        } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd' && debugModeEnabled()) {
+          e.preventDefault();
+          openDebugModal();
         } else if (e.key === 'Escape') {
+          closeDebugModal();
           closeSettingsModal();
         }
       });
 
-		      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openNetworkSensorSettings, closeSettingsModal, setSettingsTab, refreshHookStatus, installSelectedHooks, removeSelectedHooks, setKeepHooksUpToDate, setHookAgent, selectAllHooks, setHookSelected, setDraftNetworkSensorEnabled, setDraftHighAssuranceDefaultEnabled, setDraftAdvancedControlsEnabled, saveSettingsModal, setNetworkSensorDisabled, setHighAssuranceDefaultEnabled, setAdvancedControlsEnabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setTraceZoom, setRawKind, setFilterQuery, clearFilterQuery, showToast, setView, refresh: refreshFromBackend, invoke };
+		      window.AGENTSNITCH = { clearSession, quietSession, togglePaused, quietKnownServices, quietCategory, quietPattern, dismissEvent, toggleDetails, toggleWhy, toggleRawDetails, toggleKnownGroup, toggleMainGroup, openDebugModal, closeDebugModal, refreshDebugSnapshot, copyDebugSnapshot, openNetworkSensorSettings, closeSettingsModal, setSettingsTab, refreshHookStatus, installSelectedHooks, removeSelectedHooks, setKeepHooksUpToDate, setHookAgent, selectAllHooks, setHookSelected, setDraftNetworkSensorEnabled, setDraftHighAssuranceDefaultEnabled, setDraftReverseDnsEnabled, setDraftReverseDnsAlwaysOn, setDraftHttpsInspectEnabled, setDraftHttpsInspectProcessScoped, setDraftHttpsInspectCapturePreviews, setDraftHttpsInspectCaptureFull, runHttpsInspectAction, setDraftAdvancedControlsEnabled, setDraftDebugModeEnabled, setDraftDebugModeAlwaysOn, saveSettingsModal, setNetworkSensorDisabled, setHighAssuranceDefaultEnabled, setReverseDnsSettings, setDebugModeSettings, setHttpsInspectSettings, setAdvancedControlsEnabled, filterAgent, filterAgentEvents, clearAgentFilter, filterAttentionReason, clearAttentionReason, selectTrace, clearTraceSelection, setTraceMode, setTraceZoom, setRawKind, setFilterQuery, clearFilterQuery, showToast, setView, refresh: refreshFromBackend, invoke };
       console.log('%c[AgentSnitch] UI ready. Waiting for real hook and network events.', 'color:#8e8e93');
     }
 

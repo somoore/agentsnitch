@@ -14,6 +14,9 @@
     },
     {
       "$ref": "#/$defs/AgentLifecycleEvent"
+    },
+    {
+      "$ref": "#/$defs/InspectedHTTPExchange"
     }
   ],
   "$defs": {
@@ -345,6 +348,105 @@
         "event",
         "agent"
       ]
+    },
+    "InspectedHTTPExchange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "agentsnitch.inspected_http.v0" },
+        "ts": { "type": "string", "format": "date-time" },
+        "session_id": { "type": "string" },
+        "span_id": { "type": "string" },
+        "tool_use_id": { "type": "string" },
+        "request": { "$ref": "#/$defs/InspectedHTTPRequest" },
+        "response": { "$ref": "#/$defs/InspectedHTTPResponse" },
+        "tls": { "$ref": "#/$defs/InspectedHTTPTLS" },
+        "retention": { "$ref": "#/$defs/InspectedHTTPRetention" },
+        "correlation": { "$ref": "#/$defs/InspectedHTTPCorrelation" }
+      },
+      "required": ["schema", "ts", "request", "response", "tls", "retention", "correlation"]
+    },
+    "InspectedHTTPRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string" },
+        "scheme": { "type": "string" },
+        "host": { "type": "string" },
+        "path": { "type": "string" },
+        "query_redacted": { "type": "boolean" },
+        "headers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/InspectedHTTPHeader" }
+        },
+        "content_type": { "type": "string" },
+        "body_size": { "type": "integer" },
+        "body_sha256": { "type": "string" },
+        "preview": { "type": "string" },
+        "preview_truncated": { "type": "boolean" },
+        "redaction_count": { "type": "integer" }
+      },
+      "required": ["method", "scheme", "host", "path", "query_redacted", "headers", "body_size", "preview_truncated", "redaction_count"]
+    },
+    "InspectedHTTPResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "integer" },
+        "content_type": { "type": "string" },
+        "body_size": { "type": "integer" },
+        "body_sha256": { "type": "string" },
+        "preview": { "type": "string" },
+        "preview_truncated": { "type": "boolean" },
+        "redaction_count": { "type": "integer" }
+      },
+      "required": ["status", "body_size", "preview_truncated", "redaction_count"]
+    },
+    "InspectedHTTPHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "present": { "type": "boolean" },
+        "redacted": { "type": "boolean" },
+        "value_sha256": { "type": "string" },
+        "preview": { "type": "string" }
+      },
+      "required": ["name", "present", "redacted"]
+    },
+    "InspectedHTTPTLS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inspection_mode": { "type": "string" },
+        "ca_fingerprint": { "type": "string" },
+        "leaf_cert_generated": { "type": "boolean" },
+        "upstream_tls_version": { "type": "string" }
+      },
+      "required": ["inspection_mode", "leaf_cert_generated"]
+    },
+    "InspectedHTTPRetention": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "payload_mode": { "type": "string" },
+        "preview_bytes": { "type": "integer" },
+        "full_payload_stored": { "type": "boolean" },
+        "retention": { "type": "string" }
+      },
+      "required": ["payload_mode", "preview_bytes", "full_payload_stored", "retention"]
+    },
+    "InspectedHTTPCorrelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "confidence": { "type": "string" }
+      },
+      "required": ["basis", "confidence"]
     },
     "ProcessNode": {
       "type": "object",

@@ -173,7 +173,7 @@ func TestNetworkExtensionCheckPrefersActiveObserverMode(t *testing.T) {
 func TestNetworkSensorDisabledInSettingsDefaultsToDisabled(t *testing.T) {
 	t.Setenv("AGENTSNITCH_UI_SETTINGS", filepath.Join(t.TempDir(), "missing-settings.json"))
 	if !networkSensorDisabledInSettings() {
-		t.Fatal("missing settings should default High Assurance to off")
+		t.Fatal("missing settings should default OS Sensor to off")
 	}
 }
 
@@ -184,7 +184,7 @@ func TestNetworkSensorDisabledInSettingsReadsOptIn(t *testing.T) {
 	}
 	t.Setenv("AGENTSNITCH_UI_SETTINGS", path)
 	if networkSensorDisabledInSettings() {
-		t.Fatal("network_sensor_disabled=false should report High Assurance requested")
+		t.Fatal("network_sensor_disabled=false should report OS Sensor requested")
 	}
 }
 

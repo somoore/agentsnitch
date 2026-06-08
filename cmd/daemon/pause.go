@@ -17,7 +17,7 @@ import (
 //
 // Fail-safe by construction: the zero value is "not paused" (Live). The daemon
 // never persists the paused flag, so a daemon restart always comes back Live — a
-// stuck-paused security tool is worse than a noisy one (see docs/ui-ux-plan.md).
+// stuck-paused security tool is worse than a noisy one.
 //
 // SECURITY/HONESTY: while paused, agent activity is deliberately not recorded.
 // On resume we write a pause_gap record so the gap is explicit in the transcript
