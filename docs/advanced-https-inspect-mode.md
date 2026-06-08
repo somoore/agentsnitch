@@ -71,6 +71,10 @@ Defaults:
 
 AgentSnitch purges expired full-payload records when new payloads are captured and from a daemon background maintenance pass. Evidence Pack export never inlines retained full payload bodies; it includes local payload refs plus retention warnings so exported JSONL can be reviewed or shared without copying retained bodies into the export. `agentsnitchctl inspect purge-data --expired` removes only expired payload records; `agentsnitchctl inspect purge-data` removes all captured payload data.
 
+## Failure Downgrade Behavior
+
+When a client rejects local TLS inspection, uses certificate pinning, uses a custom trust store, or sends a tunneled protocol that is not HTTP over TLS, AgentSnitch records metadata-only managed-proxy evidence instead of pretending the payload was inspected. Evidence cards label these rows as metadata-only and include an inspection-limit detail explaining whether the likely cause was trust/pinning/custom trust, local inspection setup failure, unsupported protocol, or a metadata-only scoped destination.
+
 ## Disable And Cleanup
 
 Disabling Inspect Mode stops inspection for new sessions and can remove process-scoped trust files and payload data:
