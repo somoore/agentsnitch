@@ -57,6 +57,8 @@ agentsnitchctl inspect run -- <command> [args...]
 
 Each `inspect run` launch stamps the inherited proxy URL with a distinct AgentSnitch managed-run id while preserving the daemon's random proxy token. That gives proxy evidence a session binding even for clients that honor standard proxy variables but cannot send AgentSnitch-specific headers.
 
+When the Claude Code hook emitter inherits that managed-run id, daemon session state can line up hook ToolSpans with proxy traffic. HTTPS CONNECT traffic is locally decrypted only while the matching managed session has an active egress-capable ToolSpan. Traffic outside an active span still uses the managed proxy, but AgentSnitch tunnels it and records metadata-only evidence instead of terminating TLS.
+
 The process-scoped path is covered by integration tests for curl, Python `requests`, Node TLS clients, npm registry requests, and Git HTTPS clients. Tools that ignore proxy environment variables or use their own trust store may still need tool-specific configuration or the optional system trust path.
 
 ## Retention
@@ -75,7 +77,7 @@ AgentSnitch purges expired full-payload records when new payloads are captured a
 
 ## Failure Downgrade Behavior
 
-When a client rejects local TLS inspection, uses certificate pinning, uses a custom trust store, or sends a tunneled protocol that is not HTTP over TLS, AgentSnitch records metadata-only managed-proxy evidence instead of pretending the payload was inspected. Evidence cards label these rows as metadata-only and include an inspection-limit detail explaining whether the likely cause was trust/pinning/custom trust, local inspection setup failure, unsupported protocol, or a metadata-only scoped destination.
+When a client rejects local TLS inspection, uses certificate pinning, uses a custom trust store, sends a tunneled protocol that is not HTTP over TLS, or sends traffic outside an active egress ToolSpan, AgentSnitch records metadata-only managed-proxy evidence instead of pretending the payload was inspected. Evidence cards label these rows as metadata-only and include an inspection-limit detail explaining whether the likely cause was trust/pinning/custom trust, local inspection setup failure, unsupported protocol, or a metadata-only scoped destination.
 
 ## Disable And Cleanup
 
