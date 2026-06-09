@@ -21,6 +21,39 @@ func TestShellExportValueQuotesSingleQuotes(t *testing.T) {
 	}
 }
 
+func TestScopedInspectEnvBindsEveryProxyURLToManagedRun(t *testing.T) {
+	in := map[string]string{
+		"HTTPS_PROXY":        "http://agentsnitch:secret@127.0.0.1:49152",
+		"HTTP_PROXY":         "http://agentsnitch:secret@127.0.0.1:49152",
+		"ALL_PROXY":          "http://agentsnitch:secret@127.0.0.1:49152",
+		"NPM_CONFIG_PROXY":   "http://agentsnitch:secret@127.0.0.1:49152",
+		"SSL_CERT_FILE":      "/tmp/ca.pem",
+		"REQUESTS_CA_BUNDLE": "/tmp/ca.pem",
+	}
+	got := scopedInspectEnv(in, "Claude Run/One")
+	for _, key := range []string{"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NPM_CONFIG_PROXY"} {
+		if !strings.Contains(got[key], "agentsnitch.Claude-Run-One:secret@127.0.0.1:49152") {
+			t.Fatalf("%s = %q, want session-scoped proxy URL", key, got[key])
+		}
+	}
+	if got["SSL_CERT_FILE"] != "/tmp/ca.pem" || got["REQUESTS_CA_BUNDLE"] != "/tmp/ca.pem" {
+		t.Fatalf("non-proxy trust env changed: %+v", got)
+	}
+	if got["AGENTSNITCH_INSPECT_SESSION_ID"] != "Claude-Run-One" || got["AGENTSNITCH_SESSION_ID"] != "Claude-Run-One" {
+		t.Fatalf("managed session labels missing: %+v", got)
+	}
+}
+
+func TestManagedRunSessionIDIsSafeAndCommandNamed(t *testing.T) {
+	got := managedRunSessionID([]string{"/usr/local/bin/claude"})
+	if !strings.HasPrefix(got, "inspect-run-claude-") {
+		t.Fatalf("session id = %q, want command-named inspect run", got)
+	}
+	if got != inspect.SafeProxySessionID(got) {
+		t.Fatalf("session id is not proxy-safe: %q", got)
+	}
+}
+
 func TestInspectCertificateForCLIParsesGeneratedCA(t *testing.T) {
 	base := t.TempDir()
 	paths := inspect.Paths{

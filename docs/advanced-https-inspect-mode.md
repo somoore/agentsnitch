@@ -1,12 +1,12 @@
-# Advanced HTTPS Inspect Mode
+# HTTPS Inspect Mode
 
-AgentSnitch Advanced HTTPS Inspect Mode is optional, local HTTPS inspection for managed AI coding-agent sessions. It is designed to work like a scoped Burp Suite or Charles Proxy flow, but with AgentSnitch evidence attached to agent session and tool-span context.
+AgentSnitch HTTPS Inspect Mode is an advanced, optional, local HTTPS inspection feature for managed AI coding-agent sessions. It is designed to work like a scoped Burp Suite or Charles Proxy flow, but with AgentSnitch evidence attached to agent session and tool-span context.
 
 ## Why This Exists
 
 Default AgentSnitch evidence links local tool activity with process/network observations. That is useful for answering "what did the agent touch, and what destination did its process tree contact?" It does not show HTTP request details inside TLS.
 
-Advanced HTTPS Inspect Mode adds a managed localhost proxy that can record HTTP method, host, path, status, sizes, redacted headers, hashes, and optional payload previews for traffic routed through that proxy. When TLS interception is in scope, AgentSnitch terminates TLS locally with a local AgentSnitch CA, records configured evidence, and opens a separate encrypted connection to the destination.
+HTTPS Inspect Mode adds a managed localhost proxy that can record HTTP method, host, path, status, sizes, redacted headers, hashes, and optional payload previews for traffic routed through that proxy. When TLS interception is in scope, AgentSnitch terminates TLS locally with a local AgentSnitch CA, records configured evidence, and opens a separate encrypted connection to the destination.
 
 ## Developer-Only Posture
 
@@ -54,6 +54,8 @@ agentsnitchctl inspect run -- <command> [args...]
 ```
 
 `agentsnitchctl inspect run -- claude` is the managed-session launch path: Claude and tools it starts inherit the process-scoped proxy and CA environment. Existing Claude sessions that were already running before this command will not be retroactively reconfigured, because Claude hooks observe tool activity but cannot mutate the parent process environment.
+
+Each `inspect run` launch stamps the inherited proxy URL with a distinct AgentSnitch managed-run id while preserving the daemon's random proxy token. That gives proxy evidence a session binding even for clients that honor standard proxy variables but cannot send AgentSnitch-specific headers.
 
 The process-scoped path is covered by integration tests for curl, Python `requests`, Node TLS clients, npm registry requests, and Git HTTPS clients. Tools that ignore proxy environment variables or use their own trust store may still need tool-specific configuration or the optional system trust path.
 

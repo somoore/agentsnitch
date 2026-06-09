@@ -174,6 +174,59 @@ func TestProxyRequiresToken(t *testing.T) {
 	}
 }
 
+func TestSessionScopedProxyAuthBindsContextWithoutHeaders(t *testing.T) {
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectNeverDomains = []string{"api.example.com"}
+	var seen []event.InspectedHTTPExchange
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), func(exchange event.InspectedHTTPExchange) {
+		seen = append(seen, exchange)
+	})
+	proxy.dial = func(context.Context, string, string) (net.Conn, error) {
+		return nil, fmt.Errorf("stop after metadata")
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, err := url.Parse(inspectSessionURLForTest(proxy, "claude/run 1"))
+	if err != nil {
+		t.Fatalf("parse scoped proxy URL: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   2 * time.Second,
+	}
+	_, _ = client.Get("https://api.example.com/path")
+	waitForEvents(t, &seen, 1)
+	if len(seen) != 1 {
+		t.Fatalf("events = %d, want 1", len(seen))
+	}
+	if seen[0].SessionID != "claude-run-1" {
+		t.Fatalf("session id = %q, want scoped proxy user", seen[0].SessionID)
+	}
+	if seen[0].Correlation.Confidence != "medium" {
+		t.Fatalf("confidence = %q, want medium session-bound metadata", seen[0].Correlation.Confidence)
+	}
+}
+
+func TestSessionScopedProxyURLPreservesToken(t *testing.T) {
+	got := SessionScopedProxyURL("http://agentsnitch:secret-token@127.0.0.1:49152", "run one/alpha")
+	if !strings.HasPrefix(got, "http://agentsnitch.run-one-alpha:secret-token@127.0.0.1:49152") {
+		t.Fatalf("scoped URL = %q", got)
+	}
+	req, err := http.NewRequest("GET", "http://example.com/", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("agentsnitch.run-one-alpha:secret-token")))
+	ctx := contextFromRequest(req)
+	if ctx.Token != "secret-token" || ctx.SessionID != "run-one-alpha" {
+		t.Fatalf("context = %+v", ctx)
+	}
+}
+
 func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
@@ -585,6 +638,10 @@ func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int)
 
 func basicProxyToken(token string) string {
 	return base64.StdEncoding.EncodeToString([]byte("agentsnitch:" + token))
+}
+
+func inspectSessionURLForTest(proxy *Proxy, sessionID string) string {
+	return AuthenticatedProxyURLForSession(proxy.Status().Address, proxy.Token(), sessionID)
 }
 
 func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *[]event.InspectedHTTPExchange) {
