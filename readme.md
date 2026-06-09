@@ -2,7 +2,7 @@
 
 [![pre-alpha release](https://img.shields.io/badge/pre--alpha-v0.1.0--pre--alpha.5-blue)](https://github.com/somoore/agentsnitch/releases/tag/v0.1.0-pre-alpha.5)
 [![supply-chain](https://github.com/somoore/agentsnitch/actions/workflows/supply-chain.yml/badge.svg)](https://github.com/somoore/agentsnitch/actions/workflows/supply-chain.yml)
-[![macOS release](https://github.com/somoore/agentsnitch/actions/workflows/release-macos.yml/badge.svg)](https://github.com/somoore/agentsnitch/actions/workflows/release-macos.yml)
+[![macOS release](https://img.shields.io/github/actions/workflow/status/somoore/agentsnitch/.github/workflows/release-macos.yml?event=push&label=release-macos)](https://github.com/somoore/agentsnitch/actions/workflows/release-macos.yml?query=event%3Apush)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 AgentSnitch gives developers local, explainable evidence when AI coding agents touch sensitive local context and then make outbound network connections.
