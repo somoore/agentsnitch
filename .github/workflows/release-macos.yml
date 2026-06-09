@@ -100,7 +100,7 @@ jobs:
         run: make build
 
       - name: Build Tauri app bundle
-        run: cd ui && cargo tauri build
+        run: cd ui && cargo tauri build && cd .. && ./scripts/normalize-tauri-schemas.sh
 
       - name: Validate required release secrets
         env:

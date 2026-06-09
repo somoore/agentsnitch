@@ -48,6 +48,7 @@ const ReverseDNSLookupTimeout = 150 * time.Millisecond
 const ReverseDNSCacheTTL = 6 * time.Hour
 const ReverseDNSNegativeCacheTTL = 30 * time.Minute
 const InspectPayloadRetentionInterval = 15 * time.Minute
+const rawNetworkVisibilityTTL = 10 * time.Minute
 
 var reverseDNSLookup = net.DefaultResolver.LookupAddr
 
@@ -641,7 +642,7 @@ func trustedPeerSignature(exe string) bool {
 		return false
 	}
 	if identity.TeamID != expectedTeam {
-		log.Printf("TRUST_INVALID: peer at %s has TeamIdentifier=%q, want %q", exe, identity.TeamID, expectedTeam)
+		log.Printf("TRUST_WEAK: peer at %s has TeamIdentifier=%q, want %q", exe, identity.TeamID, expectedTeam)
 		return false
 	}
 	return true
@@ -1035,6 +1036,7 @@ func (session *daemonSession) shouldForwardRawNetworkToUI(nf event.NetworkFlowEv
 	}
 	session.rawNetworkMu.Lock()
 	defer session.rawNetworkMu.Unlock()
+	session.pruneRawNetworkVisibilitySeenLocked(now)
 	if session.rawNetworkSeen == nil {
 		session.rawNetworkSeen = make(map[string]time.Time)
 	}
@@ -1058,6 +1060,7 @@ func (sessions *daemonSessions) shouldForwardUnattributedRawNetworkToUI(nf event
 	}
 	sessions.rawNetworkMu.Lock()
 	defer sessions.rawNetworkMu.Unlock()
+	sessions.pruneUnattributedRawNetworkVisibilitySeenLocked(now)
 	if sessions.unattributedRawSeen == nil {
 		sessions.unattributedRawSeen = make(map[string]time.Time)
 	}
@@ -1077,6 +1080,30 @@ func rawNetworkVisibilityKey(nf event.NetworkFlowEvent) string {
 		host = remoteHost(nf.Remote)
 	}
 	return strings.ToLower(strings.Trim(host, "[]"))
+}
+
+func (session *daemonSession) pruneRawNetworkVisibilitySeenLocked(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-rawNetworkVisibilityTTL)
+	for key, seenAt := range session.rawNetworkSeen {
+		if seenAt.Before(cutoff) {
+			delete(session.rawNetworkSeen, key)
+		}
+	}
+}
+
+func (sessions *daemonSessions) pruneUnattributedRawNetworkVisibilitySeenLocked(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-rawNetworkVisibilityTTL)
+	for key, seenAt := range sessions.unattributedRawSeen {
+		if seenAt.Before(cutoff) {
+			delete(sessions.unattributedRawSeen, key)
+		}
+	}
 }
 
 func shouldHoldUnattributedNetworkFlow(nf event.NetworkFlowEvent) bool {

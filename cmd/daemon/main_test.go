@@ -1011,6 +1011,60 @@ func TestSubagentMonitorSuppressesBaselineClaudeProcesses(t *testing.T) {
 	}
 }
 
+func TestSubagentMonitorPrunesStaleClaudeState(t *testing.T) {
+	monitor := newSubagentMonitor()
+	processes := map[int]correlator.ProcessInfo{
+		100: {PID: 100, PPID: 1, Name: "/Users/scottmoore/.local/bin/claude"},
+	}
+	monitor.markBaseline(processes)
+
+	processes[200] = correlator.ProcessInfo{PID: 200, PPID: 100, Name: "/Users/scottmoore/.local/bin/claude"}
+	monitor.observe(processes, func(pid int) string {
+		if pid == 100 || pid == 200 {
+			return "/tmp/project"
+		}
+		return ""
+	})
+
+	monitor.mu.Lock()
+	if _, ok := monitor.seen[200]; !ok {
+		monitor.mu.Unlock()
+		t.Fatalf("expected subagent pid 200 to be observed")
+	}
+	if _, ok := monitor.pidToAgentID[200]; !ok {
+		monitor.mu.Unlock()
+		t.Fatalf("expected pid 200 to be tracked")
+	}
+	if _, ok := monitor.agents["sub_200"]; !ok {
+		monitor.mu.Unlock()
+		t.Fatalf("expected subagent agent to be tracked")
+	}
+	monitor.mu.Unlock()
+
+	// Simulate process exit by only keeping the parent process in the next snapshot.
+	processes = map[int]correlator.ProcessInfo{
+		100: {PID: 100, PPID: 1, Name: "/Users/scottmoore/.local/bin/claude"},
+	}
+	monitor.observe(processes, func(pid int) string {
+		if pid == 100 {
+			return "/tmp/project"
+		}
+		return ""
+	})
+
+	monitor.mu.Lock()
+	defer monitor.mu.Unlock()
+	if _, ok := monitor.seen[200]; ok {
+		t.Fatalf("expected stale seen pid 200 to be pruned")
+	}
+	if _, ok := monitor.pidToAgentID[200]; ok {
+		t.Fatalf("expected stale pidToAgentID[200] to be pruned")
+	}
+	if _, ok := monitor.agents["sub_200"]; ok {
+		t.Fatalf("expected stale subagent entry to be pruned")
+	}
+}
+
 func TestSubagentMonitorLogsDirectClaudeChildWithoutTmux(t *testing.T) {
 	var lines []string
 	monitor := newSubagentMonitor()

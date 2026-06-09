@@ -27,6 +27,10 @@ This builds:
 - `bin/neready` - production Network Extension readiness checker;
 - `bin/agentsnitchctl` - CLI helper for HTTPS Inspect status, CA, trust, and process-scoped environment commands.
 
+It intentionally does **not** rebuild the Tauri UI. For full UI or release prep, use `make create` or `make build-ui`, which both run the schema normalization step after `cargo tauri build`.
+
+If you ever run `cd ui && cargo tauri build` manually, run `make normalize-tauri-schemas` immediately after to avoid newline-only diffs in `ui/src-tauri/gen/schemas/*.json`.
+
 The emitter tags linkable network intent from shell network commands, MCP tools, WebFetch, and WebSearch. It also emits `destination_intents` when a tool input implies a host before the OS observer proves the flow, for example a WebFetch URL or an obvious WebSearch provider query such as GitHub.
 
 ## Create Full Local Install

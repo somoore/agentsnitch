@@ -80,6 +80,7 @@ build_everything() {
     exit 1
   fi
   (cd ui && cargo tauri build)
+  ./scripts/normalize-tauri-schemas.sh
 
   if [[ ! -d "$BUILT_APP" ]]; then
     echo "Built app not found: $BUILT_APP" >&2

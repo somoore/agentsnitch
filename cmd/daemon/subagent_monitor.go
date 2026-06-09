@@ -64,6 +64,10 @@ type subagentMonitor struct {
 	logf       func(format string, args ...interface{})
 }
 
+const (
+	subagentStaleAgentTTL = 15 * time.Minute
+)
+
 type subagentEvents struct {
 	lifecycle []event.AgentLifecycleEvent
 	semantics []event.SemanticEvent
@@ -156,6 +160,7 @@ func (m *subagentMonitor) observe(processes map[int]correlator.ProcessInfo, cwdL
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pruneRecentLocked(now)
+	m.pruneStateLocked(processes, now)
 
 	var detected subagentEvents
 	for pid, proc := range processes {
@@ -289,6 +294,93 @@ func (m *subagentMonitor) pruneRecentLocked(now time.Time) {
 		}
 	}
 	m.claudeRecent = claudeKept
+}
+
+func (m *subagentMonitor) pruneStateLocked(processes map[int]correlator.ProcessInfo, now time.Time) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	livePIDs := make(map[int]struct{}, len(processes))
+	for pid, proc := range processes {
+		if isClaudeCLIBinary(proc.Name) {
+			livePIDs[pid] = struct{}{}
+		}
+	}
+
+	for pid := range m.seen {
+		if _, ok := livePIDs[pid]; !ok {
+			delete(m.seen, pid)
+		}
+	}
+	for pid := range m.baseline {
+		if _, ok := livePIDs[pid]; !ok {
+			delete(m.baseline, pid)
+		}
+	}
+
+	for pid, agentID := range m.pidToAgentID {
+		agent, exists := m.agents[agentID]
+		if _, isLive := livePIDs[pid]; isLive {
+			if exists {
+				continue
+			}
+		}
+		if exists && agent.Type == "main" {
+			if now.Sub(agent.LastSeen) <= subagentStaleAgentTTL {
+				continue
+			}
+			if _, ok := livePIDs[agent.PID]; ok {
+				continue
+			}
+		}
+		delete(m.pidToAgentID, pid)
+	}
+
+	for agentID, agent := range m.agents {
+		if agent.Type == "main" {
+			if _, ok := livePIDs[agent.PID]; ok {
+				continue
+			}
+			if now.Sub(agent.LastSeen) <= subagentStaleAgentTTL {
+				continue
+			}
+			delete(m.agents, agentID)
+			delete(m.emittedAgentIDs, agentID)
+			continue
+		}
+		if agent.PID > 0 {
+			if _, ok := livePIDs[agent.PID]; ok {
+				continue
+			}
+			delete(m.agents, agentID)
+			delete(m.emittedAgentIDs, agentID)
+			continue
+		}
+		if now.Sub(agent.LastSeen) <= subagentStaleAgentTTL {
+			continue
+		}
+		delete(m.agents, agentID)
+		delete(m.emittedAgentIDs, agentID)
+	}
+
+	if m.mainAgentID != "" {
+		if _, ok := m.agents[m.mainAgentID]; !ok {
+			m.mainAgentID = ""
+			for id, agent := range m.agents {
+				if agent.Type == "main" {
+					m.mainAgentID = id
+					break
+				}
+			}
+		}
+	}
+
+	for toolUseID, agentID := range m.toolUseToAgentID {
+		if _, ok := m.agents[agentID]; !ok {
+			delete(m.toolUseToAgentID, toolUseID)
+		}
+	}
 }
 
 func (m *subagentMonitor) matchRecentDelegationLocked(now time.Time, cwd string) (delegationHook, bool) {

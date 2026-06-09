@@ -60,7 +60,8 @@ make create
 make doctor
 ```
 
-`make create` builds the Go tools and Tauri app, installs `/Applications/AgentSnitch.app`, starts the user daemon, launches the app, and runs `doctor`. Claude Code hooks are not installed automatically; open Settings -> Hooks to install or update them explicitly.
+`make create` builds the Go tools and Tauri app, installs `/Applications/AgentSnitch.app`, starts the user daemon, launches the app, and runs `doctor`. It also normalizes generated Tauri schema snapshots so `ui/src-tauri/gen/schemas/*.json` don't churn on trailing newline differences.
+If you manually run `cargo tauri build`, run `make normalize-tauri-schemas` after the UI build to keep schema snapshots stable.
 
 Current Settings tabs are:
 
