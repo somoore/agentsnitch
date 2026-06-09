@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -102,6 +103,49 @@ func TestRedactionHeadersAndBody(t *testing.T) {
 	}
 	if result.SHA256 == "" {
 		t.Fatalf("missing body hash")
+	}
+}
+
+func TestPurgePayloadsForEndedSessionsRemovesOnlySessionEndRecords(t *testing.T) {
+	paths := testPaths(t)
+	if err := os.MkdirAll(paths.DataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	ended := writePayloadRecordForInspectTest(t, paths, "ended.json", PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		Retention: FullPayloadUntilSession,
+		SessionID: "ended-session",
+		Request:   "request",
+		Response:  "response",
+	})
+	manual := writePayloadRecordForInspectTest(t, paths, "manual.json", PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		Retention: FullPayloadManual,
+		SessionID: "ended-session",
+		Request:   "request",
+		Response:  "response",
+	})
+	live := writePayloadRecordForInspectTest(t, paths, "live.json", PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		Retention: FullPayloadUntilSession,
+		SessionID: "live-session",
+		Request:   "request",
+		Response:  "response",
+	})
+
+	if err := PurgePayloadsForEndedSessions(paths, []string{"ended-session"}); err != nil {
+		t.Fatalf("PurgePayloadsForEndedSessions: %v", err)
+	}
+	if _, err := os.Stat(ended); !os.IsNotExist(err) {
+		t.Fatalf("ended session payload still exists or unexpected stat error: %v", err)
+	}
+	for _, path := range []string{manual, live} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("payload should remain at %s: %v", path, err)
+		}
 	}
 }
 
@@ -759,6 +803,19 @@ func findExecutableForTest(t *testing.T, name string) string {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		t.Skipf("%s is not installed", name)
+	}
+	return path
+}
+
+func writePayloadRecordForInspectTest(t *testing.T, paths Paths, name string, record PayloadRecord) string {
+	t.Helper()
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("Marshal payload record: %v", err)
+	}
+	path := filepath.Join(paths.DataDir, name)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("WriteFile payload record: %v", err)
 	}
 	return path
 }

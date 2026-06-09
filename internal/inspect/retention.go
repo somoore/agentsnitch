@@ -15,6 +15,7 @@ type PayloadRecord struct {
 	Schema    string     `json:"schema"`
 	Captured  time.Time  `json:"captured_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Retention string     `json:"retention,omitempty"`
 	SessionID string     `json:"session_id,omitempty"`
 	SpanID    string     `json:"span_id,omitempty"`
 	ToolUseID string     `json:"tool_use_id,omitempty"`
@@ -43,6 +44,7 @@ func StorePayloadRecord(paths Paths, exchange *event.InspectedHTTPExchange, requ
 		Schema:    "agentsnitch.inspect_payload.v0",
 		Captured:  captured,
 		ExpiresAt: payloadExpiry(captured, exchange.Retention.Retention),
+		Retention: exchange.Retention.Retention,
 		SessionID: exchange.SessionID,
 		SpanID:    exchange.SpanID,
 		ToolUseID: exchange.ToolUseID,
@@ -58,6 +60,52 @@ func StorePayloadRecord(paths Paths, exchange *event.InspectedHTTPExchange, requ
 	}
 	exchange.Request.PayloadRef = ref + "#request"
 	exchange.Response.PayloadRef = ref + "#response"
+	return nil
+}
+
+func PurgePayloadsForEndedSessions(paths Paths, sessionIDs []string) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	sessionSet := make(map[string]struct{}, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		if sessionID != "" {
+			sessionSet[sessionID] = struct{}{}
+		}
+	}
+	if len(sessionSet) == 0 {
+		return nil
+	}
+	entries, err := os.ReadDir(paths.DataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(paths.DataDir, entry.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var record PayloadRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			continue
+		}
+		if record.Retention != FullPayloadUntilSession {
+			continue
+		}
+		if _, ok := sessionSet[record.SessionID]; !ok {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return nil
 }
 

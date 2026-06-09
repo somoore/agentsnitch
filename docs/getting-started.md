@@ -258,6 +258,8 @@ The expected default healthy path is hooks OK, UI OK, latest network observer `n
 
 HTTPS Inspect Mode is an advanced Developer feature for managed traffic routed through AgentSnitch's local proxy. It is useful for short debugging sessions where method/path/status/header metadata, remote endpoint and byte-count metadata, redacted previews, hashes, or explicitly enabled redacted full-payload records are worth the CA/proxy friction.
 
+Full payload capture is off by default. When explicitly enabled with the default `until_session_ends` retention mode, AgentSnitch removes retained payload records for a session when the daemon prunes that ended session and no live agent PID remains.
+
 It does not inspect:
 
 - traffic that bypasses the managed proxy;

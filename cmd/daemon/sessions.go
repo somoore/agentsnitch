@@ -1,12 +1,14 @@
 package main
 
 import (
+	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/somoore/agentsnitch/internal/correlator"
 	"github.com/somoore/agentsnitch/internal/event"
+	"github.com/somoore/agentsnitch/internal/inspect"
 )
 
 const (
@@ -216,6 +218,7 @@ func (s *daemonSessions) pruneIdle(now time.Time, processes map[int]correlator.P
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var pruned []string
 	for id, sess := range s.sessions {
 		last := sess.lastActivity
 		if last.IsZero() {
@@ -228,8 +231,18 @@ func (s *daemonSessions) pruneIdle(now time.Time, processes map[int]correlator.P
 			continue
 		}
 		delete(s.sessions, id)
+		pruned = append(pruned, id)
 	}
 	s.prunePendingFlowsLocked(now)
+	if len(pruned) > 0 {
+		go purgeInspectPayloadsForEndedSessions(pruned)
+	}
+}
+
+func purgeInspectPayloadsForEndedSessions(sessionIDs []string) {
+	if err := inspect.PurgePayloadsForEndedSessions(inspect.DefaultPaths(), sessionIDs); err != nil {
+		log.Printf("inspect payload session-end retention purge failed: %v", err)
+	}
 }
 
 func (s *daemonSessions) prunePendingFlowsLocked(now time.Time) {
