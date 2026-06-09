@@ -82,3 +82,15 @@ The release notes are now sourced from `CHANGELOG.md`. To keep release messaging
 accurate, add a `## [<tag>]` section before tagging (for example
 `## [v0.1.0-pre-alpha.6]`) with the items for that release. If a matching
 section is missing, the workflow falls back to recent commit history.
+
+The `release-signing` environment must remain free of required reviewers. Any
+required-reviewer rule on this environment pauses tag-triggered release jobs in a
+permanent `waiting` state. If you see that behavior, clear the reviewer rule in
+GitHub repository settings before continuing with tag automation.
+
+If this needs to be repaired from automation tooling, you can run:
+
+```sh
+gh auth login
+./scripts/ensure-release-environment-unlocked.sh release-signing
+```

@@ -6,6 +6,14 @@ All notable changes to AgentSnitch are recorded here.
 
 - No public release notes queued yet.
 
+## [v0.1.0-pre-alpha.7] - 2026-06-09
+
+- Remove required-reviewer gating on `release-signing` so tag-triggered release
+  workflows can start automatically and complete without manual environment
+  approval stalls.
+
+- Keep changelog-driven release-note generation for the macOS release workflow.
+
 ## [v0.1.0-pre-alpha.6] - 2026-06-09
 
 - Handle known Go runtime `xpc_*` leak signal in stress guardrails and record the allowlist in release scripts.
