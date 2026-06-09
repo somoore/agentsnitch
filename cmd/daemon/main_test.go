@@ -137,13 +137,18 @@ func TestStartInspectPayloadRetentionPurgesExpiredPayloads(t *testing.T) {
 
 func writeInspectPayloadRecord(t *testing.T, paths inspect.Paths, name string, expiresAt *time.Time) string {
 	t.Helper()
-	raw, err := json.Marshal(inspect.PayloadRecord{
+	return writeInspectPayloadRecordWithFields(t, paths, name, inspect.PayloadRecord{
 		Schema:    "agentsnitch.inspect_payload.v0",
 		Captured:  time.Now().UTC(),
 		ExpiresAt: expiresAt,
 		Request:   "request",
 		Response:  "response",
 	})
+}
+
+func writeInspectPayloadRecordWithFields(t *testing.T, paths inspect.Paths, name string, record inspect.PayloadRecord) string {
+	t.Helper()
+	raw, err := json.Marshal(record)
 	if err != nil {
 		t.Fatalf("Marshal payload record: %v", err)
 	}
@@ -404,6 +409,69 @@ func TestDaemonSessionsPruneIdleSessionsWithoutLiveAgentPID(t *testing.T) {
 	got := sessions.list()
 	if len(got) != 1 || got[0].id != "live" {
 		t.Fatalf("sessions after prune = %+v, want only live session", got)
+	}
+}
+
+func TestDaemonSessionPrunePurgesUntilSessionEndsPayloads(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("AGENTSNITCH_INSPECT_DIR", filepath.Join(base, "inspect"))
+	paths := inspect.DefaultPaths()
+	if err := os.MkdirAll(paths.DataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	endedSessionPath := writeInspectPayloadRecordWithFields(t, paths, "ended-session.json", inspect.PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		Retention: inspect.FullPayloadUntilSession,
+		SessionID: "expired",
+		Request:   "request",
+		Response:  "response",
+	})
+	manualPath := writeInspectPayloadRecordWithFields(t, paths, "manual.json", inspect.PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		Retention: inspect.FullPayloadManual,
+		SessionID: "expired",
+		Request:   "request",
+		Response:  "response",
+	})
+	livePath := writeInspectPayloadRecordWithFields(t, paths, "live.json", inspect.PayloadRecord{
+		Schema:    "agentsnitch.inspect_payload.v0",
+		Captured:  time.Now().UTC(),
+		Retention: inspect.FullPayloadUntilSession,
+		SessionID: "live",
+		Request:   "request",
+		Response:  "response",
+	})
+
+	sessions := newDaemonSessions()
+	now := time.Now().UTC()
+	expired := sessions.getOrCreate("expired")
+	live := sessions.getOrCreate("live")
+	live.state.AddPID(200)
+	sessions.mu.Lock()
+	expired.lastActivity = now.Add(-2 * defaultDaemonSessionIdle)
+	live.lastActivity = now.Add(-2 * defaultDaemonSessionIdle)
+	sessions.mu.Unlock()
+
+	sessions.pruneIdle(now, map[int]correlator.ProcessInfo{
+		200: {PID: 200, PPID: 1, Name: "/opt/homebrew/bin/claude"},
+	}, defaultDaemonSessionIdle)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(endedSessionPath); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(endedSessionPath); !os.IsNotExist(err) {
+		t.Fatalf("ended-session payload still exists or unexpected stat error: %v", err)
+	}
+	for _, path := range []string{manualPath, livePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("payload should remain at %s: %v", path, err)
+		}
 	}
 }
 

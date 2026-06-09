@@ -73,7 +73,7 @@ Defaults:
 - Full payload mode: writes redacted local payload records under the HTTPS Inspect payload store and includes request/response payload refs in the inspected exchange.
 - Authorization, Proxy-Authorization, Cookie, Set-Cookie, API key, auth token, AWS session token, GitHub token, OpenAI key, and Anthropic key headers are never stored raw by default.
 
-AgentSnitch purges expired full-payload records when new payloads are captured and from a daemon background maintenance pass. Evidence Pack export never inlines retained full payload bodies; it includes local payload refs plus retention warnings so exported JSONL can be reviewed or shared without copying retained bodies into the export. `agentsnitchctl inspect purge-data --expired` removes only expired payload records; `agentsnitchctl inspect purge-data` removes all captured payload data.
+AgentSnitch purges expired full-payload records when new payloads are captured and from a daemon background maintenance pass. For the default `until_session_ends` full-payload retention mode, AgentSnitch removes the session's retained payload records when the daemon prunes that ended session and no live agent PID remains. Evidence Pack export never inlines retained full payload bodies; it includes local payload refs plus retention warnings so exported JSONL can be reviewed or shared without copying retained bodies into the export. `agentsnitchctl inspect purge-data --expired` removes only expired payload records; `agentsnitchctl inspect purge-data` removes all captured payload data.
 
 ## Failure Downgrade Behavior
 
