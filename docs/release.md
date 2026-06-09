@@ -77,3 +77,8 @@ The `release-macos` workflow then verifies that:
 
 If any of those checks fail, the release stops before certificates,
 provisioning profiles, notarization keys, or package signing are loaded.
+
+The release notes are now sourced from `CHANGELOG.md`. To keep release messaging
+accurate, add a `## [<tag>]` section before tagging (for example
+`## [v0.1.0-pre-alpha.6]`) with the items for that release. If a matching
+section is missing, the workflow falls back to recent commit history.
