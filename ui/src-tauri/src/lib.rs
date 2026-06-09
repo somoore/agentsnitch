@@ -3858,11 +3858,7 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
             }
         })
         .unwrap_or_default();
-    let title = if mode == "local_mitm" {
-        "Inspected HTTPS request during tool span"
-    } else {
-        "Managed proxy recorded HTTPS metadata"
-    };
+    let title = inspected_http_title(mode);
     let destination = format!("{}://{}{}", scheme, host, path);
     let mut details = vec![
         EvidenceDetail {
@@ -3879,17 +3875,19 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
         },
         EvidenceDetail {
             label: "Observed".into(),
-            value: if mode == "local_mitm" {
-                "TLS terminated locally by AgentSnitch Inspect Mode".into()
-            } else {
-                "managed proxy metadata only".into()
-            },
+            value: inspected_http_observed_detail(mode).into(),
         },
         EvidenceDetail {
             label: "Redaction".into(),
             value: format!("{} redacted secret-looking value(s)", redactions),
         },
     ];
+    if let Some(detail) = inspected_http_limitation_detail(mode) {
+        details.push(EvidenceDetail {
+            label: "Inspection limit".into(),
+            value: detail.into(),
+        });
+    }
     if !remote.is_empty() {
         details.push(EvidenceDetail {
             label: "Remote endpoint".into(),
@@ -3951,7 +3949,7 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
         id,
         ts,
         summary: format!("{}: {} {}", title, method, destination),
-        tags: vec!["inspected_http_exchange".into(), "managed_proxy".into()],
+        tags: inspected_http_tags(mode),
         detail: Some(format!("{} · confidence {}", basis, confidence)),
         destination: Some(host.into()),
         destination_context: None,
@@ -3984,11 +3982,7 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
                         .collect()
                 })
                 .unwrap_or_else(|| vec!["managed_proxy".into()]),
-            why_human: if mode == "local_mitm" {
-                "managed proxy + TLS terminated locally + exact requested host".into()
-            } else {
-                "managed proxy + exact requested host".into()
-            },
+            why_human: inspected_http_why_human(mode).into(),
             destination: host.into(),
             destination_category: "inspected locally".into(),
             destination_provenance: vec![EvidenceDetail {
@@ -3998,7 +3992,7 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
             severity: "medium".into(),
             risk: "medium".into(),
             review_status: "needs review".into(),
-            review_subtitle: "Inspected locally with redaction-aware retention".into(),
+            review_subtitle: inspected_http_review_subtitle(mode).into(),
             decision: "observed".into(),
             details,
             replay: vec![EvidenceDetail {
@@ -4011,6 +4005,76 @@ fn build_inspected_http_ui_event(app: &AppHandle, body: &str) -> Option<UiEvent>
         }),
         agent: None,
     })
+}
+
+fn inspected_http_title(mode: &str) -> &'static str {
+    if mode == "local_mitm" {
+        "Inspected HTTPS request during tool span"
+    } else {
+        "Managed proxy recorded HTTPS metadata"
+    }
+}
+
+fn inspected_http_observed_detail(mode: &str) -> &'static str {
+    match mode {
+        "local_mitm" => "TLS terminated locally by AgentSnitch Inspect Mode",
+        "pinned_or_custom_trust" => {
+            "managed proxy metadata only; client rejected local TLS inspection"
+        }
+        "trust_failed" => "managed proxy metadata only; local TLS inspection setup failed",
+        "unsupported_protocol" => {
+            "managed proxy metadata only; flow was not recognized as HTTP over TLS"
+        }
+        _ => "managed proxy metadata only; HTTPS payloads were not decrypted",
+    }
+}
+
+fn inspected_http_limitation_detail(mode: &str) -> Option<&'static str> {
+    match mode {
+        "pinned_or_custom_trust" => Some(
+            "The client did not trust the AgentSnitch CA, used certificate pinning, or used a custom trust store. AgentSnitch recorded CONNECT metadata only.",
+        ),
+        "trust_failed" => Some(
+            "AgentSnitch could not prepare a local inspection certificate for this destination. Metadata-only evidence was recorded.",
+        ),
+        "unsupported_protocol" => Some(
+            "TLS inspection was enabled, but the tunneled flow was not recognized as HTTP over TLS. Metadata-only evidence was recorded.",
+        ),
+        "metadata_only" => Some(
+            "This destination was outside the active inspection scope or configured for metadata-only CONNECT logging. HTTPS payloads were not decrypted.",
+        ),
+        _ => None,
+    }
+}
+
+fn inspected_http_why_human(mode: &str) -> &'static str {
+    if mode == "local_mitm" {
+        "managed proxy + TLS terminated locally + exact requested host"
+    } else {
+        "managed proxy + exact requested host; HTTPS payloads not decrypted"
+    }
+}
+
+fn inspected_http_review_subtitle(mode: &str) -> &'static str {
+    if mode == "local_mitm" {
+        "Inspected locally with redaction-aware retention"
+    } else {
+        "Metadata-only proxy evidence; HTTPS contents were not inspected"
+    }
+}
+
+fn inspected_http_tags(mode: &str) -> Vec<String> {
+    let mut tags = vec!["inspected_http_exchange".into(), "managed_proxy".into()];
+    if mode != "local_mitm" {
+        tags.push("inspect_metadata_only".into());
+    }
+    if matches!(
+        mode,
+        "pinned_or_custom_trust" | "trust_failed" | "unsupported_protocol"
+    ) {
+        tags.push("inspect_limited".into());
+    }
+    tags
 }
 
 fn process_incoming_json(app: &AppHandle, body: &str, source: &str) {
@@ -8684,6 +8748,32 @@ mod tests {
             2
         );
         assert!(!record.to_string().contains("request_redacted_body"));
+    }
+
+    #[test]
+    fn inspected_http_mode_copy_makes_failures_explicit() {
+        assert_eq!(
+            inspected_http_observed_detail("local_mitm"),
+            "TLS terminated locally by AgentSnitch Inspect Mode"
+        );
+        assert!(inspected_http_limitation_detail("local_mitm").is_none());
+        assert!(inspected_http_tags("local_mitm")
+            .iter()
+            .all(|tag| tag != "inspect_metadata_only"));
+
+        let pinned = inspected_http_limitation_detail("pinned_or_custom_trust").unwrap();
+        assert!(pinned.contains("did not trust the AgentSnitch CA"));
+        assert!(pinned.contains("certificate pinning"));
+        assert!(pinned.contains("custom trust store"));
+        assert!(inspected_http_tags("pinned_or_custom_trust")
+            .iter()
+            .any(|tag| tag == "inspect_limited"));
+
+        assert!(inspected_http_limitation_detail("unsupported_protocol")
+            .unwrap()
+            .contains("not recognized as HTTP over TLS"));
+        assert!(inspected_http_review_subtitle("metadata_only").contains("Metadata-only"));
+        assert!(inspected_http_why_human("metadata_only").contains("not decrypted"));
     }
 
     #[test]
