@@ -5256,7 +5256,7 @@ fn build_debug_snapshot(state: &AppState) -> serde_json::Value {
     let status_path = runtime_status_path();
     let daemon_status = load_daemon_status_snapshot();
     let agent_process_running =
-        agent_process_running_for_session_cached(&state, &session, &agents_map)
+        agent_process_running_for_session_cached(state, &session, &agents_map)
             .map(|running| serde_json::json!(running))
             .unwrap_or_else(|err| serde_json::json!({ "error": err }));
 
@@ -6635,6 +6635,7 @@ fn export_timestamp() -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
@@ -9318,10 +9319,7 @@ mod tests {
 
         // The cap is honored and is large enough to keep a real trace.
         assert_eq!(events.len(), MAX_UI_EVENTS);
-        assert!(
-            MAX_UI_EVENTS >= 2000,
-            "cap must support a 100-subagent trace"
-        );
+        const _: () = assert!(MAX_UI_EVENTS >= 2000);
 
         // Every linked-evidence event survives the flood (prioritized over
         // routine hooks), and routine hooks still fill out the remaining budget.
