@@ -329,29 +329,52 @@ func (p *Proxy) emit(exchange event.InspectedHTTPExchange) {
 }
 
 func contextFromRequest(req *http.Request) Context {
+	user, token := proxyCredentials(req)
+	sessionID := req.Header.Get("X-AgentSnitch-Session")
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = sessionIDFromProxyUser(user)
+	}
 	return Context{
-		SessionID: req.Header.Get("X-AgentSnitch-Session"),
+		SessionID: sessionID,
 		SpanID:    req.Header.Get("X-AgentSnitch-Span"),
 		ToolUseID: req.Header.Get("X-AgentSnitch-Tool-Use-ID"),
-		Token:     proxyToken(req),
+		Token:     token,
 	}
 }
 
 func proxyToken(req *http.Request) string {
+	_, token := proxyCredentials(req)
+	return token
+}
+
+func proxyCredentials(req *http.Request) (string, string) {
 	value := req.Header.Get("Proxy-Authorization")
 	if strings.HasPrefix(strings.ToLower(value), "bearer ") {
-		return strings.TrimSpace(value[len("bearer "):])
+		return "", strings.TrimSpace(value[len("bearer "):])
 	}
 	if strings.HasPrefix(strings.ToLower(value), "basic ") {
 		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value[len("basic "):]))
 		if err == nil {
-			_, token, ok := strings.Cut(string(raw), ":")
+			user, token, ok := strings.Cut(string(raw), ":")
 			if ok {
-				return token
+				return user, token
 			}
 		}
 	}
-	return ""
+	return "", ""
+}
+
+func sessionIDFromProxyUser(user string) string {
+	user = strings.TrimSpace(user)
+	const prefix = "agentsnitch."
+	if !strings.HasPrefix(user, prefix) {
+		return ""
+	}
+	sessionID := strings.TrimSpace(strings.TrimPrefix(user, prefix))
+	if sessionID == "" {
+		return ""
+	}
+	return sessionID
 }
 
 func (p *Proxy) authorized(ctx Context) bool {
@@ -387,6 +410,67 @@ func AuthenticatedProxyURL(address, token string) string {
 		u.User = url.UserPassword("agentsnitch", token)
 	}
 	return u.String()
+}
+
+func AuthenticatedProxyURLForSession(address, token, sessionID string) string {
+	if strings.TrimSpace(address) == "" {
+		return ""
+	}
+	u := url.URL{Scheme: "http", Host: address}
+	if token != "" {
+		user := "agentsnitch"
+		if session := SafeProxySessionID(sessionID); session != "" {
+			user = "agentsnitch." + session
+		}
+		u.User = url.UserPassword(user, token)
+	}
+	return u.String()
+}
+
+func SessionScopedProxyURL(proxyURL, sessionID string) string {
+	session := SafeProxySessionID(sessionID)
+	if strings.TrimSpace(proxyURL) == "" || session == "" {
+		return proxyURL
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.Host == "" {
+		return proxyURL
+	}
+	token := ""
+	if u.User != nil {
+		token, _ = u.User.Password()
+	}
+	if token == "" {
+		return proxyURL
+	}
+	u.User = url.UserPassword("agentsnitch."+session, token)
+	return u.String()
+}
+
+func SafeProxySessionID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range sessionID {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+		if b.Len() >= 96 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), ".-_")
 }
 
 type countingWriter struct {

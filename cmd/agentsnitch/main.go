@@ -1,13 +1,16 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -179,7 +182,8 @@ func runWithInspectEnv(args []string) {
 		os.Exit(2)
 	}
 	env := os.Environ()
-	for key, value := range liveInspectEnv() {
+	sessionID := managedRunSessionID(args)
+	for key, value := range scopedInspectEnv(liveInspectEnv(), sessionID) {
 		env = append(env, key+"="+value)
 	}
 	cmd := exec.Command(args[0], args[1:]...)
@@ -193,6 +197,35 @@ func runWithInspectEnv(args []string) {
 		}
 		exitIf(err)
 	}
+}
+
+func scopedInspectEnv(env map[string]string, sessionID string) map[string]string {
+	out := make(map[string]string, len(env)+2)
+	for key, value := range env {
+		switch key {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "npm_config_proxy", "npm_config_https_proxy", "NPM_CONFIG_PROXY", "NPM_CONFIG_HTTPS_PROXY":
+			out[key] = inspect.SessionScopedProxyURL(value, sessionID)
+		default:
+			out[key] = value
+		}
+	}
+	if safe := inspect.SafeProxySessionID(sessionID); safe != "" {
+		out["AGENTSNITCH_INSPECT_SESSION_ID"] = safe
+		out["AGENTSNITCH_SESSION_ID"] = safe
+	}
+	return out
+}
+
+func managedRunSessionID(args []string) string {
+	var raw [6]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return inspect.SafeProxySessionID(fmt.Sprintf("inspect-run-%d", time.Now().UTC().UnixNano()))
+	}
+	name := "command"
+	if len(args) > 0 {
+		name = filepath.Base(args[0])
+	}
+	return inspect.SafeProxySessionID(fmt.Sprintf("inspect-run-%s-%d-%s", name, time.Now().UTC().Unix(), hex.EncodeToString(raw[:])))
 }
 
 func shellExportValue(value string) string {
