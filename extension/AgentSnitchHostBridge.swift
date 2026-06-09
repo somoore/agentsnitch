@@ -83,6 +83,10 @@ public final class AgentSnitchHostBridge: NSObject {
         configureFilter()
     }
 
+    public func stop() {
+        stopXPCListener()
+    }
+
     public func activateSystemExtension() {
         activator.activate()
     }
@@ -105,6 +109,12 @@ public final class AgentSnitchHostBridge: NSObject {
     }
 
     private func startXPCListener() {
+        if let existingListener = listener {
+            existingListener.invalidate()
+            listener = nil
+            exportedObject = nil
+        }
+
         let receiver = AgentSnitchXPCReceiver(daemonSocketPath: daemonSocketPath, expectedToken: xpcToken)
         let listener = NSXPCListener(machServiceName: AgentSnitchXPCServiceName)
         listener.delegate = receiver
@@ -112,6 +122,19 @@ public final class AgentSnitchHostBridge: NSObject {
         self.exportedObject = receiver
         self.listener = listener
         NSLog("AgentSnitchHostBridge listening on XPC service %@", AgentSnitchXPCServiceName)
+    }
+
+    private func stopXPCListener() {
+        guard let listener else {
+            return
+        }
+        listener.invalidate()
+        self.listener = nil
+        self.exportedObject = nil
+    }
+
+    deinit {
+        stopXPCListener()
     }
 
     private static func makeXpcToken() -> String {

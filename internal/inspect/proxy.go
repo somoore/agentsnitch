@@ -154,7 +154,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Context) {
 	started := time.Now()
-	body, _ := io.ReadAll(limitReader(req.Body, 16<<20))
+	body, _ := io.ReadAll(req.Body)
 	if req.Body != nil {
 		_ = req.Body.Close()
 	}
@@ -182,6 +182,7 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Co
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Context) {
 	started := time.Now()
+	const maxRequestsPerTunnel = 16
 	host := req.Host
 	if host == "" {
 		http.Error(w, "missing CONNECT host", http.StatusBadRequest)
@@ -233,55 +234,69 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		return
 	}
 	reader := bufio.NewReader(tlsClient)
-	clientReq, err := http.ReadRequest(reader)
-	if err != nil {
-		p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
-		return
+	for requestCount := 0; requestCount < maxRequestsPerTunnel; requestCount++ {
+		requestStart := time.Now()
+		clientReq, err := http.ReadRequest(reader)
+		if err != nil {
+			if requestCount == 0 {
+				p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
+			}
+			return
+		}
+		innerCtx := contextFromRequest(clientReq)
+		if ctx.SessionID == "" {
+			ctx.SessionID = innerCtx.SessionID
+		}
+		if ctx.SpanID == "" {
+			ctx.SpanID = innerCtx.SpanID
+		}
+		if ctx.ToolUseID == "" {
+			ctx.ToolUseID = innerCtx.ToolUseID
+		}
+		reqBody, err := io.ReadAll(clientReq.Body)
+		if clientReq.Body != nil {
+			_ = clientReq.Body.Close()
+		}
+		if err != nil {
+			p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
+			return
+		}
+		upstreamReq, err := CloneRequestForUpstream(clientReq, reqBody, "https", host)
+		if err != nil {
+			p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
+			return
+		}
+		var tlsState *tls.ConnectionState
+		resp, respBody, network, err := p.roundTrip(upstreamReq, &tlsState)
+		if err != nil {
+			_, _ = io.WriteString(tlsClient, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+			return
+		}
+		defer resp.Body.Close()
+		if err := resp.Write(tlsClient); err != nil {
+			return
+		}
+		upstreamVersion := ""
+		if tlsState != nil {
+			upstreamVersion = tlsVersionName(tlsState.Version)
+		}
+		info, _ := p.certs.Info()
+		network.BytesOut = int64(len(reqBody))
+		network.BytesIn = int64(len(respBody))
+		network.DurationMS = time.Since(requestStart).Milliseconds()
+		exchange := ExchangeFromHTTP(ctx, Capture{
+			Settings:      p.settings,
+			CAFingerprint: info.Fingerprint,
+			Paths:         p.paths,
+			Network:       network,
+		}, clientReq, reqBody, resp, respBody, "local_mitm", upstreamVersion, true)
+		p.emit(exchange)
+		if clientReq.Close {
+			return
+		}
+		_ = started
 	}
-	innerCtx := contextFromRequest(clientReq)
-	if ctx.SessionID == "" {
-		ctx.SessionID = innerCtx.SessionID
-	}
-	if ctx.SpanID == "" {
-		ctx.SpanID = innerCtx.SpanID
-	}
-	if ctx.ToolUseID == "" {
-		ctx.ToolUseID = innerCtx.ToolUseID
-	}
-	reqBody, _ := io.ReadAll(limitReader(clientReq.Body, 16<<20))
-	if clientReq.Body != nil {
-		_ = clientReq.Body.Close()
-	}
-	upstreamReq, err := CloneRequestForUpstream(clientReq, reqBody, "https", host)
-	if err != nil {
-		p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
-		return
-	}
-	var tlsState *tls.ConnectionState
-	resp, respBody, network, err := p.roundTrip(upstreamReq, &tlsState)
-	if err != nil {
-		_, _ = io.WriteString(tlsClient, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
-		return
-	}
-	defer resp.Body.Close()
-	if err := resp.Write(tlsClient); err != nil {
-		return
-	}
-	upstreamVersion := ""
-	if tlsState != nil {
-		upstreamVersion = tlsVersionName(tlsState.Version)
-	}
-	info, _ := p.certs.Info()
-	network.BytesOut = int64(len(reqBody))
-	network.BytesIn = int64(len(respBody))
-	network.DurationMS = time.Since(started).Milliseconds()
-	exchange := ExchangeFromHTTP(ctx, Capture{
-		Settings:      p.settings,
-		CAFingerprint: info.Fingerprint,
-		Paths:         p.paths,
-		Network:       network,
-	}, clientReq, reqBody, resp, respBody, "local_mitm", upstreamVersion, true)
-	p.emit(exchange)
+	p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
 }
 
 func (p *Proxy) tunnelConnect(w http.ResponseWriter, req *http.Request) (event.InspectedHTTPNetwork, error) {
@@ -563,7 +578,7 @@ func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*h
 		state := *resp.TLS
 		*tlsState = &state
 	}
-	body, err := io.ReadAll(limitReader(resp.Body, 16<<20))
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, nil, event.InspectedHTTPNetwork{}, err
 	}

@@ -893,31 +893,16 @@ fn reconcile_session_liveness(state: &AppState, app: &AppHandle) -> bool {
     }
 
     let process_running = {
-        let now = SystemTime::now();
         let agents = state.agents.lock().unwrap().clone();
-        let mut runtime = state.runtime.lock().unwrap();
-        let should_check = runtime
-            .last_process_check
-            .and_then(|checked| checked.elapsed().ok())
-            .map(|elapsed| elapsed >= AGENT_PROCESS_CHECK_INTERVAL)
-            .unwrap_or(true);
-        if should_check {
-            runtime.last_process_check = Some(now);
-            match agent_process_running_for_session(&snap, &agents) {
-                Ok(running) => {
-                    runtime.agent_process_running = running;
-                    running
-                }
-                Err(err) => {
-                    append_ui_log(&format!(
-                        "[agentsnitch-ui] agent process liveness check failed: {}",
-                        err
-                    ));
-                    true
-                }
+        match agent_process_running_for_session_cached(state, &snap, &agents) {
+            Ok(running) => running,
+            Err(err) => {
+                append_ui_log(&format!(
+                    "[agentsnitch-ui] agent process liveness check failed: {}",
+                    err
+                ));
+                true
             }
-        } else {
-            runtime.agent_process_running
         }
     };
 
@@ -1091,6 +1076,39 @@ fn agent_process_running_for_session(
         text.lines(),
         session_agent_family(snap, agents),
     ))
+}
+
+fn agent_process_running_for_session_cached(
+    state: &AppState,
+    snap: &SessionSnapshot,
+    agents: &HashMap<String, AgentInfo>,
+) -> Result<bool, String> {
+    let should_check = {
+        let runtime = state.runtime.lock().unwrap();
+        runtime
+            .last_process_check
+            .and_then(|checked| checked.elapsed().ok())
+            .map(|elapsed| elapsed >= AGENT_PROCESS_CHECK_INTERVAL)
+            .unwrap_or(true)
+    };
+    if !should_check {
+        return Ok(state.runtime.lock().unwrap().agent_process_running);
+    }
+
+    let now = SystemTime::now();
+    let running = match agent_process_running_for_session(snap, agents) {
+        Ok(running) => running,
+        Err(err) => {
+            let mut runtime = state.runtime.lock().unwrap();
+            runtime.last_process_check = Some(now);
+            runtime.agent_process_running = true;
+            return Err(err);
+        }
+    };
+    let mut runtime = state.runtime.lock().unwrap();
+    runtime.last_process_check = Some(now);
+    runtime.agent_process_running = running;
+    Ok(running)
 }
 
 fn agent_process_lines_running_for_session<'a>(
@@ -5224,7 +5242,8 @@ fn get_debug_snapshot(state: State<AppState>) -> serde_json::Value {
 
 fn build_debug_snapshot(state: &AppState) -> serde_json::Value {
     let events = state.events.lock().unwrap().clone();
-    let agents = sorted_agents(&state.agents.lock().unwrap());
+    let agents_map = state.agents.lock().unwrap().clone();
+    let agents = sorted_agents(&agents_map);
     let active = *state.active.lock().unwrap();
     let quiet = *state.quiet.lock().unwrap();
     let paused = *state.paused.lock().unwrap();
@@ -5237,7 +5256,7 @@ fn build_debug_snapshot(state: &AppState) -> serde_json::Value {
     let status_path = runtime_status_path();
     let daemon_status = load_daemon_status_snapshot();
     let agent_process_running =
-        agent_process_running_for_session(&session, &state.agents.lock().unwrap())
+        agent_process_running_for_session_cached(state, &session, &agents_map)
             .map(|running| serde_json::json!(running))
             .unwrap_or_else(|err| serde_json::json!({ "error": err }));
 
@@ -6616,6 +6635,7 @@ fn export_timestamp() -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
@@ -9299,10 +9319,7 @@ mod tests {
 
         // The cap is honored and is large enough to keep a real trace.
         assert_eq!(events.len(), MAX_UI_EVENTS);
-        assert!(
-            MAX_UI_EVENTS >= 2000,
-            "cap must support a 100-subagent trace"
-        );
+        const _: () = assert!(MAX_UI_EVENTS >= 2000);
 
         // Every linked-evidence event survives the flood (prioritized over
         // routine hooks), and routine hooks still fill out the remaining budget.

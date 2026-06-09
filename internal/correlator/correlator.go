@@ -5,6 +5,7 @@ import (
 	"net"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,10 @@ const (
 	// MaxRecentFlows caps the network flow ring buffer used for semantic-triggered
 	// correlation against already-active connections.
 	MaxRecentFlows = 100
+
+	maxCorrelationEntries         = 2048
+	correlationCacheTTL           = 15 * time.Minute
+	activeToolSpanRetentionWindow = 10 * time.Minute
 )
 
 var defaultHeuristics = config.DefaultHeuristics()
@@ -92,14 +97,17 @@ type SessionState struct {
 	// semantic tool-use. It prevents a correct direct PID match from being
 	// followed by weaker sibling/ancestor cards for the same hook.
 	SemanticBestStrength map[string]int
+	// SemanticBestStrengthUpdated tracks when a strength key was last adjusted
+	// for cap/ttl-aware cleanup.
+	SemanticBestStrengthUpdated map[string]time.Time
 
 	// DestinationSeen tracks destinations already surfaced as linked evidence
 	// in this session so first-time destinations can stay visible.
-	DestinationSeen map[string]struct{}
+	DestinationSeen map[string]time.Time
 
 	// NoisyPatternSeen tracks expected network-heavy tool patterns that have
 	// already been surfaced once in this session.
-	NoisyPatternSeen map[string]struct{}
+	NoisyPatternSeen map[string]time.Time
 
 	// ActiveToolSpans tracks egress-capable PreToolUse events that have not yet
 	// reached their matching PostToolUse. It is used by the inspect proxy path to
@@ -113,16 +121,17 @@ type SessionState struct {
 // NewSessionState creates a fresh session state.
 func NewSessionState() *SessionState {
 	return &SessionState{
-		Events:               make([]event.SemanticEvent, 0, MaxRecentEvents),
-		Flows:                make([]event.NetworkFlowEvent, 0, MaxRecentFlows),
-		KnownPIDs:            make(map[int]struct{}),
-		Processes:            make(map[int]ProcessInfo),
-		CorrelatedKeys:       make(map[string]time.Time),
-		SemanticBestStrength: make(map[string]int),
-		DestinationSeen:      make(map[string]struct{}),
-		NoisyPatternSeen:     make(map[string]struct{}),
-		ActiveToolSpans:      make(map[string]ToolSpan),
-		StartTime:            time.Now(),
+		Events:                      make([]event.SemanticEvent, 0, MaxRecentEvents),
+		Flows:                       make([]event.NetworkFlowEvent, 0, MaxRecentFlows),
+		KnownPIDs:                   make(map[int]struct{}),
+		Processes:                   make(map[int]ProcessInfo),
+		CorrelatedKeys:              make(map[string]time.Time),
+		SemanticBestStrength:        make(map[string]int),
+		SemanticBestStrengthUpdated: make(map[string]time.Time),
+		DestinationSeen:             make(map[string]time.Time),
+		NoisyPatternSeen:            make(map[string]time.Time),
+		ActiveToolSpans:             make(map[string]ToolSpan),
+		StartTime:                   time.Now(),
 	}
 }
 
@@ -133,6 +142,7 @@ func (s *SessionState) AddPID(pid int) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneCorrelationCachesLocked(time.Now())
 	s.addProcessLocked(ProcessInfo{PID: pid, Source: "manual", TrackAsAgent: true})
 }
 
@@ -140,7 +150,9 @@ func (s *SessionState) AddPID(pid int) {
 func (s *SessionState) IsAgentPID(pid int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredProcessesLocked(time.Now())
+	now := time.Now()
+	s.pruneExpiredProcessesLocked(now)
+	s.pruneCorrelationCachesLocked(now)
 	_, ok := s.KnownPIDs[pid]
 	return ok
 }
@@ -152,7 +164,9 @@ func (s *SessionState) IsAgentPID(pid int) bool {
 func (s *SessionState) MatchesNetworkFlow(flow event.NetworkFlowEvent) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredProcessesLocked(time.Now())
+	now := time.Now()
+	s.pruneExpiredProcessesLocked(now)
+	s.pruneCorrelationCachesLocked(now)
 	if s.pidInSet(flow.PID) || s.pidInSet(flow.PPID) {
 		return true
 	}
@@ -167,7 +181,9 @@ func (s *SessionState) HasLiveAgentPID(processes map[int]ProcessInfo) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredProcessesLocked(time.Now())
+	now := time.Now()
+	s.pruneExpiredProcessesLocked(now)
+	s.pruneCorrelationCachesLocked(now)
 	for pid := range s.KnownPIDs {
 		if _, ok := processes[pid]; ok {
 			return true
@@ -183,6 +199,7 @@ func (s *SessionState) AddProcess(pid, ppid int, name, source string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneCorrelationCachesLocked(time.Now())
 	s.addProcessLocked(ProcessInfo{PID: pid, PPID: ppid, Name: name, Source: source, TrackAsAgent: true})
 }
 
@@ -198,6 +215,7 @@ func (s *SessionState) ApplyProcessSnapshot(processes map[int]ProcessInfo) {
 
 	now := time.Now()
 	s.pruneExpiredProcessesLocked(now)
+	s.pruneCorrelationCachesLocked(now)
 
 	children := make(map[int][]int, len(processes))
 	for pid, info := range processes {
@@ -239,6 +257,8 @@ func (s *SessionState) ApplyProcessSnapshot(processes map[int]ProcessInfo) {
 func (s *SessionState) AddSemanticEvent(e event.SemanticEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	s.pruneCorrelationCachesLocked(now)
 
 	if e.PID > 0 {
 		s.addProcessLocked(ProcessInfo{PID: e.PID, PPID: e.PPID, Name: e.Tool, Source: "hook", TrackAsAgent: true})
@@ -254,6 +274,9 @@ func (s *SessionState) AddSemanticEvent(e event.SemanticEvent) {
 		}
 	}
 	s.updateActiveToolSpanLocked(e)
+	if now.After(s.StartTime) {
+		s.StartTime = now
+	}
 
 	s.Events = append(s.Events, e)
 	if len(s.Events) > MaxRecentEvents {
@@ -266,6 +289,7 @@ func (s *SessionState) AddSemanticEvent(e event.SemanticEvent) {
 func (s *SessionState) AddNetworkFlow(f event.NetworkFlowEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneCorrelationCachesLocked(time.Now())
 	if f.PID > 0 {
 		s.addProcessLocked(ProcessInfo{PID: f.PID, PPID: f.PPID, Name: f.ProcessPath, Source: "network"})
 	}
@@ -352,6 +376,7 @@ func (s *SessionState) activeToolSpanLocked(toolUseID string) (ToolSpan, bool) {
 func (s *SessionState) TryCorrelate(flow event.NetworkFlowEvent) []event.Correlation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneCorrelationCachesLocked(time.Now())
 	return s.tryCorrelateFlowLocked(flow)
 }
 
@@ -370,6 +395,7 @@ func (s *SessionState) TryCorrelateSemantic(e event.SemanticEvent) []event.Corre
 		now = time.Now()
 	}
 	s.pruneExpiredProcessesLocked(now)
+	s.pruneCorrelationCachesLocked(now)
 
 	var out []event.Correlation
 	seenFlows := make(map[string]struct{}, len(s.Flows))
@@ -409,6 +435,7 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 		now = time.Now()
 	}
 	s.pruneExpiredProcessesLocked(now)
+	s.pruneCorrelationCachesLocked(now)
 
 	var related []event.SemanticEvent
 	reasonSet := map[string]struct{}{}
@@ -458,7 +485,7 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 	if hasSensitiveRelated {
 		reasonSet["after_sensitive_read"] = struct{}{}
 	}
-	firstDestination := s.isFirstCorrelationDestinationLocked(flow)
+	firstDestination := s.isFirstCorrelationDestinationLocked(flow, now)
 	if firstDestination {
 		reasonSet["first_destination"] = struct{}{}
 	}
@@ -477,7 +504,7 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 		if _, ok := s.CorrelatedKeys[key]; ok {
 			return nil
 		}
-		s.CorrelatedKeys[key] = time.Now()
+		s.CorrelatedKeys[key] = now
 	}
 
 	primary := primarySemanticEvent(related)
@@ -495,19 +522,19 @@ func (s *SessionState) tryCorrelateFlowLocked(flow event.NetworkFlowEvent) []eve
 		Flows:       []event.NetworkFlowEvent{flow},
 		ProcessTree: s.processTreeEvidenceLocked(related, flow),
 	}
-	if !s.shouldEmitCorrelationLocked(corr, flow) {
+	if !s.shouldEmitCorrelationLocked(corr, flow, now) {
 		return nil
 	}
-	s.markCorrelationDestinationLocked(flow)
+	s.markCorrelationDestinationLocked(flow, now)
 	return []event.Correlation{corr}
 }
 
-func (s *SessionState) shouldEmitCorrelationLocked(corr event.Correlation, flow event.NetworkFlowEvent) bool {
+func (s *SessionState) shouldEmitCorrelationLocked(corr event.Correlation, flow event.NetworkFlowEvent, now time.Time) bool {
 	keys := semanticSuppressionKeys(corr.Semantics)
 	if len(keys) == 0 {
 		return true
 	}
-	if s.shouldSuppressNoisyPatternLocked(corr, flow) {
+	if s.shouldSuppressNoisyPatternLocked(corr, flow, now) {
 		return false
 	}
 	strength := correlationStrength(corr.Reasons)
@@ -524,12 +551,13 @@ func (s *SessionState) shouldEmitCorrelationLocked(corr event.Correlation, flow 
 	for _, key := range keys {
 		if strength > s.SemanticBestStrength[key] {
 			s.SemanticBestStrength[key] = strength
+			s.SemanticBestStrengthUpdated[key] = now
 		}
 	}
 	return true
 }
 
-func (s *SessionState) shouldSuppressNoisyPatternLocked(corr event.Correlation, flow event.NetworkFlowEvent) bool {
+func (s *SessionState) shouldSuppressNoisyPatternLocked(corr event.Correlation, flow event.NetworkFlowEvent, now time.Time) bool {
 	if containsString(corr.Reasons, "after_sensitive_read") ||
 		containsString(corr.Reasons, "high_bytes") {
 		return false
@@ -545,7 +573,7 @@ func (s *SessionState) shouldSuppressNoisyPatternLocked(corr event.Correlation, 
 	}
 	key := family + "|" + dest
 	_, seen := s.NoisyPatternSeen[key]
-	s.NoisyPatternSeen[key] = struct{}{}
+	s.NoisyPatternSeen[key] = now
 	if seen && !containsString(corr.Reasons, "first_destination") {
 		return true
 	}
@@ -729,21 +757,24 @@ func flowCorrelationKey(flow event.NetworkFlowEvent) string {
 	return strings.Join(parts, "|")
 }
 
-func (s *SessionState) isFirstCorrelationDestinationLocked(flow event.NetworkFlowEvent) bool {
+func (s *SessionState) isFirstCorrelationDestinationLocked(flow event.NetworkFlowEvent, now time.Time) bool {
 	dest := destinationKey(flow)
 	if dest == "" {
 		return false
 	}
-	_, seen := s.DestinationSeen[dest]
-	return !seen
+	seenAt, seen := s.DestinationSeen[dest]
+	if !seen || now.Sub(seenAt) > correlationCacheTTL {
+		return true
+	}
+	return false
 }
 
-func (s *SessionState) markCorrelationDestinationLocked(flow event.NetworkFlowEvent) {
+func (s *SessionState) markCorrelationDestinationLocked(flow event.NetworkFlowEvent, now time.Time) {
 	dest := destinationKey(flow)
 	if dest == "" {
 		return
 	}
-	s.DestinationSeen[dest] = struct{}{}
+	s.DestinationSeen[dest] = now
 }
 
 func destinationKey(flow event.NetworkFlowEvent) string {
@@ -1228,6 +1259,59 @@ func (s *SessionState) pruneExpiredProcessesLocked(now time.Time) {
 		if !info.LastSeen.IsZero() && info.LastSeen.Before(cutoff) {
 			delete(s.Processes, pid)
 			delete(s.KnownPIDs, pid)
+		}
+	}
+}
+
+func (s *SessionState) pruneCorrelationCachesLocked(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-correlationCacheTTL)
+	for key, seen := range s.CorrelatedKeys {
+		if seen.Before(cutoff) {
+			delete(s.CorrelatedKeys, key)
+		}
+	}
+	for key, seen := range s.DestinationSeen {
+		if seen.Before(cutoff) {
+			delete(s.DestinationSeen, key)
+		}
+	}
+	for key, seen := range s.NoisyPatternSeen {
+		if seen.Before(cutoff) {
+			delete(s.NoisyPatternSeen, key)
+		}
+	}
+	for key, seen := range s.SemanticBestStrengthUpdated {
+		if seen.Before(cutoff) {
+			delete(s.SemanticBestStrengthUpdated, key)
+			delete(s.SemanticBestStrength, key)
+		}
+	}
+	if len(s.SemanticBestStrength) > maxCorrelationEntries {
+		type correlationKeyStats struct {
+			key  string
+			seen time.Time
+		}
+		stats := make([]correlationKeyStats, 0, len(s.SemanticBestStrengthUpdated))
+		for key, seen := range s.SemanticBestStrengthUpdated {
+			stats = append(stats, correlationKeyStats{key: key, seen: seen})
+		}
+		sort.Slice(stats, func(i, j int) bool {
+			return stats[i].seen.Before(stats[j].seen)
+		})
+		excess := len(s.SemanticBestStrength) - maxCorrelationEntries
+		for i := 0; i < excess && i < len(stats); i++ {
+			key := stats[i].key
+			delete(s.SemanticBestStrengthUpdated, key)
+			delete(s.SemanticBestStrength, key)
+		}
+	}
+
+	for toolUseID, span := range s.ActiveToolSpans {
+		if span.StartedAt.IsZero() || now.Sub(span.StartedAt) > activeToolSpanRetentionWindow {
+			delete(s.ActiveToolSpans, toolUseID)
 		}
 	}
 }

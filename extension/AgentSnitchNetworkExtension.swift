@@ -96,6 +96,11 @@ final class XPCEventSender {
     }
 
     func connect(daemonSocketPath: String?, xpcToken: String?, logFlowEvents: Bool) {
+        if let previousConnection = connection {
+            previousConnection.interruptionHandler = nil
+            previousConnection.invalidationHandler = nil
+            previousConnection.invalidate()
+        }
         self.daemonSocketPath = daemonSocketPath
         self.xpcToken = xpcToken
         self.logFlowEvents = logFlowEvents
@@ -103,9 +108,27 @@ final class XPCEventSender {
         // The host app is responsible for exposing this local service name.
         connection = NSXPCConnection(machServiceName: AgentSnitchXPCServiceName, options: [])
         connection?.remoteObjectInterface = NSXPCInterface(with: AgentSnitchXPCProtocol.self)
+        connection?.interruptionHandler = { [weak self] in
+            self?.markXPCDeliveryUnavailable()
+            self?.logSendFailure(kind: "XPC connection interrupted", message: "connection interrupted")
+        }
+        connection?.invalidationHandler = { [weak self] in
+            self?.markXPCDeliveryUnavailable()
+            self?.logSendFailure(kind: "XPC connection invalidated", message: "connection invalidated")
+        }
         connection?.resume()
 
         // Fallback / dev: we always also log.
+    }
+
+    func disconnect() {
+        guard let currentConnection = connection else {
+            return
+        }
+        currentConnection.interruptionHandler = nil
+        currentConnection.invalidationHandler = nil
+        currentConnection.invalidate()
+        connection = nil
     }
 
     // send does only cheap, non-blocking work on the caller's thread (which may
@@ -161,14 +184,15 @@ final class XPCEventSender {
         }
 
         if canAttemptXPCDelivery(),
-           let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-               self.logSendFailure(kind: "XPC send", error: error)
-               self.markXPCDeliveryUnavailable()
+           let proxy = connection?.remoteObjectProxyWithErrorHandler({ [weak self] error in
+               self?.logSendFailure(kind: "XPC send", error: error)
+               self?.markXPCDeliveryUnavailable()
            }) as? AgentSnitchXPCProtocol {
-            proxy.handleFlowEvent(data, token: xpcToken ?? "") { ok, message in
+            let token = xpcToken ?? ""
+            proxy.handleFlowEvent(data, token: token) { [weak self] ok, message in
                 if !ok {
-                    self.logSendFailure(kind: "XPC receiver rejected FlowEvent", message: message ?? "(no message)")
-                    self.markXPCDeliveryUnavailable()
+                    self?.logSendFailure(kind: "XPC receiver rejected FlowEvent", message: message ?? "(no message)")
+                    self?.markXPCDeliveryUnavailable()
                 }
             }
         }
@@ -302,6 +326,7 @@ enum UnixSocketEventSender {
 final class AgentSnitchNetworkExtension: NEFilterDataProvider {
 
     private let sender = XPCEventSender()
+    private let iso8601DateFormatter = ISO8601DateFormatter()
     private var flowIDCounter: UInt64 = 0
     private var flows: [UUID: ObservedFlow] = [:]
     private let flowLock = NSLock()
@@ -396,6 +421,7 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
 
     override func stopFilter(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         os_log("AgentSnitchNetworkExtension: stopFilter reason=%d", reason.rawValue)
+        sender.disconnect()
         completionHandler()
     }
 
@@ -545,7 +571,7 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
     private func makeEvent(from observed: ObservedFlow, state: String) -> FlowEvent {
         return FlowEvent(
             schema: "agentsnitch.network.v0",
-            ts: ISO8601DateFormatter().string(from: Date()),
+            ts: iso8601DateFormatter.string(from: Date()),
             flow_id: observed.flowID,
             observer: "network_extension",
             pid: observed.pid,
@@ -816,5 +842,9 @@ final class AgentSnitchNetworkExtension: NEFilterDataProvider {
         default:
             return String(describing: endpoint)
         }
+    }
+
+    deinit {
+        sender.disconnect()
     }
 }

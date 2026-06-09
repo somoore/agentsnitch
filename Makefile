@@ -1,7 +1,7 @@
 # AgentSnitch Makefile
 # Targets for development, building, and packaging.
 
-.PHONY: help create build build-emitter build-daemon build-doctor build-hookctl build-neready build-agentsnitch build-extension package-macos-dev build-ui install uninstall clean test fmt lint run-daemon doctor ne-ready ne-invariants ne-invariants-test ne-typecheck dev-receiver release-gpg-check
+.PHONY: help create build build-emitter build-daemon build-doctor build-hookctl build-neready build-agentsnitch build-extension package-macos-dev build-ui normalize-tauri-schemas install uninstall clean test fmt lint run-daemon doctor ne-ready ne-invariants ne-invariants-test ne-typecheck dev-receiver release-gpg-check check-stress-guardrails
 
 help:
 	@echo "AgentSnitch development targets"
@@ -23,12 +23,14 @@ help:
 	@echo "  make ne-invariants-test - Regression-test Network Extension invariant checks"
 	@echo "  make ne-typecheck      - Type-check Swift NE/host bridge sources"
 	@echo "  make build-ui          - Build the Tauri UI (requires Tauri CLI + Rust)"
+	@echo "  make normalize-tauri-schemas - Normalize generated Tauri schema snapshots"
 	@echo "  make install           - Build binaries and install Claude Code hooks"
 	@echo "  make uninstall         - Remove AgentSnitch Claude Code hooks"
 	@echo "  make test              - Run unit tests"
 	@echo "  make fmt               - Format code"
 	@echo "  make lint              - Lint (golangci, clippy, etc.)"
 	@echo "  make release-gpg-check - Verify release GPG secret/config prerequisites"
+	@echo "  make check-stress-guardrails - Validate stress run against daemon RSS/CPU thresholds"
 	@echo "  make clean             - Remove build artifacts"
 	@echo ""
 	@echo "  AGENTSNITCH_SOCK=/tmp/agentsnitch-dev.sock make run-daemon   # for dev socket"
@@ -120,6 +122,11 @@ ne-typecheck:
 build-ui:
 	@echo "==> Building Tauri UI (requires: cargo tauri, Rust, macOS SDK)"
 	cd ui && cargo tauri build
+	./scripts/normalize-tauri-schemas.sh
+
+normalize-tauri-schemas:
+	@echo "==> Normalizing generated Tauri schemas"
+	./scripts/normalize-tauri-schemas.sh
 
 install:
 	@echo "==> Manually installing AgentSnitch Claude Code hooks"
@@ -128,6 +135,12 @@ install:
 uninstall:
 	@echo "==> Removing AgentSnitch Claude Code hooks"
 	./scripts/uninstall.sh
+
+check-stress-guardrails:
+	@echo "==> Running stress/perf guardrail check"
+	@echo "    Set AGENTSNITCH_PERF_LEAK_DIR to a snapshot directory and"
+	@echo "    AGENTSNITCH_PERF_LEAK_ALLOWLIST (comma-separated) to ignore known leaks."
+	./scripts/check-stress-guardrail.sh
 
 clean:
 	rm -rf bin/ target/ dist/ ui/src-tauri/target
