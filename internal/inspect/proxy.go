@@ -28,6 +28,7 @@ type Proxy struct {
 	certs             *CertManager
 	paths             Paths
 	onEvent           func(event.InspectedHTTPExchange)
+	scope             func(Context, string) (Context, bool)
 	server            *http.Server
 	listener          net.Listener
 	token             string
@@ -127,6 +128,12 @@ func (p *Proxy) AuthenticatedURL() string {
 	return AuthenticatedProxyURL(status.Address, p.Token())
 }
 
+func (p *Proxy) SetScopeFunc(scope func(Context, string) (Context, bool)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scope = scope
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if !p.localClient(req) {
 		http.Error(w, "inspect proxy accepts local clients only", http.StatusForbidden)
@@ -185,6 +192,16 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		network, err := p.tunnelConnect(w, req)
 		if err != nil {
 			log.Printf("inspect proxy tunnel metadata failed for %s: %v", hostOnly, err)
+		}
+		p.emit(p.metadata(ctx, hostOnly, "metadata_only", network))
+		return
+	}
+	if scopedCtx, ok := p.inspectAllowed(ctx, hostOnly); ok {
+		ctx = scopedCtx
+	} else {
+		network, err := p.tunnelConnect(w, req)
+		if err != nil {
+			log.Printf("inspect proxy scoped tunnel metadata failed for %s: %v", hostOnly, err)
 		}
 		p.emit(p.metadata(ctx, hostOnly, "metadata_only", network))
 		return
@@ -326,6 +343,16 @@ func (p *Proxy) emit(exchange event.InspectedHTTPExchange) {
 	if p.onEvent != nil {
 		p.onEvent(exchange)
 	}
+}
+
+func (p *Proxy) inspectAllowed(ctx Context, host string) (Context, bool) {
+	p.mu.Lock()
+	scope := p.scope
+	p.mu.Unlock()
+	if scope == nil {
+		return ctx, true
+	}
+	return scope(ctx, host)
 }
 
 func contextFromRequest(req *http.Request) Context {

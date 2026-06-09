@@ -268,6 +268,9 @@ func buildSemanticEvent(ag agent.Agent, payload *agent.HookPayload) event.Semant
 	destinationIntents := destinationintent.Extract(payload.ToolName, target, command, payload.ToolInput)
 
 	sessionID := strings.TrimSpace(payload.SessionID)
+	if managedSession := strings.TrimSpace(os.Getenv("AGENTSNITCH_SESSION_ID")); managedSession != "" {
+		sessionID = managedSession
+	}
 	if sessionID == "" {
 		sessionID = derivedSessionID(cwd, ppid)
 	}

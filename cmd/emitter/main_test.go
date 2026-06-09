@@ -150,6 +150,24 @@ func TestBuildSemanticEventIncludesRequiredHookFacts(t *testing.T) {
 	}
 }
 
+func TestBuildSemanticEventUsesManagedInspectSessionWhenPresent(t *testing.T) {
+	t.Setenv("AGENTSNITCH_SESSION_ID", "inspect-run-claude-123")
+	payload := &agent.HookPayload{
+		SessionID:     "claude-session",
+		HookEventName: "PreToolUse",
+		ToolName:      "Bash",
+		ToolInput:     map[string]interface{}{"command": "curl https://example.com"},
+		ToolUseID:     "toolu-1",
+		CWD:           "/tmp/project",
+	}
+
+	sem := buildSemanticEvent(agent.NewClaudeAgent(), payload)
+
+	if sem.Session.ID != "inspect-run-claude-123" {
+		t.Fatalf("session id = %q, want managed inspect session", sem.Session.ID)
+	}
+}
+
 func TestBuildSemanticEventDerivesMissingIDsFromRealHookContext(t *testing.T) {
 	sem := buildSemanticEvent(agent.NewClaudeAgent(), &agent.HookPayload{
 		HookEventName: "PreToolUse",

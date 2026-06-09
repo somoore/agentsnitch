@@ -211,6 +211,9 @@ func startInspectProxyIfEnabled(sessions *daemonSessions, status *statusReporter
 	proxy := inspect.NewProxy(settings, certs, func(exchange event.InspectedHTTPExchange) {
 		handleInspectedHTTP(exchange, sessions, status, transcripts)
 	})
+	proxy.SetScopeFunc(func(ctx inspect.Context, host string) (inspect.Context, bool) {
+		return inspectScopeForActiveToolSpan(ctx, host, sessions)
+	})
 	if err := proxy.Start(); err != nil {
 		log.Printf("inspect proxy: start failed: %v", err)
 		status.recordInspectStatus(inspect.CurrentStatus(inspect.ProxyStatus{Enabled: true}))
@@ -222,6 +225,33 @@ func startInspectProxyIfEnabled(sessions *daemonSessions, status *statusReporter
 	inspectStatus.ProcessEnv = inspect.ProcessScopedEnv(inspect.DefaultPaths().BundlePath, proxy.AuthenticatedURL())
 	status.recordInspectStatus(inspectStatus)
 	return proxy
+}
+
+func inspectScopeForActiveToolSpan(ctx inspect.Context, _ string, sessions *daemonSessions) (inspect.Context, bool) {
+	if sessions == nil || strings.TrimSpace(ctx.SessionID) == "" {
+		return ctx, false
+	}
+	session, ok := sessions.getExisting(ctx.SessionID)
+	if !ok || session == nil || session.state == nil {
+		return ctx, false
+	}
+	var span correlator.ToolSpan
+	var active bool
+	if strings.TrimSpace(ctx.ToolUseID) != "" {
+		span, active = session.state.ActiveToolSpan(ctx.ToolUseID)
+	} else {
+		span, active = session.state.ActiveEgressToolSpan()
+	}
+	if !active {
+		return ctx, false
+	}
+	if strings.TrimSpace(ctx.ToolUseID) == "" {
+		ctx.ToolUseID = span.ToolUseID
+	}
+	if strings.TrimSpace(ctx.SpanID) == "" {
+		ctx.SpanID = span.SpanID
+	}
+	return ctx, true
 }
 
 func startInspectPayloadRetention(ctx context.Context, paths inspect.Paths, interval time.Duration) {

@@ -406,6 +406,76 @@ func TestMetadataOnlyConnectRecordsNetworkMetrics(t *testing.T) {
 	}
 }
 
+func TestConnectScopeDenialTunnelsMetadataOnly(t *testing.T) {
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen upstream: %v", err)
+	}
+	defer upstream.Close()
+	go func() {
+		conn, err := upstream.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4)
+		_, _ = io.ReadFull(conn, buf)
+		_, _ = conn.Write([]byte("pong"))
+	}()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	var seen []event.InspectedHTTPExchange
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), func(exchange event.InspectedHTTPExchange) {
+		seen = append(seen, exchange)
+	})
+	proxy.SetScopeFunc(func(ctx Context, host string) (Context, bool) {
+		if ctx.SessionID != "managed-run" || host != "api.example.com" {
+			t.Fatalf("scope context = %+v host=%q", ctx, host)
+		}
+		return ctx, false
+	})
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(AuthenticatedProxyURLForSession(proxy.Status().Address, proxy.Token(), "managed-run"))
+	conn, err := net.DialTimeout("tcp", proxyURL.Host, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	fmt.Fprintf(conn, "CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n", basicScopedProxyToken("managed-run", proxy.Token()))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read connect response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("connect status = %d", resp.StatusCode)
+	}
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write tunnel: %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read tunnel: %v", err)
+	}
+	_ = conn.Close()
+
+	waitForEvents(t, &seen, 1)
+	exchange := seen[0]
+	if exchange.TLS.InspectionMode != "metadata_only" || exchange.SessionID != "managed-run" {
+		t.Fatalf("exchange = %+v, want scoped metadata-only", exchange)
+	}
+	if containsString(exchange.Correlation.Basis, "tls_terminated_locally") {
+		t.Fatalf("scope-denied tunnel claimed local TLS inspection: %+v", exchange.Correlation.Basis)
+	}
+}
+
 func TestProxyTrustFailureDowngradesToMetadata(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -638,6 +708,19 @@ func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int)
 
 func basicProxyToken(token string) string {
 	return base64.StdEncoding.EncodeToString([]byte("agentsnitch:" + token))
+}
+
+func basicScopedProxyToken(sessionID, token string) string {
+	return base64.StdEncoding.EncodeToString([]byte("agentsnitch." + SafeProxySessionID(sessionID) + ":" + token))
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectSessionURLForTest(proxy *Proxy, sessionID string) string {

@@ -454,6 +454,54 @@ func TestReconcileInspectCorrelationRequiresActiveToolSpan(t *testing.T) {
 	}
 }
 
+func TestInspectScopeForActiveToolSpanRequiresLiveEgressSpan(t *testing.T) {
+	sessions := newDaemonSessions()
+	ctx := inspect.Context{SessionID: "session-1"}
+	if _, ok := inspectScopeForActiveToolSpan(ctx, "api.example.com", sessions); ok {
+		t.Fatal("scope allowed missing session")
+	}
+
+	session := sessions.getOrCreate("session-1")
+	session.state.AddSemanticEvent(event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "session-1"},
+		Event:     "PreToolUse",
+		Tool:      "Read",
+		ToolUseID: "read-1",
+		TS:        time.Now().UTC(),
+	})
+	if _, ok := inspectScopeForActiveToolSpan(ctx, "api.example.com", sessions); ok {
+		t.Fatal("scope allowed non-egress span")
+	}
+
+	session.state.AddSemanticEvent(event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "session-1"},
+		Event:     "PreToolUse",
+		Tool:      "Bash",
+		Target:    "curl https://api.example.com",
+		Tags:      []string{"external_egress_attempt"},
+		ToolUseID: "tool-1",
+		TS:        time.Now().UTC().Add(time.Second),
+	})
+	scoped, ok := inspectScopeForActiveToolSpan(ctx, "api.example.com", sessions)
+	if !ok {
+		t.Fatal("scope denied active egress span")
+	}
+	if scoped.ToolUseID != "tool-1" || scoped.SpanID != "tool-1" {
+		t.Fatalf("scope did not enrich active span context: %+v", scoped)
+	}
+
+	session.state.AddSemanticEvent(event.SemanticEvent{
+		Session:   event.SessionInfo{ID: "session-1"},
+		Event:     "PostToolUse",
+		Tool:      "Bash",
+		ToolUseID: "tool-1",
+		TS:        time.Now().UTC().Add(2 * time.Second),
+	})
+	if _, ok := inspectScopeForActiveToolSpan(ctx, "api.example.com", sessions); ok {
+		t.Fatal("scope allowed closed egress span")
+	}
+}
+
 func TestHandleSemanticDrainsPendingNetworkFlowForExistingConnection(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("AGENTSNITCH_STATUS", filepath.Join(tmp, "status.json"))
