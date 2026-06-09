@@ -214,15 +214,7 @@ jobs:
           pkg="dist/AgentSnitch-${TAG_NAME}-macos.pkg"
           checksum="$pkg.sha256"
           notes="$RUNNER_TEMP/release-notes.md"
-          cat > "$notes" <<EOF
-          Pre-alpha macOS release for end-to-end installer validation.
-
-          This package installs:
-          - AgentSnitch.app
-          - AgentSnitch daemon and support tools
-          - LaunchAgent registration
-          - Claude Code hook tooling; hooks are installed explicitly from Settings
-          EOF
+          scripts/release-notes-from-changelog.sh "$TAG_NAME" "$notes" "$GITHUB_WORKSPACE/CHANGELOG.md"
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             echo "::error::Release $TAG_NAME already exists; refusing to overwrite signed artifacts"
