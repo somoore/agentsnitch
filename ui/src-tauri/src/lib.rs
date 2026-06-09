@@ -5256,7 +5256,7 @@ fn build_debug_snapshot(state: &AppState) -> serde_json::Value {
     let status_path = runtime_status_path();
     let daemon_status = load_daemon_status_snapshot();
     let agent_process_running =
-        agent_process_running_for_session_cached(&state, &session, &agents_map)
+        agent_process_running_for_session_cached(state, &session, &agents_map)
             .map(|running| serde_json::json!(running))
             .unwrap_or_else(|err| serde_json::json!({ "error": err }));
 
