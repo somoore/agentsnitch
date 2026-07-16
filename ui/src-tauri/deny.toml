@@ -20,6 +20,17 @@ version = 2
 # documented reason.
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
+# Documented, time-bounded triage of transitive advisories with no in-range fix.
+# quick-xml 0.39.4 (RUSTSEC-2026-0194 quadratic duplicate-attr scan; -0195
+# unbounded namespace allocation) reaches us only through tauri -> plist, which
+# pins quick-xml ^0.39; the fix ships in 0.40. AgentSnitch never parses
+# untrusted XML through plist (it is used for macOS bundle/Info.plist handling),
+# so the DoS surface is not reachable in-product. Remove once plist/Tauri
+# releases pull quick-xml >= 0.40.
+ignore = [
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]
 # Vulnerabilities and unsound advisories FAIL the gate (the v2 default).
 # "unmaintained" is scoped to "workspace": only flag unmaintained crates that are
 # DIRECT workspace dependencies. The entire Tauri/GTK/unic transitive stack
