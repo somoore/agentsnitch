@@ -43,7 +43,7 @@ func TranscriptPath(sessionID string) string {
 	return filepath.Join(TranscriptsDir(), safeSessionID(sessionID), "events.jsonl")
 }
 
-func (w *TranscriptWriter) Append(sessionID, kind string, ev interface{}) error {
+func (w *TranscriptWriter) Append(sessionID, kind string, ev interface{}) (err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -68,11 +68,16 @@ func (w *TranscriptWriter) Append(sessionID, kind string, ev interface{}) error 
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(append(raw, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
+	// Handle the close of this writable handle explicitly: a failed close can
+	// mean buffered data was not flushed, so surface it unless we are already
+	// returning an earlier error.
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+
+	if _, err = f.Write(append(raw, '\n')); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)
