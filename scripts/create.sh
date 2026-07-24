@@ -303,6 +303,12 @@ wait_for_daemon_socket() {
 }
 
 launch_app() {
+  if [[ "${AGENTSNITCH_APP_SIGN_IDENTITY:-}" == "-" ]]; then
+    log "Enabling explicit ad-hoc peer trust for this local launch session"
+    launchctl setenv AGENTSNITCH_ALLOW_UNSIGNED_PEERS 1
+  else
+    launchctl unsetenv AGENTSNITCH_ALLOW_UNSIGNED_PEERS >/dev/null 2>&1 || true
+  fi
   log "Launching $APP_NAME"
   open "$APP_PATH"
 }

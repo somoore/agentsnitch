@@ -49,6 +49,7 @@ EXT_BUNDLE_ID="${AGENTSNITCH_EXT_BUNDLE_ID:-com.somoore.agentsnitch.network-exte
 echo ""
 echo "Network Extension teardown:"
 launchctl setenv AGENTSNITCH_DISABLE_NETWORK_EXTENSION 1 >/dev/null 2>&1 || true
+launchctl unsetenv AGENTSNITCH_ALLOW_UNSIGNED_PEERS >/dev/null 2>&1 || true
 echo "  Set AGENTSNITCH_DISABLE_NETWORK_EXTENSION=1 for this user session."
 if command -v systemextensionsctl >/dev/null 2>&1; then
   # Deactivation may require approval and only affects an activated extension;

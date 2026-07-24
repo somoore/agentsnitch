@@ -4517,11 +4517,21 @@ fn trusted_peer_signature(exe: &std::path::Path) -> bool {
             return false;
         }
     };
-    let app_team = current_app_team_id();
-    match app_team.as_deref() {
-        Some(team) => peer.team_id.as_deref() == Some(team) && !peer.ad_hoc,
-        None => unsigned_peer_trust_allowed() && peer.ad_hoc,
+    let Some(app_signature) = current_app_signature() else {
+        return unsigned_peer_trust_allowed() && peer.ad_hoc;
+    };
+    let trusted = macos_ne_bridge::signatures_share_trust(
+        &app_signature,
+        &peer,
+        unsigned_peer_trust_allowed(),
+    );
+    if trusted && app_signature.ad_hoc && peer.ad_hoc {
+        append_ui_log(&format!(
+            "[agentsnitch-ui] weakly accepted ad-hoc signed UI socket peer {} because the app is also ad-hoc signed",
+            exe.display()
+        ));
     }
+    trusted
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -4530,12 +4540,10 @@ fn trusted_peer_signature(_exe: &std::path::Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn current_app_team_id() -> Option<String> {
+fn current_app_signature() -> Option<macos_ne_bridge::CodeSignReport> {
     let exe = std::env::current_exe().ok()?;
     let target = macos_ne_bridge::app_bundle_from_exe(&exe).unwrap_or(exe);
-    macos_ne_bridge::codesign_report(&target)
-        .ok()
-        .and_then(|report| report.team_id)
+    macos_ne_bridge::codesign_report(&target).ok()
 }
 
 #[cfg(unix)]
@@ -4733,6 +4741,20 @@ mod macos_ne_bridge {
         pub(crate) team_id: Option<String>,
         pub(crate) ad_hoc: bool,
         pub(crate) text: String,
+    }
+
+    pub(crate) fn signatures_share_trust(
+        app: &CodeSignReport,
+        peer: &CodeSignReport,
+        allow_unsigned: bool,
+    ) -> bool {
+        if app.ad_hoc {
+            return allow_unsigned && peer.ad_hoc;
+        }
+        match app.team_id.as_deref() {
+            Some(team) => peer.team_id.as_deref() == Some(team) && !peer.ad_hoc,
+            None => allow_unsigned && peer.ad_hoc,
+        }
     }
 
     pub(crate) fn codesign_report(path: &Path) -> Result<CodeSignReport, String> {
@@ -5025,6 +5047,36 @@ mod macos_ne_bridge {
             let report = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
             assert_eq!(report.team_id, None);
             assert!(report.ad_hoc);
+        }
+
+        #[test]
+        fn signatures_share_trust_requires_opt_in_for_ad_hoc_install() {
+            let app = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
+            let peer = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
+            assert!(!signatures_share_trust(&app, &peer, false));
+            assert!(signatures_share_trust(&app, &peer, true));
+        }
+
+        #[test]
+        fn signatures_share_trust_rejects_ad_hoc_peer_for_developer_id_app() {
+            let app = parse_codesign_report("TeamIdentifier=ABCDE12345\n");
+            let peer = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
+            assert!(!signatures_share_trust(&app, &peer, true));
+        }
+
+        #[test]
+        fn signatures_share_trust_accepts_matching_developer_id_team() {
+            let app = parse_codesign_report("TeamIdentifier=ABCDE12345\n");
+            let peer = parse_codesign_report("TeamIdentifier=ABCDE12345\n");
+            assert!(signatures_share_trust(&app, &peer, false));
+        }
+
+        #[test]
+        fn signatures_share_trust_requires_opt_in_without_app_identity() {
+            let app = parse_codesign_report("TeamIdentifier=not set\n");
+            let peer = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
+            assert!(!signatures_share_trust(&app, &peer, false));
+            assert!(signatures_share_trust(&app, &peer, true));
         }
 
         #[test]
