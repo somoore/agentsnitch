@@ -4749,7 +4749,7 @@ mod macos_ne_bridge {
         allow_unsigned: bool,
     ) -> bool {
         if app.ad_hoc {
-            return peer.ad_hoc;
+            return allow_unsigned && peer.ad_hoc;
         }
         match app.team_id.as_deref() {
             Some(team) => peer.team_id.as_deref() == Some(team) && !peer.ad_hoc,
@@ -5050,10 +5050,11 @@ mod macos_ne_bridge {
         }
 
         #[test]
-        fn signatures_share_trust_accepts_matching_ad_hoc_install() {
+        fn signatures_share_trust_requires_opt_in_for_ad_hoc_install() {
             let app = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
             let peer = parse_codesign_report("TeamIdentifier=not set\nSignature=adhoc\n");
-            assert!(signatures_share_trust(&app, &peer, false));
+            assert!(!signatures_share_trust(&app, &peer, false));
+            assert!(signatures_share_trust(&app, &peer, true));
         }
 
         #[test]
