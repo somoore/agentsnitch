@@ -1,3 +1,3 @@
 module github.com/somoore/agentsnitch
 
-go 1.26.8
+go 1.26.9
