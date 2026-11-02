@@ -28,8 +28,13 @@ type Capture struct {
 
 func ExchangeFromHTTP(ctx Context, capture Capture, req *http.Request, reqBody []byte, resp *http.Response, respBody []byte, tlsMode, upstreamTLSVersion string, leafGenerated bool) event.InspectedHTTPExchange {
 	settings := capture.Settings
-	reqRedacted := RedactBody(reqBody, settings.HTTPSInspectPreviewBytes)
-	respRedacted := RedactBody(respBody, settings.HTTPSInspectPreviewBytes)
+	// metadata_only discards the body, so do not run the (multi-pass) redactor or
+	// keep a second copy of it. Sizes are still recorded truthfully.
+	var reqRedacted, respRedacted RedactionResult
+	if settings.PayloadMode() != PayloadMetadataOnly {
+		reqRedacted = RedactBody(reqBody, settings.HTTPSInspectPreviewBytes)
+		respRedacted = RedactBody(respBody, settings.HTTPSInspectPreviewBytes)
+	}
 	method := ""
 	scheme := "https"
 	host := ""
@@ -229,5 +234,25 @@ func CloneRequestForUpstream(req *http.Request, body []byte, scheme, host string
 	clone.Header.Del("Proxy-Authorization")
 	clone.Body = io.NopCloser(bytes.NewReader(body))
 	clone.ContentLength = int64(len(body))
+	return clone, nil
+}
+
+// CloneRequestForUpstreamStreaming is the unbuffered variant used for
+// out-of-scope plain HTTP: the caller's body is forwarded as-is and the response
+// is streamed, so excluded destinations are never read into the proxy.
+func CloneRequestForUpstreamStreaming(req *http.Request, scheme, host string) (*http.Request, error) {
+	rawPath := "/"
+	if req.URL != nil && req.URL.RequestURI() != "" {
+		rawPath = req.URL.RequestURI()
+	}
+	u, err := url.Parse(scheme + "://" + host + rawPath)
+	if err != nil {
+		return nil, err
+	}
+	clone := req.Clone(req.Context())
+	clone.URL = u
+	clone.RequestURI = ""
+	clone.Host = host
+	clone.Header.Del("Proxy-Authorization")
 	return clone, nil
 }

@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -17,11 +18,46 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/somoore/agentsnitch/internal/event"
 )
+
+// exchangeSink collects proxy callbacks safely: onEvent runs on the httptest
+// server goroutine while the test goroutine reads, so the old bare slice was a
+// data race under -race.
+type exchangeSink struct {
+	mu     sync.Mutex
+	events []event.InspectedHTTPExchange
+}
+
+func (s *exchangeSink) add(exchange event.InspectedHTTPExchange) {
+	s.mu.Lock()
+	s.events = append(s.events, exchange)
+	s.mu.Unlock()
+}
+
+func (s *exchangeSink) snapshot() []event.InspectedHTTPExchange {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]event.InspectedHTTPExchange, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
+func (s *exchangeSink) waitFor(t *testing.T, count int) []event.InspectedHTTPExchange {
+	t.Helper()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if events := s.snapshot(); len(events) >= count {
+			return events
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return s.snapshot()
+}
 
 func testPaths(t *testing.T) Paths {
 	t.Helper()
@@ -222,10 +258,8 @@ func TestSessionScopedProxyAuthBindsContextWithoutHeaders(t *testing.T) {
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
 	settings.HTTPSInspectNeverDomains = []string{"api.example.com"}
-	var seen []event.InspectedHTTPExchange
-	proxy := NewProxy(settings, NewCertManager(testPaths(t)), func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
 	proxy.dial = func(context.Context, string, string) (net.Conn, error) {
 		return nil, fmt.Errorf("stop after metadata")
 	}
@@ -243,15 +277,15 @@ func TestSessionScopedProxyAuthBindsContextWithoutHeaders(t *testing.T) {
 		Timeout:   2 * time.Second,
 	}
 	_, _ = client.Get("https://api.example.com/path")
-	waitForEvents(t, &seen, 1)
-	if len(seen) != 1 {
-		t.Fatalf("events = %d, want 1", len(seen))
+	events := seen.waitFor(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
 	}
-	if seen[0].SessionID != "claude-run-1" {
-		t.Fatalf("session id = %q, want scoped proxy user", seen[0].SessionID)
+	if events[0].SessionID != "claude-run-1" {
+		t.Fatalf("session id = %q, want scoped proxy user", events[0].SessionID)
 	}
-	if seen[0].Correlation.Confidence != "medium" {
-		t.Fatalf("confidence = %q, want medium session-bound metadata", seen[0].Correlation.Confidence)
+	if events[0].Correlation.Confidence != "medium" {
+		t.Fatalf("confidence = %q, want medium session-bound metadata", events[0].Correlation.Confidence)
 	}
 }
 
@@ -288,10 +322,8 @@ func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 	paths := testPaths(t)
 	manager := NewCertManager(paths)
 	var rawBody = strings.Repeat("x", 512) + "\nAWS_" + "SECRET_ACCESS_KEY=<example-token>"
-	var seen []event.InspectedHTTPExchange
-	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, manager, seen.add)
 	proxy.paths = paths
 	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{}
@@ -334,11 +366,11 @@ func TestProxyMITMEmitsRedactedInspectedExchange(t *testing.T) {
 		t.Fatalf("client do: %v", err)
 	}
 	_ = resp.Body.Close()
-	waitForEvents(t, &seen, 1)
-	if len(seen) != 1 {
-		t.Fatalf("events = %d, want 1", len(seen))
+	events := seen.waitFor(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
 	}
-	exchange := seen[0]
+	exchange := events[0]
 	if exchange.TLS.InspectionMode != "local_mitm" {
 		t.Fatalf("mode = %q", exchange.TLS.InspectionMode)
 	}
@@ -402,10 +434,8 @@ func TestMetadataOnlyConnectRecordsNetworkMetrics(t *testing.T) {
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
 	settings.HTTPSInspectNeverDomains = []string{"api.example.com"}
-	var seen []event.InspectedHTTPExchange
-	proxy := NewProxy(settings, NewCertManager(testPaths(t)), func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
 	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{}
 		return dialer.DialContext(ctx, network, upstream.Addr().String())
@@ -437,8 +467,11 @@ func TestMetadataOnlyConnectRecordsNetworkMetrics(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	waitForEvents(t, &seen, 1)
-	exchange := seen[0]
+	events := seen.waitFor(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	exchange := events[0]
 	if exchange.TLS.InspectionMode != "metadata_only" {
 		t.Fatalf("mode = %q", exchange.TLS.InspectionMode)
 	}
@@ -469,10 +502,8 @@ func TestConnectScopeDenialTunnelsMetadataOnly(t *testing.T) {
 
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
-	var seen []event.InspectedHTTPExchange
-	proxy := NewProxy(settings, NewCertManager(testPaths(t)), func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
 	proxy.SetScopeFunc(func(ctx Context, host string) (Context, bool) {
 		if ctx.SessionID != "managed-run" || host != "api.example.com" {
 			t.Fatalf("scope context = %+v host=%q", ctx, host)
@@ -510,13 +541,205 @@ func TestConnectScopeDenialTunnelsMetadataOnly(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	waitForEvents(t, &seen, 1)
-	exchange := seen[0]
+	events := seen.waitFor(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	exchange := events[0]
 	if exchange.TLS.InspectionMode != "metadata_only" || exchange.SessionID != "managed-run" {
 		t.Fatalf("exchange = %+v, want scoped metadata-only", exchange)
 	}
 	if containsString(exchange.Correlation.Basis, "tls_terminated_locally") {
 		t.Fatalf("scope-denied tunnel claimed local TLS inspection: %+v", exchange.Correlation.Basis)
+	}
+}
+
+// TestProxyRejectsOversizedResponse verifies the body cap is a clean refusal,
+// not a silent truncation: the client must get a 502 and no exchange may claim
+// a complete body it never forwarded.
+func TestProxyRejectsOversizedResponse(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write(bytes.Repeat([]byte("z"), 4096))
+	}))
+	defer upstream.Close()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectCapturePreviews = true
+	paths := testPaths(t)
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(paths), seen.add)
+	proxy.maxBodyBytes = 1024
+	proxy.paths = paths
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	proxy.upstreamTLSConfig = &tls.Config{InsecureSkipVerify: true}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy:           http.ProxyURL(proxyURL),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 5 * time.Second,
+	}
+	resp, err := client.Get("https://api.example.com/big")
+	if err == nil {
+		defer resp.Body.Close()
+		got, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", resp.StatusCode)
+		}
+		if len(got) != 0 {
+			t.Fatalf("502 carried a partial body: %d bytes", len(got))
+		}
+	}
+	if events := seen.snapshot(); len(events) != 0 {
+		t.Fatalf("oversized exchange must not be recorded: %+v", events)
+	}
+}
+
+// TestProxyRejectsOversizedRequest verifies the inbound cap rejects before the
+// upstream sees a partial body.
+func TestProxyRejectsOversizedRequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
+	proxy.maxBodyBytes = 1024
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	resp, err := client.Post("http://api.example.com/upload", "text/plain", bytes.NewReader(bytes.Repeat([]byte("a"), 4096)))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if events := seen.snapshot(); len(events) != 0 {
+		t.Fatalf("oversized request must not be recorded: %+v", events)
+	}
+}
+
+// TestPlainHTTPHonorsDestinationScope is the DEV-03/SEC-A06 regression: plain
+// http:// requests must obey never-domains and the active-ToolSpan gate just
+// like CONNECT, and an excluded request must still be forwarded transparently.
+func TestPlainHTTPHonorsDestinationScope(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("origin-body"))
+	}))
+	defer upstream.Close()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	settings.HTTPSInspectNeverDomains = []string{"denied.example"}
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+
+	// Never-domain: forwarded, but no evidence is captured.
+	resp, err := client.Get("http://denied.example/out-of-scope")
+	if err != nil {
+		t.Fatalf("out-of-scope request failed: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "origin-body" {
+		t.Fatalf("out-of-scope body = %q, want transparent forward", body)
+	}
+	if events := seen.snapshot(); len(events) != 0 {
+		t.Fatalf("never-domain plain HTTP was captured: %+v", events)
+	}
+
+	// In scope: captured with the real http scheme and host.
+	resp, err = client.Get("http://api.example.com/in-scope")
+	if err != nil {
+		t.Fatalf("in-scope request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	events := seen.waitFor(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	if events[0].Request.Scheme != "http" || events[0].Request.Host != "api.example.com" {
+		t.Fatalf("captured request = %+v", events[0].Request)
+	}
+}
+
+// TestPlainHTTPHonorsActiveToolSpan ensures an inactive ToolSpan scope function
+// also suppresses plain-HTTP capture (the managed-run exclusion promise).
+func TestPlainHTTPHonorsActiveToolSpan(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
+	proxy.SetScopeFunc(func(ctx Context, host string) (Context, bool) { return ctx, false })
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	resp, err := client.Get("http://api.example.com/no-span")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	time.Sleep(50 * time.Millisecond)
+	if events := seen.snapshot(); len(events) != 0 {
+		t.Fatalf("plain HTTP outside a ToolSpan was captured: %+v", events)
 	}
 }
 
@@ -529,10 +752,8 @@ func TestProxyTrustFailureDowngradesToMetadata(t *testing.T) {
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
 	paths := testPaths(t)
-	var seen []event.InspectedHTTPExchange
-	proxy := NewProxy(settings, NewCertManager(paths), func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(paths), seen.add)
 	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{}
 		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
@@ -550,12 +771,12 @@ func TestProxyTrustFailureDowngradesToMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatal("client unexpectedly trusted inspect CA")
 	}
-	waitForEvents(t, &seen, 1)
-	if len(seen) != 1 {
-		t.Fatalf("events = %d, want 1", len(seen))
+	events := seen.waitFor(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
 	}
-	if seen[0].TLS.InspectionMode != "pinned_or_custom_trust" {
-		t.Fatalf("mode = %q", seen[0].TLS.InspectionMode)
+	if events[0].TLS.InspectionMode != "pinned_or_custom_trust" {
+		t.Fatalf("mode = %q", events[0].TLS.InspectionMode)
 	}
 }
 
@@ -574,9 +795,12 @@ func TestProcessScopedCurlTrustsInspectCAWhenAvailable(t *testing.T) {
 	if strings.TrimSpace(string(out)) != "ok" {
 		t.Fatalf("curl output = %q, want ok", out)
 	}
-	waitForEvents(t, seen, 1)
-	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
-		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	events := seen.waitFor(t, 1)
+	if len(events) < 1 {
+		t.Fatal("no inspected exchange was emitted")
+	}
+	if events[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", events[0].TLS.InspectionMode)
 	}
 }
 
@@ -599,9 +823,12 @@ func TestProcessScopedPythonRequestsTrustsInspectCAWhenAvailable(t *testing.T) {
 	if strings.TrimSpace(string(out)) != "ok" {
 		t.Fatalf("python output = %q, want ok", out)
 	}
-	waitForEvents(t, seen, 1)
-	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
-		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	events := seen.waitFor(t, 1)
+	if len(events) < 1 {
+		t.Fatal("no inspected exchange was emitted")
+	}
+	if events[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", events[0].TLS.InspectionMode)
 	}
 }
 
@@ -647,9 +874,12 @@ socket.on('data', function onPrelude(chunk) {
 	if strings.TrimSpace(string(out)) != "ok" {
 		t.Fatalf("node output = %q, want ok", out)
 	}
-	waitForEvents(t, seen, 1)
-	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
-		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	events := seen.waitFor(t, 1)
+	if len(events) < 1 {
+		t.Fatal("no inspected exchange was emitted")
+	}
+	if events[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", events[0].TLS.InspectionMode)
 	}
 }
 
@@ -673,9 +903,12 @@ func TestProcessScopedGitTrustsInspectCAWhenAvailable(t *testing.T) {
 			t.Fatalf("git failed before trusting inspect CA: %v\n%s", err, out)
 		}
 	}
-	waitForEvents(t, seen, 1)
-	if (*seen)[0].TLS.InspectionMode != "local_mitm" {
-		t.Fatalf("mode = %q", (*seen)[0].TLS.InspectionMode)
+	events := seen.waitFor(t, 1)
+	if len(events) < 1 {
+		t.Fatal("no inspected exchange was emitted")
+	}
+	if events[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", events[0].TLS.InspectionMode)
 	}
 }
 
@@ -693,11 +926,9 @@ func TestProcessScopedNPMTrustsInspectCAWhenAvailable(t *testing.T) {
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
 	settings.HTTPSInspectCapturePreviews = true
-	seen := []event.InspectedHTTPExchange{}
+	seen := &exchangeSink{}
 	manager := NewCertManager(paths)
-	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	proxy := NewProxy(settings, manager, seen.add)
 	proxy.paths = paths
 	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{}
@@ -733,20 +964,12 @@ func TestProcessScopedNPMTrustsInspectCAWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("npm ping failed: %v\n%s", err, out)
 	}
-	waitForEvents(t, &seen, 1)
-	if seen[0].TLS.InspectionMode != "local_mitm" {
-		t.Fatalf("mode = %q", seen[0].TLS.InspectionMode)
+	events := seen.waitFor(t, 1)
+	if len(events) < 1 {
+		t.Fatal("no inspected exchange was emitted")
 	}
-}
-
-func waitForEvents(t *testing.T, seen *[]event.InspectedHTTPExchange, count int) {
-	t.Helper()
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if len(*seen) >= count {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if events[0].TLS.InspectionMode != "local_mitm" {
+		t.Fatalf("mode = %q", events[0].TLS.InspectionMode)
 	}
 }
 
@@ -771,7 +994,7 @@ func inspectSessionURLForTest(proxy *Proxy, sessionID string) string {
 	return AuthenticatedProxyURLForSession(proxy.Status().Address, proxy.Token(), sessionID)
 }
 
-func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *[]event.InspectedHTTPExchange) {
+func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *exchangeSink) {
 	t.Helper()
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -780,11 +1003,9 @@ func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *[]even
 	settings := DefaultSettings()
 	settings.HTTPSInspectEnabled = true
 	settings.HTTPSInspectCapturePreviews = true
-	seen := []event.InspectedHTTPExchange{}
+	seen := &exchangeSink{}
 	manager := NewCertManager(paths)
-	proxy := NewProxy(settings, manager, func(exchange event.InspectedHTTPExchange) {
-		seen = append(seen, exchange)
-	})
+	proxy := NewProxy(settings, manager, seen.add)
 	proxy.paths = paths
 	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{}
@@ -795,7 +1016,7 @@ func processScopedClientFixture(t *testing.T) (*httptest.Server, *Proxy, *[]even
 		upstream.Close()
 		t.Fatalf("proxy start: %v", err)
 	}
-	return upstream, proxy, &seen
+	return upstream, proxy, seen
 }
 
 func findExecutableForTest(t *testing.T, name string) string {

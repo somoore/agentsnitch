@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Schema versions for wire stability.
@@ -219,26 +220,49 @@ func (e SemanticEvent) MarshalJSON() ([]byte, error) {
 }
 
 // String returns a compact human-readable summary for logs / dev-receiver.
+//
+// Agent-supplied hook fields (agent name, event, tool, target, tags, cwd) can
+// contain newlines, ESC/OSC sequences and other non-printable runes. Replacing
+// them in the rendered form stops a payload from splitting or forging a log
+// line, or driving the reader's terminal (CWE-117 / ANSI injection). The stored
+// event keeps the original field values.
 func (e SemanticEvent) String() string {
 	ts := e.TS.UTC().Format("15:04:05.000")
 	agent := e.Agent.ID
 	if e.Agent.Name != "" {
 		agent = e.Agent.Name
 	}
-	summary := fmt.Sprintf("%s [%s] %s %s", ts, agent, e.Event, e.Tool)
+	summary := fmt.Sprintf("%s [%s] %s %s", ts, sanitizeLogText(agent), sanitizeLogText(e.Event), sanitizeLogText(e.Tool))
 	if e.Target != "" {
-		summary += " " + e.Target
+		summary += " " + sanitizeLogText(e.Target)
 	}
 	if len(e.Tags) > 0 {
-		summary += " tags=" + fmt.Sprintf("%v", e.Tags)
+		summary += " tags=" + sanitizeLogText(fmt.Sprintf("%v", e.Tags))
 	}
 	if e.PID != 0 {
 		summary += fmt.Sprintf(" pid=%d", e.PID)
 	}
 	if e.CWD != "" {
-		summary += " cwd=" + e.CWD
+		summary += " cwd=" + sanitizeLogText(e.CWD)
 	}
 	return summary
+}
+
+// sanitizeLogText replaces non-printable runes (newlines, ESC/OSC, bidi
+// controls, ...) with '?' so untrusted values cannot escape their log line.
+func sanitizeLogText(value string) string {
+	if value == "" {
+		return value
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return '?'
+	}, value)
 }
 
 // HumanSummary is an alias for String for clarity in UI/daemon layers.
