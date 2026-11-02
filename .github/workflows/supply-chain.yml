@@ -92,11 +92,16 @@ jobs:
       - name: go test
         run: go test ./...
 
+      - name: go test (race)
+        run: go test -race -count=1 ./...
+
       - name: dependency tripwire (drift / verify / stdlib-only)
         run: ./scripts/check-deps.sh
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # Pinned: this is the only fetched executable in the pipeline. Bump
+        # manually (Dependabot does not rewrite `go install` strings).
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: govulncheck
         run: govulncheck ./...

@@ -10,6 +10,10 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    # Wait a week after publication before opening a PR: a hijacked or yanked
+    # release is most dangerous in its first hours/days.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     labels: ["dependencies", "rust"]
     groups:
@@ -21,6 +25,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     labels: ["dependencies", "go"]
     groups:
@@ -32,6 +38,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     labels: ["dependencies", "github-actions"]
     groups:

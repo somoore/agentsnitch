@@ -2,9 +2,35 @@ package event
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
+
+// DEV-02/SEC-A08: agent-supplied fields must not be able to split or forge a
+// log line or drive the reader's terminal.
+func TestSemanticEventStringSanitizesControlCharacters(t *testing.T) {
+	ev := SemanticEvent{
+		TS:     time.Date(2026, 6, 2, 14, 23, 5, 0, time.UTC),
+		Agent:  AgentInfo{Name: "claude\nFAKE SEMANTIC: forged"},
+		Event:  "PreToolUse\rINJECT",
+		Tool:   "Bash\x1b]52;c;ZWNobyBoaQ==\x07",
+		Target: "/tmp/x\n2026-01-01 SEMANTIC: spoof",
+		CWD:    "/work\x1b[2J",
+		Tags:   []string{"ok\nbad"},
+	}
+	got := ev.String()
+	for _, bad := range []string{"\n", "\r", "\x1b", "\x07"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("String() contains %q: %q", bad, got)
+		}
+	}
+	if !strings.Contains(got, "FORGED") && !strings.Contains(got, "forged") {
+		// The text is preserved (only the control rune is replaced), which keeps
+		// the log useful while making it single-line.
+		t.Fatalf("String() should keep printable text: %q", got)
+	}
+}
 
 func TestSemanticEventMarshalIncludesCoreHookFields(t *testing.T) {
 	ev := SemanticEvent{

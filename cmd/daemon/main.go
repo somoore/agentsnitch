@@ -21,12 +21,36 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/somoore/agentsnitch/internal/correlator"
 	"github.com/somoore/agentsnitch/internal/event"
 	"github.com/somoore/agentsnitch/internal/inspect"
 	asruntime "github.com/somoore/agentsnitch/internal/runtime"
 )
+
+// sanitizeLogField keeps untrusted values (hook payloads, network metadata) on
+// one printable log line and bounds how much of them is echoed to disk.
+func sanitizeLogField(value string, maxRunes int) string {
+	if value == "" {
+		return value
+	}
+	value = strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return '?'
+	}, value)
+	if maxRunes > 0 {
+		if runes := []rune(value); len(runes) > maxRunes {
+			value = string(runes[:maxRunes]) + "..."
+		}
+	}
+	return value
+}
 
 const NetworkRefreshTranscriptInterval = 30 * time.Second
 const LsofDefaultPollInterval = 2 * time.Second
@@ -102,6 +126,15 @@ func reverseDNSLookupEnabled() bool {
 }
 
 func main() {
+	// State is per-user: make the socket bind window and every file the daemon
+	// creates private. MkdirAll does not chmod a pre-existing dir, so also
+	// tighten ~/.agentsnitch and the launchd-created log explicitly.
+	syscall.Umask(0o077)
+	if dir, ok := asruntime.SupportDir(); ok {
+		_ = os.MkdirAll(dir, 0o700)
+		_ = os.Chmod(dir, 0o700)
+		_ = os.Chmod(filepath.Join(dir, "daemon.log"), 0o600)
+	}
 	sock := resolveSocketPath()
 	_ = os.Remove(sock)
 
@@ -466,7 +499,7 @@ func dispatch(line string, peerPID int, hasPeerPID bool, sessions *daemonSession
 		handleSocketNetwork(nf, peerPID, hasPeerPID, sessions, status, transcripts)
 		return
 	}
-	log.Printf("UNRECOGNIZED LINE: %s", line)
+	log.Printf("UNRECOGNIZED LINE: %s", sanitizeLogField(line, 512))
 }
 
 func handleSocketSemantic(se event.SemanticEvent, peerPID int, hasPeerPID bool, sessions *daemonSessions, status *statusReporter, transcripts *asruntime.TranscriptWriter, lsofBurstRequests chan<- struct{}) {
@@ -847,7 +880,7 @@ func handleNetworkWithProcesses(nf event.NetworkFlowEvent, processes map[int]cor
 		statusFlow = candidateFlows[candidates[0]]
 	}
 	if verboseNetworkLogging() {
-		log.Printf("NETFLOW: pid=%d remote=%s sni=%s out=%d", statusFlow.PID, statusFlow.Remote, statusFlow.SNI, statusFlow.BytesOut)
+		log.Printf("NETFLOW: pid=%d remote=%s sni=%s out=%d", statusFlow.PID, sanitizeLogField(statusFlow.Remote, 256), sanitizeLogField(statusFlow.SNI, 256), statusFlow.BytesOut)
 		if b, err := json.Marshal(statusFlow); err == nil {
 			log.Printf("NETFLOW_JSON: %s", string(b))
 		}

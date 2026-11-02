@@ -11,15 +11,34 @@ const (
 	DefaultUIUDSSocket = "ui.sock"
 )
 
+// SupportDir returns the per-user state directory and whether $HOME exists.
+func SupportDir() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", false
+	}
+	return filepath.Join(home, ".agentsnitch"), true
+}
+
+// ensurePrivateDir creates dir 0700 and also tightens an existing directory.
+// MkdirAll alone does not chmod a dir that already exists, which left installs
+// created by `mkdir -p` (umask 022) world-readable.
+func ensurePrivateDir(dir string) {
+	if dir == "" {
+		return
+	}
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.Chmod(dir, 0o700)
+}
+
 func SocketPath() string {
 	for _, k := range []string{"AGENTSNITCH_SOCK", "AGENTSNITCH_SOCKET"} {
 		if p := os.Getenv(k); p != "" {
 			return p
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		dir := filepath.Join(home, ".agentsnitch")
-		_ = os.MkdirAll(dir, 0o700)
+	if dir, ok := SupportDir(); ok {
+		ensurePrivateDir(dir)
 		return filepath.Join(dir, "events.sock")
 	}
 	return "/tmp/agentsnitch-dev.sock"
@@ -46,9 +65,8 @@ func EmitterLogPath() string {
 	if p := os.Getenv("AGENTSNITCH_EMITTER_LOG"); p != "" {
 		return p
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		dir := filepath.Join(home, ".agentsnitch")
-		_ = os.MkdirAll(dir, 0o700)
+	if dir, ok := SupportDir(); ok {
+		ensurePrivateDir(dir)
 		return filepath.Join(dir, "emitter.log")
 	}
 	return "/tmp/agentsnitch-emitter.log"
@@ -62,9 +80,8 @@ func UISocketPath() string {
 	if p := os.Getenv("AGENTSNITCH_UI_SOCK"); p != "" {
 		return p
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		dir := filepath.Join(home, ".agentsnitch")
-		_ = os.MkdirAll(dir, 0o700)
+	if dir, ok := SupportDir(); ok {
+		ensurePrivateDir(dir)
 		return filepath.Join(dir, DefaultUIUDSSocket)
 	}
 	return "/tmp/agentsnitch-ui.sock"

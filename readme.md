@@ -142,7 +142,7 @@ flowchart LR
 - OS Sensor mode is disabled by default. User Visibility mode remains the startup default unless you explicitly enable OS Sensor mode as the default in Settings.
 - HTTPS Inspect Mode is disabled by default and lives under Settings -> Developer. It only applies to managed traffic routed through AgentSnitch's local proxy; `agentsnitchctl inspect run -- ...` scopes the proxy credentials to that managed run, and local TLS termination requires a matching active egress ToolSpan. It does not inspect browser traffic, all system traffic, pinned TLS clients, traffic outside the active ToolSpan, or traffic that bypasses the managed proxy. Installing or removing the AgentSnitch CA from macOS System trust is an explicit administrator-approved action.
 - The footer Debug button is disabled by default. Enable it from Settings -> Developer only when you need an on-demand local diagnostic snapshot.
-- AgentSnitch resists accidental or fake product ingestion paths, but it is not tamper-proof against the same local user or a process running with that user's privileges.
+- AgentSnitch resists accidental or fake product ingestion paths, but it is not tamper-proof against the same local user or a process running with that user's privileges. Socket peers are authenticated by the kernel-reported executable image plus its code signature (not by argv); the genuine emitter is still runnable by the monitored agent, so Pause and hook ingestion are not tamper controls against that agent.
 
 ## Documentation
 

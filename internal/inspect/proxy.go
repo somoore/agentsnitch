@@ -23,6 +23,16 @@ import (
 	"github.com/somoore/agentsnitch/internal/event"
 )
 
+// maxProxyBodyBytes bounds one buffered request or response body. Bodies larger
+// than this are refused with a clean 413/502 before anything is written to the
+// client, so a truncated body can never be replayed under the upstream's full
+// Content-Length (which hangs or corrupts clients). Tests lower it through
+// Proxy.maxBodyBytes; production keeps a generous 32 MiB so ordinary
+// model/checkpoint downloads through the proxy still succeed.
+const defaultMaxProxyBodyBytes int64 = 32 << 20
+
+var errProxyBodyTooLarge = errors.New("inspect proxy body exceeds size limit")
+
 type Proxy struct {
 	settings          Settings
 	certs             *CertManager
@@ -34,6 +44,7 @@ type Proxy struct {
 	token             string
 	dial              func(context.Context, string, string) (net.Conn, error)
 	upstreamTLSConfig *tls.Config
+	maxBodyBytes      int64
 	mu                sync.Mutex
 }
 
@@ -154,9 +165,31 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Context) {
 	started := time.Now()
-	body, _ := io.ReadAll(req.Body)
+	// SEC-A06/DEV-03: plain-HTTP proxying must honour the same destination and
+	// ToolSpan policy as CONNECT. Otherwise a user's "never inspect" exclusion
+	// (or an inactive ToolSpan) is silently bypassed for http:// URLs.
+	hostOnly := canonicalCertHost(req.Host)
+	if !p.settings.HTTPSInspectEnabled || !DestinationInScope(p.settings, hostOnly) {
+		p.forwardPlainHTTP(w, req)
+		return
+	}
+	if scopedCtx, ok := p.inspectAllowed(ctx, hostOnly); ok {
+		ctx = scopedCtx
+	} else {
+		p.forwardPlainHTTP(w, req)
+		return
+	}
+	body, err := readBodyCapped(req.Body, p.bodyLimit())
 	if req.Body != nil {
 		_ = req.Body.Close()
+	}
+	if err != nil {
+		if errors.Is(err, errProxyBodyTooLarge) {
+			http.Error(w, "request body too large for inspection", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "bad proxy request", http.StatusBadRequest)
+		return
 	}
 	upstream, err := CloneRequestForUpstream(req, body, "http", req.Host)
 	if err != nil {
@@ -165,6 +198,10 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Co
 	}
 	resp, respBody, network, err := p.roundTrip(upstream, nil)
 	if err != nil {
+		if errors.Is(err, errProxyBodyTooLarge) {
+			http.Error(w, "upstream response too large for inspection", http.StatusBadGateway)
+			return
+		}
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}
@@ -178,6 +215,57 @@ func (p *Proxy) handlePlainHTTP(w http.ResponseWriter, req *http.Request, ctx Co
 		Paths:    p.paths,
 		Network:  network,
 	}, req, body, resp, respBody, "metadata_only", "", false))
+}
+
+// forwardPlainHTTP proxies an out-of-scope plain-HTTP request transparently:
+// no body is buffered, redacted, hashed or emitted as evidence. The same
+// upstream/dial path is used so tests and split-DNS setups behave identically.
+func (p *Proxy) forwardPlainHTTP(w http.ResponseWriter, req *http.Request) {
+	upstream, err := CloneRequestForUpstreamStreaming(req, "http", req.Host)
+	if err != nil {
+		http.Error(w, "bad proxy request", http.StatusBadRequest)
+		return
+	}
+	resp, _, err := p.roundTripRaw(upstream, nil)
+	if err != nil {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	for name, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (p *Proxy) bodyLimit() int64 {
+	if p.maxBodyBytes > 0 {
+		return p.maxBodyBytes
+	}
+	return defaultMaxProxyBodyBytes
+}
+
+// readBodyCapped reads at most limit bytes and reports a distinct error when the
+// reader had more. Callers must reject the request/response instead of forwarding
+// a short body as if it were complete.
+func readBodyCapped(r io.Reader, limit int64) ([]byte, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = defaultMaxProxyBodyBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, errProxyBodyTooLarge
+	}
+	return body, nil
 }
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Context) {
@@ -253,11 +341,15 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		if ctx.ToolUseID == "" {
 			ctx.ToolUseID = innerCtx.ToolUseID
 		}
-		reqBody, err := io.ReadAll(clientReq.Body)
+		reqBody, err := readBodyCapped(clientReq.Body, p.bodyLimit())
 		if clientReq.Body != nil {
 			_ = clientReq.Body.Close()
 		}
 		if err != nil {
+			if errors.Is(err, errProxyBodyTooLarge) {
+				_, _ = io.WriteString(tlsClient, "HTTP/1.1 413 Request Entity Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+				return
+			}
 			p.emit(p.metadata(ctx, hostOnly, "unsupported_protocol", event.InspectedHTTPNetwork{}))
 			return
 		}
@@ -269,7 +361,9 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, req *http.Request, ctx Cont
 		var tlsState *tls.ConnectionState
 		resp, respBody, network, err := p.roundTrip(upstreamReq, &tlsState)
 		if err != nil {
-			_, _ = io.WriteString(tlsClient, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+			// Too-large bodies are refused before any bytes reach the client, so
+			// the full upstream Content-Length is never replayed over a short body.
+			_, _ = io.WriteString(tlsClient, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 			return
 		}
 		defer resp.Body.Close()
@@ -554,7 +648,7 @@ func constantTimeStringEqual(a, b string) bool {
 	return diff == 0
 }
 
-func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*http.Response, []byte, event.InspectedHTTPNetwork, error) {
+func (p *Proxy) roundTripRaw(req *http.Request, tlsState **tls.ConnectionState) (*http.Response, event.InspectedHTTPNetwork, error) {
 	var remote net.Addr
 	var remoteMu sync.Mutex
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -568,26 +662,43 @@ func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*h
 		return conn, err
 	}
 	if p.upstreamTLSConfig != nil {
-		transport.TLSClientConfig = p.upstreamTLSConfig
+		// Clone: Transport.configureHTTP2 mutates TLSClientConfig.NextProtos, so
+		// sharing one *tls.Config across concurrent round trips is a data race.
+		transport.TLSClientConfig = p.upstreamTLSConfig.Clone()
 	}
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
-		return nil, nil, event.InspectedHTTPNetwork{}, err
+		return nil, event.InspectedHTTPNetwork{}, err
 	}
 	if tlsState != nil && resp.TLS != nil {
 		state := *resp.TLS
 		*tlsState = &state
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, event.InspectedHTTPNetwork{}, err
-	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	resp.ContentLength = int64(len(body))
 	remoteMu.Lock()
 	network := networkFromRemote(remote, time.Now())
 	remoteMu.Unlock()
 	network.DurationMS = 0
+	return resp, network, nil
+}
+
+func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*http.Response, []byte, event.InspectedHTTPNetwork, error) {
+	resp, network, err := p.roundTripRaw(req, tlsState)
+	if err != nil {
+		return nil, nil, event.InspectedHTTPNetwork{}, err
+	}
+	// Refuse an oversized body up front when the upstream declares it, so we do
+	// not even allocate the buffer; the chunked case is caught by readBodyCapped.
+	if resp.ContentLength > p.bodyLimit() {
+		_ = resp.Body.Close()
+		return nil, nil, network, errProxyBodyTooLarge
+	}
+	body, err := readBodyCapped(resp.Body, p.bodyLimit())
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, nil, network, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
 	return resp, body, network, nil
 }
 
@@ -599,13 +710,6 @@ func copyResponse(w http.ResponseWriter, resp *http.Response, body []byte) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
-}
-
-func limitReader(r io.Reader, n int64) io.Reader {
-	if r == nil {
-		return strings.NewReader("")
-	}
-	return io.LimitReader(r, n)
 }
 
 func tlsVersionName(version uint16) string {

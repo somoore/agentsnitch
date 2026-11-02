@@ -229,7 +229,9 @@ sign_support_binaries() {
 
 write_launch_agent() {
   log "Installing daemon LaunchAgent"
-  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.agentsnitch"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  install -d -m 0700 "$HOME/.agentsnitch"
+  chmod 0700 "$HOME/.agentsnitch"
   local disable_network_statistics="${AGENTSNITCH_DISABLE_NETWORK_STATISTICS:-0}"
   local disable_lsof="${AGENTSNITCH_DISABLE_LSOF:-0}"
   local enable_reverse_dns="${AGENTSNITCH_ENABLE_REVERSE_DNS:-0}"
@@ -268,6 +270,8 @@ write_launch_agent() {
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>Umask</key>
+  <integer>63</integer>
   <key>StandardOutPath</key>
   <string>$HOME/.agentsnitch/daemon.log</string>
   <key>StandardErrorPath</key>
