@@ -1774,6 +1774,11 @@ func TestIsTrustedEmitterExe(t *testing.T) {
 		{"evil emitter elsewhere", "/tmp/evil/emitter", false},
 		{"emitter basename only (no path)", "emitter", false},
 		{"sibling binary in support bin", "/Users/dev/Library/Application Support/AgentSnitch/bin/doctor", false},
+		// LOOKALIKE: trailing space is filename data, not formatting. A same-user
+		// attacker can place "emitter " beside the genuine installed emitter; it
+		// must not normalize onto the installed path.
+		{"lookalike: trailing-space basename", emitter + " ", false},
+		{"lookalike: leading-space basename", " " + emitter, false},
 		// SPOOF: a real binary whose ARGS mention the emitter path. The exe path is
 		// /usr/bin/perl, so trust must be denied. (Old substring code accepted this.)
 		{"spoof: real exe, fake path in args", "/usr/bin/perl", false},

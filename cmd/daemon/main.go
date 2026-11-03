@@ -798,8 +798,11 @@ const networkExtensionBundleID = "com.somoore.agentsnitch.network-extension.syst
 
 // isTrustedEmitterExe is a pure validator: the resolved executable path must be
 // exactly the installed emitter binary in one of the canonical support dirs.
+// SECURITY: do not trim whitespace — a same-user lookalike named "emitter "
+// (trailing space) beside the genuine emitter must not normalize onto the
+// installed path. Whitespace is valid filename data, not formatting.
 func isTrustedEmitterExe(exe string) bool {
-	exe = filepath.Clean(strings.TrimSpace(exe))
+	exe = filepath.Clean(exe)
 	if exe == "" {
 		return false
 	}
@@ -817,8 +820,11 @@ func isTrustedEmitterExe(exe string) bool {
 //   - inside the macOS system extension store path for the AgentSnitch NE
 //     (/Library/SystemExtensions/.../<bundle-id>/...), where activated system
 //     extensions actually execute.
+//
+// SECURITY: never trim whitespace before comparing — whitespace is valid
+// filename data, not formatting (see isTrustedEmitterExe).
 func isTrustedNetworkSenderExe(exe string) bool {
-	exe = filepath.Clean(strings.TrimSpace(exe))
+	exe = filepath.Clean(exe)
 	if exe == "" {
 		return false
 	}
@@ -837,8 +843,11 @@ func isTrustedNetworkSenderExe(exe string) bool {
 	return false
 }
 
+// isTrustedControlSenderExe is a pure validator: only the installed UI binary
+// may drive control messages. Like the other validators it compares paths
+// byte-for-byte (no whitespace trimming — see isTrustedEmitterExe).
 func isTrustedControlSenderExe(exe string) bool {
-	exe = filepath.Clean(strings.TrimSpace(exe))
+	exe = filepath.Clean(exe)
 	if exe == "" {
 		return false
 	}
