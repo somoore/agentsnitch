@@ -4390,46 +4390,39 @@ fn trusted_daemon_socket_peer(pid: i32) -> bool {
 ///
 /// SECURITY: `ps -p <pid> -o comm=` returns argv[0] on macOS, which any process
 /// can forge with `execve()`; validating it would only prove that the named file
-/// exists. Ask the kernel's file-descriptor table via lsof instead. Fail closed
+/// exists. `lsof -d txt` is not safe either: darwin lsof labels every mapped
+/// vnode " txt" and enumerates the mappings in virtual-address order, so the
+/// first non-dyld text entry is not necessarily the process executable — a
+/// same-user process that maps a trusted binary below its own image would make
+/// this resolver return the trusted file while the process runs its own code.
+/// Ask the kernel for the executable the process was launched from via
+/// proc_pidpath(3), which is independent of mapped-file ordering. Fail closed
 /// when the image cannot be resolved. This mirrors the daemon's darwin resolver.
 #[cfg(target_os = "macos")]
 fn resolve_peer_exe_path(pid: i32) -> Option<std::path::PathBuf> {
     if pid <= 0 {
         return None;
     }
-    let output = Command::new("/usr/sbin/lsof")
-        .args(["-a", "-p", &pid.to_string(), "-d", "txt", "-Fn"])
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-        .output()
-        .ok()?;
-    parse_lsof_text_image(&output.stdout).map(std::path::PathBuf::from)
-}
-
-/// Extract the first executable image from `lsof -Fn -d txt` output. The format
-/// is a sequence of "p<pid>", "ftxt", "n<path>" lines; the executable and the
-/// dyld shared cache can both be listed as text, so skip dyld.
-#[cfg(target_os = "macos")]
-fn parse_lsof_text_image(out: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(out);
-    let mut in_text = false;
-    for line in text.lines() {
-        let line = line.trim_end_matches('\r');
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('f') {
-            in_text = line == "ftxt";
-            continue;
-        }
-        if line.starts_with('n') && in_text {
-            let path = &line[1..];
-            if path.starts_with('/') && !path.starts_with("/usr/lib/dyld") {
-                return Some(path.to_string());
-            }
-        }
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, buffersize: u32) -> i32;
     }
-    None
+    const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
+    let mut buf = [0u8; PROC_PIDPATHINFO_MAXSIZE];
+    // SAFETY: buf is a valid, writable buffer of PROC_PIDPATHINFO_MAXSIZE
+    // bytes for the duration of the call; proc_pidpath NUL-terminates within
+    // the returned length (which excludes the NUL).
+    let n = unsafe { proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if n <= 0 {
+        return None;
+    }
+    let n = (n as usize).min(buf.len());
+    let Ok(path) = std::str::from_utf8(&buf[..n]) else {
+        return None;
+    };
+    if !path.starts_with('/') {
+        return None;
+    }
+    Some(std::path::PathBuf::from(path))
 }
 
 #[cfg(target_os = "linux")]
@@ -6748,16 +6741,25 @@ mod tests {
         Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
     }
 
+    /// The old lsof-based resolver is gone; keep a guard that the kernel-based
+    /// resolver never returns a merely-mapped file. A peer that file-maps a
+    /// trusted binary must still resolve to its own running executable.
     #[cfg(target_os = "macos")]
     #[test]
-    fn parse_lsof_text_image_skips_dyld_cache() {
-        let out = b"p42\nftxt\nn/usr/lib/dyld\nftxt\nn/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui\n";
-        assert_eq!(
-            parse_lsof_text_image(out),
-            Some("/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui".to_string())
-        );
-        assert_eq!(parse_lsof_text_image(b"p42\nftxt\nn/usr/lib/dyld\n"), None);
-        assert_eq!(parse_lsof_text_image(b"relative\n"), None);
+    fn resolve_peer_exe_path_self_resolves_running_image() {
+        let pid = std::process::id() as i32;
+        let resolved =
+            resolve_peer_exe_path(pid).expect("resolver should resolve the running process");
+        let test_binary = std::env::current_exe().expect("current exe");
+        assert_eq!(resolved, test_binary);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn resolve_peer_exe_path_fails_closed_on_unusable_pid() {
+        assert!(resolve_peer_exe_path(0).is_none());
+        assert!(resolve_peer_exe_path(-1).is_none());
+        assert!(resolve_peer_exe_path(i32::MAX).is_none());
     }
 
     /// SEC-01/A02 regression: a peer can forge argv[0] with execve(); the UI

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -702,6 +703,108 @@ func TestPlainHTTPHonorsDestinationScope(t *testing.T) {
 	}
 	if events[0].Request.Scheme != "http" || events[0].Request.Host != "api.example.com" {
 		t.Fatalf("captured request = %+v", events[0].Request)
+	}
+}
+
+// TestProxyHeadResponseWithLargeDeclaredLength verifies that a HEAD response
+// declaring a body larger than the inspection cap is forwarded successfully
+// instead of rejected as 502: upstreams legitimately report the full resource
+// size in Content-Length for HEAD while sending no body at all.
+func TestProxyHeadResponseWithLargeDeclaredLength(t *testing.T) {
+	const declared = 64 << 20
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(declared))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
+	proxy.maxBodyBytes = 1024 // far below the declared length
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	resp, err := client.Head("http://api.example.com/large-artifact")
+	if err != nil {
+		t.Fatalf("HEAD request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (HEAD must not be rejected for a declared body size)", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("HEAD body read: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("HEAD response carried %d body bytes, want none", len(body))
+	}
+}
+
+// TestPlainHTTPStreamAbortsOnUpstreamDisconnect is the truncated-stream
+// regression: when an out-of-scope chunked response is cut off before the
+// terminating chunk, the proxy must abort the downstream response instead of
+// finalizing it, so the client observes the framing error rather than silently
+// accepting truncated content as complete.
+func TestPlainHTTPStreamAbortsOnUpstreamDisconnect(t *testing.T) {
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer upstream.Close()
+	go func() {
+		for {
+			conn, err := upstream.Accept()
+			if err != nil {
+				return
+			}
+			// Send one chunk, then vanish without the terminating 0-chunk.
+			_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"))
+			_ = conn.Close()
+		}
+	}()
+
+	settings := DefaultSettings()
+	settings.HTTPSInspectEnabled = true
+	seen := &exchangeSink{}
+	proxy := NewProxy(settings, NewCertManager(testPaths(t)), seen.add)
+	proxy.SetScopeFunc(func(ctx Context, host string) (Context, bool) { return ctx, false })
+	proxy.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{}
+		return dialer.DialContext(ctx, network, upstream.Addr().String())
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer proxy.Shutdown(nil)
+
+	proxyURL, _ := url.Parse(proxy.AuthenticatedURL())
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	resp, err := client.Get("http://api.example.com/stream")
+	if err != nil {
+		// The abort may surface as a transport error; the important property
+		// is that the client never sees a clean, complete response.
+		return
+	}
+	defer resp.Body.Close()
+	if _, err := io.ReadAll(resp.Body); err == nil {
+		t.Fatal("client read a truncated chunked response without error; the proxy must abort the downstream response when the upstream framing fails")
 	}
 }
 

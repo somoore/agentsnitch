@@ -238,7 +238,21 @@ func (p *Proxy) forwardPlainHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	// Establish the chunked framing on the wire before streaming. Without
+	// this the first write stays in the server's buffer, so aborting the
+	// handler leaves a complete-looking empty response rather than a
+	// truncated one, and the client cannot tell that content was lost.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		// The upstream framing failed mid-stream (for example a chunked
+		// response truncated by an upstream disconnect). Finalizing normally
+		// would let the client accept truncated content as complete, so abort
+		// the downstream response instead. net/http suppresses the stack trace
+		// for the sentinel ErrAbortHandler.
+		panic(http.ErrAbortHandler)
+	}
 }
 
 func (p *Proxy) bodyLimit() int64 {
@@ -688,7 +702,11 @@ func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*h
 	}
 	// Refuse an oversized body up front when the upstream declares it, so we do
 	// not even allocate the buffer; the chunked case is caught by readBodyCapped.
-	if resp.ContentLength > p.bodyLimit() {
+	// HEAD responses legitimately declare the full resource size in
+	// Content-Length while sending no body, so the declared-length check would
+	// turn a successful metadata probe of a large artifact into a 502; exempt
+	// them and let the capped reader guard whatever bytes actually arrive.
+	if req.Method != http.MethodHead && resp.ContentLength > p.bodyLimit() {
 		_ = resp.Body.Close()
 		return nil, nil, network, errProxyBodyTooLarge
 	}
@@ -698,7 +716,9 @@ func (p *Proxy) roundTrip(req *http.Request, tlsState **tls.ConnectionState) (*h
 		return nil, nil, network, err
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	resp.ContentLength = int64(len(body))
+	if req.Method != http.MethodHead {
+		resp.ContentLength = int64(len(body))
+	}
 	return resp, body, network, nil
 }
 

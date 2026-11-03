@@ -2,14 +2,16 @@
 
 package main
 
+/*
+#include <libproc.h>
+*/
+import "C"
+
 import (
-	"bufio"
-	"bytes"
 	"net"
-	"os/exec"
-	"strconv"
 	"strings"
 	"syscall"
+	"unsafe"
 )
 
 // resolvePeerExePath returns the kernel-reported executable path for pid.
@@ -20,65 +22,31 @@ import (
 // and then codesigned, so the genuine on-disk file was validated instead of the
 // connecting process.)
 //
-// We ask the kernel via lsof's file-descriptor table instead: the `txt` entry
-// for the first executable mapping (excluding the shared dyld cache) is the
-// real image the process is running, which argv cannot change. lsof is already
-// a daemon dependency; no cgo/libproc or new Go module is needed.
+// `lsof -d txt` is NOT usable either. Darwin lsof labels every mapped vnode
+// " txt" and enumerates the mappings in virtual-address order, so the first
+// non-dyld text entry is not necessarily the process executable: a same-user
+// process that maps a trusted binary below its own image would make this
+// resolver return the trusted file while the process runs attacker-controlled
+// code, and the signature check would validate the mapped, genuine file.
 //
-// Failure is reported as (\"\", false); callers must fail closed.
+// proc_pidpath(3) asks the kernel specifically for the executable the process
+// was launched from, independent of mapped-file ordering. It needs no special
+// privileges for same-user peers, which are the only peers this daemon (or the
+// UI) ever accepts. Fail closed when the path cannot be resolved.
 func resolvePeerExePath(pid int) (string, bool) {
 	if pid <= 0 {
 		return "", false
 	}
-	cmd := exec.Command("/usr/sbin/lsof", "-a", "-p", strconv.Itoa(pid), "-d", "txt", "-Fn")
-	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
-	out, err := cmd.Output()
-	// lsof exits non-zero when the process disappears between the peer-cred
-	// read and the lookup. Parse whatever it managed to print, then fail closed
-	// if there is no usable path.
-	if len(out) == 0 {
-		_ = err
+	buf := make([]C.char, C.PROC_PIDPATHINFO_MAXSIZE)
+	n, err := C.proc_pidpath(C.int(pid), unsafe.Pointer(&buf[0]), C.uint32_t(len(buf)))
+	if err != nil || n <= 0 {
 		return "", false
 	}
-	if path, ok := parseLsofTextImage(out); ok {
-		return path, true
+	path := strings.TrimSpace(C.GoStringN(&buf[0], C.int(n)))
+	if !strings.HasPrefix(path, "/") {
+		return "", false
 	}
-	return "", false
-}
-
-// parseLsofTextImage extracts the first executable image from `lsof -Fn -d txt`
-// output. The format is a sequence of field lines: "p<pid>", "ftxt", "n<path>".
-// The same file description can be listed twice (the executable and
-// /usr/lib/dyld), so skip dyld and any non-absolute result.
-func parseLsofTextImage(out []byte) (string, bool) {
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	// Executable paths can be long; allow a generous line size.
-	scanner.Buffer(make([]byte, 4096), 64*1024)
-	inText := false
-	for scanner.Scan() {
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if line == "" {
-			continue
-		}
-		switch line[0] {
-		case 'f':
-			inText = line == "ftxt"
-		case 'n':
-			if !inText {
-				continue
-			}
-			path := line[1:]
-			if !strings.HasPrefix(path, "/") {
-				continue
-			}
-			// The dyld shared cache is mapped as text but is not the program.
-			if path == "/usr/lib/dyld" || strings.HasPrefix(path, "/usr/lib/dyld") {
-				continue
-			}
-			return path, true
-		}
-	}
-	return "", false
+	return path, true
 }
 
 const (
