@@ -238,6 +238,13 @@ func (p *Proxy) forwardPlainHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	// Establish the chunked framing on the wire before streaming. Without
+	// this the first write stays in the server's buffer, so aborting the
+	// handler leaves a complete-looking empty response rather than a
+	// truncated one, and the client cannot tell that content was lost.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		// The upstream framing failed mid-stream (for example a chunked
 		// response truncated by an upstream disconnect). Finalizing normally
