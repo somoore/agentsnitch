@@ -42,7 +42,11 @@ func resolvePeerExePath(pid int) (string, bool) {
 	if err != nil || n <= 0 {
 		return "", false
 	}
-	path := strings.TrimSpace(C.GoStringN(&buf[0], C.int(n)))
+	// Preserve the kernel-reported path byte for byte. Whitespace is valid
+	// filename data: trimming would map an executable named "emitter " onto
+	// the genuine "emitter" beside it, so the installed-path and signature
+	// checks would validate the wrong file.
+	path := C.GoStringN(&buf[0], C.int(n))
 	if !strings.HasPrefix(path, "/") {
 		return "", false
 	}

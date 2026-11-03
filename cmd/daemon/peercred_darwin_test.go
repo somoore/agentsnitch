@@ -264,6 +264,48 @@ func TestResolvePeerExePathSelf(t *testing.T) {
 	}
 }
 
+// TestResolvePeerExePathPreservesTrailingWhitespace verifies the resolver does
+// not normalise the kernel-reported path: a peer launched from "emitter " (with
+// a trailing space) beside the genuine "emitter" must resolve to its own file,
+// never to the trusted one.
+func TestResolvePeerExePathPreservesTrailingWhitespace(t *testing.T) {
+	if _, err := os.Stat("/bin/sleep"); err != nil {
+		t.Skip("/bin/sleep not available")
+	}
+	src, err := os.ReadFile("/bin/sleep")
+	if err != nil {
+		t.Skipf("read /bin/sleep: %v", err)
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	genuine := filepath.Join(dir, "emitter")
+	spoof := genuine + " "
+	for _, p := range []string{genuine, spoof} {
+		if err := os.WriteFile(p, src, 0o755); err != nil {
+			t.Fatalf("stage %q: %v", p, err)
+		}
+	}
+
+	cmd := exec.Command(spoof, "30")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("start copied sleep binary: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	got, ok := resolvePeerExePath(cmd.Process.Pid)
+	if !ok {
+		t.Fatal("resolvePeerExePath must resolve the live peer")
+	}
+	if got != spoof {
+		t.Fatalf("resolvePeerExePath = %q, want exact executable path %q", got, spoof)
+	}
+}
+
 // TestResolvePeerExePathFailsClosed verifies the resolver reports failure for
 // an unusable pid instead of returning a guessable path.
 func TestResolvePeerExePathFailsClosed(t *testing.T) {
