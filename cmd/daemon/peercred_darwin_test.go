@@ -3,27 +3,86 @@
 package main
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-func TestParseLsofTextImage(t *testing.T) {
-	out := []byte("p4242\nftxt\nn/usr/lib/dyld\nftxt\nn/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui\n")
-	got, ok := parseLsofTextImage(out)
-	if !ok {
-		t.Fatal("expected a text image")
+// Helper-process entry point: file-maps a caller-supplied binary and then
+// sleeps, so the parent test can ask the resolver about this process while a
+// trusted-looking file is mapped into its address space. Declared in init()
+// because TestMain lives in main_test.go, which is platform-neutral.
+func init() {
+	if os.Getenv("AGENTSNITCH_TEST_MMAP_HELPER") != "1" {
+		return
 	}
-	if want := "/Applications/AgentSnitch.app/Contents/MacOS/agentsnitch-ui"; got != want {
-		t.Fatalf("parseLsofTextImage() = %q, want %q", got, want)
+	mmapHelperMain()
+}
+
+func mmapHelperMain() {
+	path := os.Getenv("AGENTSNITCH_TEST_MMAP_PATH")
+	if path == "" {
+		os.Exit(2)
 	}
-	if _, ok := parseLsofTextImage([]byte("p1\nftxt\nn/usr/lib/dyld\n")); ok {
-		t.Fatal("dyld cache must not be treated as the peer executable")
+	f, err := os.Open(path)
+	if err != nil {
+		os.Exit(2)
 	}
-	if _, ok := parseLsofTextImage([]byte("relative/path\n")); ok {
-		t.Fatal("relative paths must be rejected")
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Size() <= 0 {
+		os.Exit(2)
 	}
+	// File-map the trusted-looking binary. Darwin lsof reports every mapped
+	// vnode as a " txt" entry; when the mapping lands at an address below the
+	// main executable image, the old lsof-based resolver (which walked txt
+	// entries in virtual-address order) returned the mapped file instead of
+	// the running executable. The kernel chooses the address, so retry until
+	// the mapped file is actually enumerated before our own image; if this
+	// host will not cooperate, proceed anyway — the parent only skips the
+	// strict ordering assertion when lsof cannot see the mapping at all.
+	for attempt := 0; attempt < 10; attempt++ {
+		if _, err := syscall.Mmap(int(f.Fd()), 0, int(info.Size()), syscall.PROT_READ, syscall.MAP_SHARED); err != nil {
+			os.Exit(3)
+		}
+		if mappedBeforeOwnImage(path) {
+			break
+		}
+		// Leave earlier mappings in place (address space is plentiful) so the
+		// final mapping is guaranteed to be visible to the parent.
+	}
+	os.Stdout.WriteString("READY\n")
+	time.Sleep(2 * time.Minute)
+}
+
+// mappedBeforeOwnImage reports whether lsof enumerates path before this
+// process's own executable in its txt table, i.e. whether the staged mapping
+// sits at a lower virtual address than the running image.
+func mappedBeforeOwnImage(path string) bool {
+	ownPath, err := filepath.EvalSymlinks(os.Args[0])
+	if err != nil {
+		ownPath = os.Args[0]
+	}
+	entries := lsofTxtEntries(os.Getpid())
+	if entries == nil {
+		return true // cannot verify; let the parent decide
+	}
+	mappedIdx, ownIdx := -1, -1
+	for i, entry := range entries {
+		switch entry {
+		case path:
+			mappedIdx = i
+		case ownPath:
+			ownIdx = i
+		}
+	}
+	return mappedIdx != -1 && ownIdx != -1 && mappedIdx < ownIdx
 }
 
 // TestResolvePeerExePathIgnoresArgv0 is the SEC-01 regression test: on darwin a
@@ -31,9 +90,6 @@ func TestParseLsofTextImage(t *testing.T) {
 // The resolver must report the real image, so the forged path can never satisfy
 // the emitter trust check.
 func TestResolvePeerExePathIgnoresArgv0(t *testing.T) {
-	if _, err := os.Stat("/usr/sbin/lsof"); err != nil {
-		t.Skip("lsof not available")
-	}
 	if _, err := os.Stat("/bin/sleep"); err != nil {
 		t.Skip("/bin/sleep not available")
 	}
@@ -66,5 +122,155 @@ func TestResolvePeerExePathIgnoresArgv0(t *testing.T) {
 	}
 	if trustedSemanticSocketPeer(cmd.Process.Pid, nil) {
 		t.Fatal("forged-argv peer must not be trusted for semantic events")
+	}
+}
+
+// TestResolvePeerExePathIgnoresMappedTrustedBinary is the mapped-image
+// regression test: a same-user process that file-maps a trusted binary (as
+// lsof's txt table shows it) must not make the resolver return the mapped file
+// instead of the executable the process is actually running. The old
+// lsof-based resolver walked txt entries in virtual-address order, so a
+// mapping placed below the main image was returned first and then validated
+// against the genuine trusted binary.
+func TestResolvePeerExePathIgnoresMappedTrustedBinary(t *testing.T) {
+	const mapped = "/bin/ls"
+	if _, err := os.Stat(mapped); err != nil {
+		t.Skip("/bin/ls not available")
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(),
+		"AGENTSNITCH_TEST_MMAP_HELPER=1",
+		"AGENTSNITCH_TEST_MMAP_PATH="+mapped,
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start mapped peer: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	reader := bufio.NewReader(stdout)
+	ready := make(chan error, 1)
+	go func() {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			ready <- err
+			return
+		}
+		if strings.TrimSpace(line) == "READY" {
+			ready <- nil
+			return
+		}
+		ready <- exec.ErrNotFound
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("mapped-image helper did not signal ready: %v", err)
+		}
+	case err := <-waitExit(cmd):
+		t.Skipf("helper could not stage the trusted-file mapping on this host: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for mapped-image helper")
+	}
+
+	// The staged mapping must actually be visible in the peer's txt table;
+	// otherwise this host cannot exercise the lsof-ordering scenario at all.
+	if lsofTxtEntries(cmd.Process.Pid) != nil && !lsofTxtContains(cmd.Process.Pid, mapped) {
+		t.Skip("lsof does not list the staged mapping on this host")
+	}
+
+	got, ok := resolvePeerExePath(cmd.Process.Pid)
+	if !ok {
+		t.Fatal("resolvePeerExePath failed while the helper process was live")
+	}
+	if got == mapped {
+		t.Fatalf("resolver returned mapped trusted file %q instead of the real executable (regression)", got)
+	}
+	if filepath.Base(got) == "ls" {
+		t.Fatalf("resolver returned the mapped /bin/ls image %q (regression)", got)
+	}
+	if !strings.Contains(got, filepath.Base(os.Args[0])) {
+		t.Fatalf("resolver returned %q, want the helper's real executable image (test binary %q)", got, os.Args[0])
+	}
+}
+
+// lsofTxtEntries returns the txt-table image paths lsof reports for pid, or
+// nil when lsof is unavailable. Used only to confirm that a test actually
+// staged a mapping before asserting on resolver behavior.
+func lsofTxtEntries(pid int) []string {
+	cmd := exec.Command("/usr/sbin/lsof", "-a", "-p", strconv.Itoa(pid), "-d", "txt", "-Fn")
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
+		return nil
+	}
+	var paths []string
+	inText := false
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		switch line[0] {
+		case 'f':
+			inText = line == "ftxt"
+		case 'n':
+			if inText {
+				paths = append(paths, line[1:])
+			}
+		}
+	}
+	return paths
+}
+
+func lsofTxtContains(pid int, path string) bool {
+	for _, entry := range lsofTxtEntries(pid) {
+		if entry == path {
+			return true
+		}
+	}
+	return false
+}
+
+func waitExit(cmd *exec.Cmd) <-chan error {
+	ch := make(chan error, 1)
+	go func() {
+		ch <- cmd.Wait()
+	}()
+	return ch
+}
+
+// TestResolvePeerExePathSelf verifies the resolver returns this test binary's
+// own image for the running process.
+func TestResolvePeerExePathSelf(t *testing.T) {
+	got, ok := resolvePeerExePath(os.Getpid())
+	if !ok {
+		t.Fatal("resolvePeerExePath must resolve the running process")
+	}
+	want, err := filepath.EvalSymlinks(os.Args[0])
+	if err != nil {
+		want = os.Args[0]
+	}
+	if got != want {
+		t.Fatalf("resolvePeerExePath(self) = %q, want the test binary %q", got, want)
+	}
+}
+
+// TestResolvePeerExePathFailsClosed verifies the resolver reports failure for
+// an unusable pid instead of returning a guessable path.
+func TestResolvePeerExePathFailsClosed(t *testing.T) {
+	if _, ok := resolvePeerExePath(0); ok {
+		t.Fatal("pid 0 must not resolve")
+	}
+	if _, ok := resolvePeerExePath(-1); ok {
+		t.Fatal("negative pid must not resolve")
 	}
 }
