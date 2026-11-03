@@ -42,7 +42,14 @@ func resolvePeerExePath(pid int) (string, bool) {
 	if err != nil || n <= 0 {
 		return "", false
 	}
-	path := strings.TrimSpace(C.GoStringN(&buf[0], C.int(n)))
+	// SECURITY: the kernel-reported path is returned byte-for-byte. Do NOT
+	// trim whitespace: a same-user attacker can install a lookalike executable
+	// named "emitter " (trailing space) beside the genuine installed emitter,
+	// and trimming would make this resolver report the genuine emitter's path
+	// for the attacker's process — passing both the installed-path check and
+	// the signature check against the genuine file. Whitespace is valid
+	// filename data.
+	path := C.GoStringN(&buf[0], C.int(n))
 	if !strings.HasPrefix(path, "/") {
 		return "", false
 	}

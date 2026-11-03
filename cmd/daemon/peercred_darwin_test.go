@@ -202,6 +202,67 @@ func TestResolvePeerExePathIgnoresMappedTrustedBinary(t *testing.T) {
 	}
 }
 
+// TestResolvePeerExePathPreservesTrailingSpaceLookalike is the lookalike-
+// filename regression test: on macOS the per-user support dir is user-writable,
+// so a same-user attacker can place an executable named "emitter " (trailing
+// space) beside the genuine installed emitter. The resolver must return the
+// kernel-reported path byte-for-byte; trimming whitespace would make the
+// resolver report the genuine emitter's path for the attacker's process, so the
+// installed-path check and the signature check would both validate the genuine
+// file instead of the connecting executable. Whitespace is valid filename data.
+func TestResolvePeerExePathPreservesTrailingSpaceLookalike(t *testing.T) {
+	if _, err := os.Stat("/bin/sleep"); err != nil {
+		t.Skip("/bin/sleep not available")
+	}
+
+	support := t.TempDir()
+	bin := filepath.Join(support, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatalf("mkdir support bin: %v", err)
+	}
+	sleep, err := os.ReadFile("/bin/sleep")
+	if err != nil {
+		t.Fatalf("read /bin/sleep: %v", err)
+	}
+	genuine := filepath.Join(bin, "emitter")
+	lookalike := filepath.Join(bin, "emitter ") // trailing space is filename data
+	for _, dst := range []string{genuine, lookalike} {
+		if err := os.WriteFile(dst, sleep, 0o755); err != nil {
+			t.Fatalf("stage %q: %v", dst, err)
+		}
+	}
+	t.Setenv("AGENTSNITCH_SUPPORT_DIR", support)
+
+	cmd := exec.Command(lookalike, "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start lookalike peer: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	got, ok := resolvePeerExePath(cmd.Process.Pid)
+	if !ok {
+		t.Fatal("resolvePeerExePath failed while the lookalike peer was live")
+	}
+	want := lookalike
+	if resolved, err := filepath.EvalSymlinks(lookalike); err == nil {
+		// proc_pidpath reports the symlink-resolved path; /var/folders is a
+		// symlink to /private/var/folders on macOS.
+		want = resolved
+	}
+	if got != want {
+		t.Fatalf("resolver returned %q, want the exact kernel-reported path %q (trailing space must be preserved)", got, want)
+	}
+	if isTrustedEmitterExe(got) {
+		t.Fatalf("trailing-space lookalike %q must not be trusted as the installed emitter", got)
+	}
+	if trustedSemanticSocketPeer(cmd.Process.Pid, nil) {
+		t.Fatal("trailing-space lookalike peer must not be trusted for semantic events")
+	}
+}
+
 // lsofTxtEntries returns the txt-table image paths lsof reports for pid, or
 // nil when lsof is unavailable. Used only to confirm that a test actually
 // staged a mapping before asserting on resolver behavior.

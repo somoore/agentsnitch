@@ -799,12 +799,18 @@ func TestPlainHTTPStreamAbortsOnUpstreamDisconnect(t *testing.T) {
 	resp, err := client.Get("http://api.example.com/stream")
 	if err != nil {
 		// The abort may surface as a transport error; the important property
-		// is that the client never sees a clean, complete response.
+		// is that the client never sees a clean, complete 200.
 		return
 	}
 	defer resp.Body.Close()
+	// A failed upstream round trip is a legitimate 502: the proxy saw no
+	// framing to preserve. The bug this guards against is a 200 whose body
+	// ends cleanly despite the upstream having been cut off mid-stream.
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
 	if _, err := io.ReadAll(resp.Body); err == nil {
-		t.Fatal("client read a truncated chunked response without error; the proxy must abort the downstream response when the upstream framing fails")
+		t.Fatal("client read a truncated 200 response without error; the proxy must abort the downstream response when the upstream framing fails")
 	}
 }
 
