@@ -185,5 +185,5 @@ jobs:
           path: ./
           # Docker image tag the action runs. Keep in step with the action
           # revision above; the action's default is the unpinned "latest".
-          version: 3.99.7
+          version: 3.99.8
           extra_args: --only-verified
